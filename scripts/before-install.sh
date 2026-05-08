@@ -19,7 +19,7 @@ fi
 set -a
 . /etc/bkstr/app.env
 set +a
-node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
+node node_modules/prisma/build/index.js migrate deploy --schema prisma/schema.prisma
 
 # 3. Ensure deploy destination exists (Install hook needs it for first deploy).
 mkdir -p /var/www/bkstr
