@@ -300,11 +300,66 @@ Currently open-access — any authenticated subscriber can fetch any book; key v
 
 **Severity:** medium — not a Phase 2 blocker, but a Phase 3 prerequisite before external onboarding. **Suggested resolution:** define the access pattern with stakeholder input first; then the schema and route changes follow naturally. Likely shape: a `subscriber_books` join table (UUID PK, `subscriber_id` FK, `book_id` FK, `granted_at`, unique `(subscriber_id, book_id)`) plus a `WHERE EXISTS` clause in the agent endpoint's book lookup. Step 7's import script (or a dedicated grant flow) populates the join table.
 
-### 33. End-to-end agent fetch verification (tests 1–11) deferred to Step 7's walkthrough
+### 33. Step 5+6 functional verification — deferred to Step 7's walkthrough when seeded content exists
 
-Step 5 closed without running the prompt's tests 1–11 (happy path, cache hit, 400/401/404 boundaries, 413 oversized content, 8000-char query cap, mid-stream Bedrock error → sanitized log). All eleven require a real `book_versions.content` row, which doesn't exist until Step 7's import script seeds the first markdown. Sanitization helper output was validated standalone via an SSM Node script (D5.12) — that closes the security-sensitive piece without burning the Step 5 deploy budget on a fixture-insert dance.
+Steps 5 and 6 closed without running their respective functional walks. All require a real `book_versions.content` row, which doesn't exist until Step 7's import script seeds the first markdown.
 
-**Severity:** low (functional surface, not a security gap). **Suggested resolution:** during Step 7's walkthrough, after the import script seeds tmrwgroup's first book and Animesh has an active API key, run the eleven curls from Step 5's prompt § "Functional (local)" against prod (or against `npm run dev` with an SSH-tunneled DATABASE_URL) and capture results. Test 11 (bogus MODEL_ID) costs two deploys; do it last so the bogus-then-revert pair lives at the end of Step 7 rather than interleaving with Step 7's own pipeline activity.
+**Step 5 prompt's tests 1–11:** happy path, cache hit, 400/401/404 boundaries, 413 oversized content, 8000-char query cap, mid-stream Bedrock error → sanitized log. (Sanitization helper output already validated standalone via SSM Node script per D5.12; this is the route-integration verification.)
+
+**Step 6 prompt's tests 1–10:** sign in, render empty `/dashboard`, insert fixture book + version + a few `fetch_logs` rows, refresh, click into `/dashboard/fetch-logs?book=<id>`, remove filter, click Refresh, verify error rows show red badge but never display `error_message` text, verify `cache_hit` rows show green badge, cleanup.
+
+**Step 6 EXPLAIN ANALYZE:** the Books-table aggregate query (`getBooksWithMetrics`) with `COUNT(DISTINCT api_key_id) FILTER (WHERE created_at > NOW() - 30d)` should hit the `(api_key_id, created_at DESC)` index from Step 3. Pre-gather plan ran against empty tables → seq scans (correct planner choice for 0 rows). Re-run with seeded data and confirm the index is exercised.
+
+**Step 5 Test 11 (bogus MODEL_ID):** costs two deploys (bogus push + revert). Do this last so the bogus-then-revert pair lives at the end of Step 7's pipeline activity rather than interleaving with Step 7's own deploys.
+
+**Severity:** low (functional surface, not a security gap). **Suggested resolution:** dedicated walkthrough at the end of Step 7, in the order: Step 6 walks 1–10, Step 5 walks 1–10, EXPLAIN ANALYZE re-run, Step 5 Test 11.
+
+### 34. Per-book drill-down view (`/dashboard/books/[id]`)
+
+Step 6 ships a `?book=<id>` filter on `/dashboard/fetch-logs` for "show me this book's recent fetches" — covers the main use case. A dedicated per-book page would also surface book metadata (latest version content preview, full version history, per-day fetch sparklines, top queries) — a real publisher analytics surface. Phase 3 work, conditional on real publishers asking for it.
+
+**Severity:** low (the filter pattern covers the immediate need). **Suggested resolution:** Phase 3 if requested. Route at `/dashboard/books/[id]`; reuse `BooksTable` query helpers; new query for per-book version history.
+
+### 35. Cursor pagination on `/dashboard/fetch-logs`
+
+Step 6 ships a hard 100-row cap, ordered by `created_at DESC`. Internal-alpha fetch volume is comfortably under this. As fetch volume scales, "100 most recent" stops covering the publisher's interesting window — they want yesterday's spike, last week's debugging, etc.
+
+**Severity:** low at Phase 2 (~10s/day fetches); medium when sustained volume crosses ~100/day. **Suggested resolution:** cursor-based pagination keyed on `created_at` (with a tiebreaker on `id` to handle same-timestamp rows). Avoid offset pagination — at 10k rows it scans the full prefix every page. Either a "Load more" button or numbered pages.
+
+### 36. 7-day fetch metric on Books table
+
+Step 6 ships title / latest version / total fetches / 30d fetches / active agents 30d / last fetched. The 7-day window was deferred per D6.1. If during walkthrough we find ourselves wanting "is this book still trending or just historically big?", a 7-day column is the next obvious add.
+
+**Severity:** low (cosmetic; the 30-day metric covers most decisions). **Suggested resolution:** add `COUNT(...) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::int AS fetches_7d` to `getBooksWithMetrics` and a column to the table. ~3 lines.
+
+### 37. "Show error details" toggle on `/dashboard/fetch-logs`
+
+Step 6 explicitly does NOT show `fetch_logs.error_message` in the UI (D6.6). When a real Bedrock error happens in prod, the publisher only sees a red `Error` badge with no detail. For debug sessions ("why did this book error 4 times yesterday?") this is annoying — `error_message` is sanitized (whitelist-only via `sanitizeError`) so the leak risk is bounded.
+
+**Severity:** low (cosmetic; debugging path exists via direct DB query). **Suggested resolution:** add a toggle (cookie-stored, dashboard-wide) that reveals `error_message` in a collapsible row detail. Phase 3 if real errors are accumulating in prod; otherwise irrelevant.
+
+### 38. Real-time updates on `/dashboard/fetch-logs` (SSE or polling)
+
+Step 6 ships manual `router.refresh()` only. A live operations dashboard would auto-update. Internal-alpha doesn't need it — the publisher doesn't watch the dashboard during agent activity.
+
+**Severity:** low at Phase 2; revisit if Phase 3 introduces an "operations" persona. **Suggested resolution:** SSE preferred (matches the agent-endpoint pattern), or simple poll every 10s. Either way, throttle and pause-on-blur to avoid burning CPU on backgrounded tabs.
+
+### 39. Split publisher and subscriber dashboards before external onboarding
+
+Phase 2 ships a single-tenant simplified dashboard (D6.8): Books table shows all books in the system, Fetch Logs scopes to the current user's subscriber. At single-tenant scale, the publisher-vs-subscriber distinction collapses to the same render. Once external subscribers onboard, the two views become distinct:
+
+- **Publisher view** ("my books and how they're being used"): Books table = "books I publish", Fetch logs = "all fetches against my books across all subscribers"
+- **Subscriber view** ("books I have access to and my usage"): Books table = "books I subscribe to" (from the per-book auth model in #32), Fetch logs = "my fetches"
+
+Resolution depends on the multi-tenant role model — per-publisher? per-tier? admin vs viewer? Single user belonging to one or many publishers? Same questions as #32; co-resolve.
+
+**Severity:** medium — Phase 3 prerequisite before external onboarding. **Suggested resolution:** define the role model with stakeholder input first, then split routes (`/dashboard/publisher/*` vs `/dashboard/subscriber/*`?), add scope filters to queries, gate sidebar nav by role. Some users may want both (a publisher who's also a subscriber to other publishers' books); design needs to handle that gracefully.
+
+### 40. Verify Google OAuth client consent screen is set to "Internal" (Workspace-only)
+
+The OAuth client at GCP Console (the `354236878710...` client_id) has its consent-screen scope (Internal vs External) configured server-side at Google, not visible from EC2. If the consent screen is set to "External," any Google account can complete the OAuth flow, which means our `events.createUser` callback will create a User + Subscriber row for any Google identity that hits the redirect URI. At Phase 2 internal-alpha this is bounded (the `2tmorrow.com` audience is small and the redirect URIs aren't leaked), but pre-pilot it becomes a real surface.
+
+**Severity:** medium pre-pilot, low at internal-alpha. **Suggested resolution:** verify in GCP Console that the consent screen is "Internal" (restricts to the Workspace tenant). If it's "External," either flip it to Internal OR add an allowlist gate in `events.createUser` that rejects emails outside an allowed domain list before creating the User/Subscriber rows. The latter is more robust (Internal limits to the OAuth client's tenant; allowlist gives explicit control).
 
 ---
 

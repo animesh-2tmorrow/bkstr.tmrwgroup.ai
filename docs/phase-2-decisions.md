@@ -335,3 +335,69 @@ The route still verifies (1) the book exists and (2) the targeted version has co
 **Choice:** the sanitization helper (`sanitizeError`) was validated standalone via an SSM Node script that imported the helper logic and ran 11 synthetic Bedrock-shaped errors through it (every known class in the whitelist + unknowns + non-Error inputs + a 600-char-className truncation case). All cases passed every leak/format/cap check; zero leak payloads appeared in any output. The route's call sites for `sanitizeError` are grep-confirmed at `route.ts:219` (pre-stream) and `route.ts:294` (mid-stream). The end-to-end "Test 11" (temporarily set MODEL_ID to a bogus value, send a real request, inspect persisted `fetch_logs.error_message`) is deferred to Step 7's walkthrough where real seeded book content makes the round-trip natural.
 
 **Reasoning:** running Test 11 in isolation now would cost two production deploys (bogus push + revert) plus a fixture insert + cleanup, against a Step-5 deploy budget already at 1/3. The helper-alone validation closes the security-sensitive bit (helper output never carries leak content) at zero deploy cost. Route integration is grep-static evidence — every value flowing into `errorMessage` is either a string literal, a template literal interpolating compile-time module constants, or `sanitizeError(err)`. Tests 1–10 (happy path, cache hit, 400/401/404 boundaries, 413 oversized content, query-length cap, mid-stream error) are also blocked on real seeded content and roll into Step 7's walkthrough naturally. Filed forward-pointer #33 so we don't lose track.
+
+---
+
+## Step 6 — Dashboard metrics + fetch logs view
+
+### D6.1 — Books table columns: title, latest version, total fetches, last 30d, active agents 30d, last fetched
+
+**Choice:** six metrics columns plus a "View fetches" action. Skipped the 7-day window (filed #36 if useful during walkthrough).
+
+**Reasoning:** the kickoff specified these six. Each answers a publisher-shaped question: "what's live", "what version", "is this getting used at all", "is it growing", "how many distinct callers", "is it still alive." 7-day adds noise without distinct decision value at internal-alpha; defer until somebody actually wants it.
+
+### D6.2 — Fetch logs view at `/dashboard/fetch-logs`, cross-book, optional `?book=` filter
+
+**Choice:** standalone page, not a sub-section of `/dashboard`. Defaults to all books for the current subscriber; `?book=<uuid>` narrows to one book. The Books table's "View fetches" action links into the filter.
+
+**Reasoning:** the natural shape — most of the time you want chronological cross-book ("what just happened?"); occasionally you want one book ("why is this book's metric weird?"). Two pages would be redundant; a filter on one page handles both.
+
+### D6.3 — Last 100 rows, no pagination
+
+**Choice:** hard cap at 100. Filed #35 for cursor pagination when row count makes 100 annoying.
+
+**Reasoning:** Phase 2's expected fetch volume is ~10s–100s of fetches per day. 100 rows covers a few days of activity. Pagination machinery (cursor encoding, "load more" UI, scroll position preservation) is real engineering for a use case we don't have yet.
+
+### D6.4 — Manual `router.refresh()`. No polling, no SSE, no websockets.
+
+**Choice:** a Refresh button that calls `router.refresh()` (Next.js App Router server-component re-render). No automatic refresh.
+
+**Reasoning:** the user is a publisher reviewing their fetch log dashboard, not a live-monitoring agent. Manual refresh matches the intent. Filed #38 for live updates if Phase 3 dashboards want them.
+
+### D6.5 — Server components + direct Prisma. No new API routes.
+
+**Choice:** the dashboard pages are server components reading directly from Prisma. No `/api/dashboard/*` routes.
+
+**Reasoning:** the dashboard is auth-gated, the data lives in the same DB, and the pages render server-side anyway. An API route adds: (a) a serialization step, (b) a network hop, (c) a separate auth surface. None has a consumer at Phase 2 — every reader is the dashboard itself. Phase 3 may revisit if external consumers (e.g. mobile app) need a JSON surface.
+
+### D6.6 — Status badges color-coded. `error_message` NOT shown in UI.
+
+**Choice:** badge colors map status → tone:
+- `success` / `cache_hit` → green
+- `timeout` / `content_too_large` → yellow
+- `error` → red
+- anything else → neutral
+
+`fetch_logs.error_message` is NEVER displayed in the dashboard. Filed #37 for a debug-mode toggle.
+
+**Reasoning:** the UI shows the user's own data (queries) but not implementation details (sanitized error class names that look noisy without context). When a fetch errored, the publisher cares "did this book fail?" — yes/no via the badge — not the Bedrock class name. The full error text remains queryable from the DB for actual debugging.
+
+### D6.7 — Query strings shown in the UI (truncated 80 chars, full on hover)
+
+**Choice:** `fetch_logs.query` is displayed in the table, truncated at 80 chars with a `title=` tooltip showing the full query.
+
+**Reasoning:** the query is the publisher's own data about how their book is being used — core value of the dashboard. Truncation keeps the table readable; tooltip preserves the full content for debugging. D3.3's "query is logged, response is not" rule is what makes this safe to display: queries are user-provided text, not publisher content or model output.
+
+### D6.8 — Single-tenant simplified dashboard scope
+
+**Choice:** Books table scopes to all books in the system (no publisher/subscriber filter). Fetch logs view scopes to the current user's subscriber via the user→subscriber relation. The publisher-vs-subscriber view distinction is deliberately deferred per follow-up #39.
+
+**Reasoning:** Phase 2's locked scope is one publisher + one book + one subscriber. Adding a User→Publisher schema linkage now (option a in the pre-gather report) would commit to a multi-tenant role model not yet stakeholder-validated (per-publisher? per-tier? admin vs viewer?). Going subscriber-only (option b) requires per-book auth (#32) which is also deferred. Single-tenant simplified view (option c) is honest framing: the scope question is unresolved, and at single-tenant scale all three options collapse to the same render.
+
+**Test data note:** `subscribers` and `users` each contain 2 rows from 2 distinct Google identities (`animeshk604@gmail.com` personal + `clawbot@tmrwgroup.ai` workspace) — both are valid test users that signed in via Step 1's OAuth flow. The dashboard's user→subscriber resolution rule handles both correctly: each session sees its own subscriber's fetch logs. The OAuth client's consent-screen status (Internal vs External) couldn't be verified from EC2 alone — filed #40 for out-of-band check before any external pilot.
+
+### D6.9 — Sidebar extracted into `DashboardShell` component
+
+**Choice:** added `src/components/dashboard/dashboard-shell.tsx` that takes `active: "books" | "api-keys" | "fetch-logs"` plus session-derived props (companyName, userEmail, initial) and renders the sidebar + main slot. The three pages (`/dashboard`, `/dashboard/api-keys`, `/dashboard/fetch-logs`) all use it.
+
+**Reasoning:** Step 4 left the sidebar duplicated between `/dashboard` and `/dashboard/api-keys`. Step 6 adds a third page that would have been the third copy. Three near-identical sidebars with one different "active" item each is the canonical signal for extraction. The extraction is small (~70-line component, replaces ~70 lines per page) and produces grep-clean nav-item ownership.
