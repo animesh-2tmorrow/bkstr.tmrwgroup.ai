@@ -41,3 +41,8 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# Local seed content for the book import script (D7.5).
+# Imported via `npm run import-book` per-environment; never bundled with code.
+/seed-content/*.md
+/seed-content/**/*.md

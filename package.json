@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "import-book": "tsx scripts/import-book.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1045.0",
@@ -29,6 +30,7 @@
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.14",
     "tailwindcss": "^3.4.19",
+    "tsx": "4.21.0",
     "typescript": "^5"
   }
 }

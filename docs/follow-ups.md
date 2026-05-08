@@ -361,6 +361,44 @@ The OAuth client at GCP Console (the `354236878710...` client_id) has its consen
 
 **Severity:** medium pre-pilot, low at internal-alpha. **Suggested resolution:** verify in GCP Console that the consent screen is "Internal" (restricts to the Workspace tenant). If it's "External," either flip it to Internal OR add an allowlist gate in `events.createUser` that rejects emails outside an allowed domain list before creating the User/Subscriber rows. The latter is more robust (Internal limits to the OAuth client's tenant; allowlist gives explicit control).
 
+### 41. Admin upload UI for books (replaces the CLI script)
+
+Step 7 ships a CLI import script. For non-engineering publishers (Phase 3+), a dashboard page where an admin uploads a markdown file via drag-drop or paste-as-text would cover the same operations without engineering involvement. Depends on the admin role-model resolution that #39 will trigger.
+
+**Severity:** low at Phase 2 (one engineering operator); medium when external publishers onboard. **Suggested resolution:** Phase 3 work after the admin role model is defined. The UI calls the same import primitive as the CLI — the script's logic moves into a server action or API route, the UI provides the upload widget and feedback.
+
+### 42. Bulk import (directory of markdown files)
+
+The Step 7 script imports one file per invocation. A bulk mode that takes a directory and iterates would help any future "seed N books at once" operation (a publisher with a corpus of skill files, an initial deployment with multiple books). Today's flow needs N invocations of `npm run import-book` — fine for 3–5 files, tedious for 30.
+
+**Severity:** low (current scope is small enough for per-file invocation). **Suggested resolution:** add `--directory <path>` mode that walks the directory for `*.md` files and imports each. Use the filename (minus `.md`) as default `--title`; require uniform `--publisher` and `--domain` across the batch. Or: write a tiny bash wrapper that loops `find . -name "*.md"` and invokes the existing script. Either works; the wrapper is cheaper.
+
+### 43. Source ingest from S3 / URL / GitHub
+
+The Step 7 script reads from a local file path only. Phase 3+ may want to ingest from S3 (operational source-of-truth for shared content), URL (one-liner imports of public markdown), or GitHub (publisher-managed content via repos). All three multiply failure modes (auth, rate limits, content negotiation, encoding) and benefit from being staged through the file-path primitive — `curl url > tmp.md && import tmp.md` is the current workflow and works.
+
+**Severity:** low (file-path primitive plus shell wrappers covers every realistic Phase 2 ingest). **Suggested resolution:** Phase 3 conditional on operator ask. Implementation shape: `--source <s3://...|https://...|gh://owner/repo/path>` flag that resolves to a temp file then delegates to the existing import logic. Each source needs its own auth path.
+
+### 44. Content size guard at import time
+
+The Step 5 agent endpoint enforces a 150k-token estimate cap (`MAX_CONTENT_TOKENS`) at fetch time. The import script does NOT enforce this — it'll happily insert a multi-megabyte markdown file. Result: the import succeeds, but every fetch against that book version 413s with `content_too_large`. Belt-and-suspenders would be to fail the import early.
+
+**Severity:** low (the runtime guard catches the case correctly; the only operator surprise is "I imported it, why doesn't it serve?"). **Suggested resolution:** add a `--no-size-check` flag to allow oversized imports for archival, but default to enforcing the same `MAX_CONTENT_TOKENS` cap that Step 5 enforces. Phase 3 polish — until RAG/chunking lands (#27), there's no recovery path for oversized books anyway.
+
+### 45. `book_versions.content_uri` (Phase 1 S3 placeholder) vs `content` (Step 3 inline) — transitional state
+
+`book_versions` has both columns:
+- `content_uri TEXT NOT NULL` — Phase 1's design pointer to S3-stored markdown. Step 7 fills this with `inline://<book_version_id>` — a self-describing placeholder communicating "content lives in the column, not in S3."
+- `content TEXT` (nullable) — Step 3's addition; the actual markdown.
+
+As of Step 7, **inline `content` is the source of truth.** `content_uri` is dead-pointing data kept only because the column is required NOT NULL.
+
+**Severity:** low (no functional impact at Phase 2 — the agent endpoint reads `content` directly per Step 5). **Suggested resolution:** Phase 3 cleanup. Two real options:
+1. **Commit to inline storage** — drop `content_uri` (additive migration, then app code stops setting it), make `content` NOT NULL, single source of truth.
+2. **Design a clean inline-vs-S3 dual-storage model** — useful if multi-MB books become a real workload (S3 is more economical for blob storage at scale than Postgres TEXT). Define precedence: when both are set, which wins? When only one, which is canonical? Migration tool to move existing rows between modes.
+
+Either resolution is meaningful schema work and should land alongside #27 (RAG/chunking) since both touch the storage shape.
+
 ---
 
-*Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
+*Last updated: 2026-05-09. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

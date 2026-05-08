@@ -401,3 +401,54 @@ The route still verifies (1) the book exists and (2) the targeted version has co
 **Choice:** added `src/components/dashboard/dashboard-shell.tsx` that takes `active: "books" | "api-keys" | "fetch-logs"` plus session-derived props (companyName, userEmail, initial) and renders the sidebar + main slot. The three pages (`/dashboard`, `/dashboard/api-keys`, `/dashboard/fetch-logs`) all use it.
 
 **Reasoning:** Step 4 left the sidebar duplicated between `/dashboard` and `/dashboard/api-keys`. Step 6 adds a third page that would have been the third copy. Three near-identical sidebars with one different "active" item each is the canonical signal for extraction. The extraction is small (~70-line component, replaces ~70 lines per page) and produces grep-clean nav-item ownership.
+
+---
+
+## Step 7 — Book import script + seed corpus
+
+### D7.1 — Import is a CLI script, not a UI
+
+**Choice:** `npm run import-book -- --publisher ... --title ... --domain ... --file ...`. No admin UI for book upload in Phase 2.
+
+**Reasoning:** the only operator at Phase 2 is engineering. A CLI is faster to write, easier to reason about for idempotency (re-runnable without UI state), and trivially scriptable for bulk imports later. Admin UI work is filed as #41 (Phase 3) and depends on the admin role-model resolution that #39 will trigger.
+
+### D7.2 — Publisher upsert by slug, not name
+
+**Choice:** the script auto-slugifies `--publisher <name>` and upserts on `Publisher.slug`. The schema's unique constraint is `slug @unique`; `name` is not unique.
+
+**Reasoning:** the prompt's example assumed `name @unique` but the actual schema has `slug @unique`. Slug is the URL-safe identifier and the natural key for upsert. The operator-facing risk: the same publisher entered as `"tmrwgroup"` vs `"TMRW Group"` produces two different slugs (and thus two different rows). Documented in `docs/operations.md` so the operator knows to keep the publisher name consistent across imports.
+
+### D7.3 — Idempotent import via SHA-256 content hash diff
+
+**Choice:** before inserting a new `book_version`, the script reads the latest version's `content` column, hashes both (file content + existing content) with SHA-256, compares. Equal → no-op exit 0 with `unchanged:` log line. Different → insert new version with `version = max + 1`.
+
+**Reasoning:** content equality is the right test. If the operator re-runs the same `--file` against the same book without changing the markdown, we don't want a v2/v3/v4 churn of identical content. SHA-256 is overkill for collision avoidance but cheap and unambiguous. The hash is computed on the fly — no `content_hash` column on the schema (D7.4).
+
+### D7.4 — No `content_hash` column added; hash on the fly
+
+**Choice:** SHA-256 is computed at import time on both the new file and the latest version's stored content. Single comparison cost is trivial (~10ms for a typical SKILL.md sub-100KB).
+
+**Reasoning:** persisting the hash would add a column with no query consumer. Re-hashing the latest row on each import is cheaper than maintaining a separate column, and there's no plausible Phase 3 use case where we'd want to query "find books whose content matches this hash" (the existing inline-storage model means the content itself is queryable directly). YAGNI.
+
+### D7.5 — Seed content lives in gitignored `/seed-content/`
+
+**Choice:** the directory is tracked (via `.gitkeep`) but `*.md` files inside are gitignored. Seed files live per-environment, committed to operator's local workspace, not to the repo.
+
+**Reasoning:** seed content is operational test data, not source code. Possible licensing/attribution concerns we haven't audited (the SKILL.md files Animesh sources from agent-skill marketplaces have their own licenses). Bundling them with the application would conflate operational data with code in a way that complicates clean-room rebuilds. The local-only convention also means the prod EC2 doesn't ship with empty seed files cluttering its filesystem; imports are run by the operator against the prod DB via SSH-tunneled DATABASE_URL when seeding.
+
+### D7.6 — Source format is local file path; no S3/URL/GitHub ingest
+
+**Choice:** `--file <path>` only. No `--url`, no `--s3-bucket`, no `gh:owner/repo/path`.
+
+**Reasoning:** every external-source ingest path multiplies failure modes (auth, rate limits, content negotiation, encoding). At Phase 2 with the operator running imports manually from their laptop, the file-path interface is the lowest-friction option that handles every existing source via a one-line `curl` or `gh` step before invoking the script. Filed #43 to revisit alongside admin UI in Phase 3.
+
+### D7.7 — Schema reality differs from the Phase 2 plan summary
+
+**Discovery:** the Phase 2 kickoff plan summarized the book storage shape simply, but the actual schema (Phase 1 design) has:
+- `Book.slug` (varchar 128, required) and `Book.domain` (varchar 64, required) in addition to `title`
+- `BookVersion.contentUri` (Text, required, was the Phase 1 S3 placeholder) and `BookVersion.byteSize` (Int, required) in addition to the Step-3-added `content` (Text, nullable)
+- `BookVersion.version` field, not `versionNumber`
+
+**Choice:** Step 7's import populates all of these. `Book.slug` auto-slugifies from `--title` (override with `--slug`); `Book.domain` is required CLI arg `--domain`. `BookVersion.contentUri` is set to `inline://<book_version_id>` to communicate inline storage; the UUID is generated client-side via `crypto.randomUUID()` so id and contentUri can be set in a single insert with no two-phase create-then-update. `BookVersion.byteSize` is `Buffer.byteLength(content, 'utf8')`.
+
+**Schema-debt note:** as of Step 7, **inline `content` is the source of truth.** `content_uri` is a forward-looking placeholder pointing nowhere real. Cleanup deferred to follow-up #45 — either drop `content_uri` (commit to inline storage) or design a clean inline-vs-S3 dual-storage model with a clear precedence rule. Either resolution is Phase 3 work.
