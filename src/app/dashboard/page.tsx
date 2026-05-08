@@ -1,10 +1,24 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { SignOutLink } from "@/components/auth/sign-out-link";
 
 export const metadata = {
   title: "Dashboard | bkstr",
 };
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const session = await auth();
+  if (!session?.user?.email) redirect("/login");
+
+  const subscriber = await prisma.subscriber.findFirst({
+    where: { user: { email: session.user.email } },
+    select: { companyName: true },
+  });
+  const companyName = subscriber?.companyName ?? "Personal";
+  const userEmail = session.user.email;
+  const initial = (session.user.name?.[0] ?? userEmail[0] ?? "?").toUpperCase();
+
   return (
     <div className="min-h-screen flex">
       {/* Sidebar */}
@@ -12,7 +26,7 @@ export default function DashboardPage() {
         <div className="p-6 border-b border-[#E5DCC8]">
           <div className="text-2xl font-bold serif italic">bkstr</div>
           <div className="text-xs font-semibold text-gray-500 mt-1 uppercase tracking-wider">
-            Acme Corp
+            {companyName}
           </div>
         </div>
         <nav className="flex-grow p-4 space-y-1 text-sm font-medium text-gray-600">
@@ -35,13 +49,11 @@ export default function DashboardPage() {
         <div className="p-6 border-t border-[#E5DCC8]">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-8 h-8 rounded-full bg-[#EAE2D0] flex items-center justify-center text-xs font-bold text-gray-600">
-              A
+              {initial}
             </div>
-            <div className="text-sm font-medium truncate">admin@acme.com</div>
+            <div className="text-sm font-medium truncate">{userEmail}</div>
           </div>
-          <Link href="/" className="text-sm text-gray-500 hover:text-gray-900 font-medium">
-            Log out
-          </Link>
+          <SignOutLink />
         </div>
       </aside>
 

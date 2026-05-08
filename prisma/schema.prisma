@@ -91,16 +91,90 @@ model BookVersion {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Auth (NextAuth v4 + @next-auth/prisma-adapter)
+// User = identity (email, name, image, OAuth provider linkage).
+// Account = per-provider OAuth tokens (one User can link multiple providers).
+// Session = active database-backed session (revocable, listable).
+// VerificationToken = magic-link / email verification challenge (kept for
+//   future magic-link enable; Phase 2 is Google-only — see decision log D1).
+// All four tables follow Phase 1's snake_case @@map convention.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified")
+  name          String?
+  image         String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  accounts   Account[]
+  sessions   Session[]
+  subscriber Subscriber?
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(uuid()) @db.Uuid
+  userId            String  @map("user_id") @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Subscribers
 // Companies that consume books via API for their internal agent fleets.
+// Each Subscriber maps 1:1 to a User in Phase 2 (unique constraint on user_id);
+// future phases relax this to many-to-many. user_id is nullable so Phase 1
+// pre-existing Subscriber rows (none yet) survive the migration; new signups
+// always populate it via the NextAuth signIn callback.
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Subscriber {
   id          String   @id @default(uuid()) @db.Uuid
+  userId      String?  @unique @map("user_id") @db.Uuid
   companyName String   @map("company_name") @db.VarChar(255)
   email       String   @db.VarChar(255)
   createdAt   DateTime @default(now()) @map("created_at")
 
+  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   apiKeys       SubscriberApiKey[]
   subscriptions Subscription[]
 

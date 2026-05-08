@@ -13,6 +13,21 @@ rsync -av --delete /var/www/release/bkstr/ /var/www/bkstr/ \
 # Change to live app directory.
 cd /var/www/bkstr
 
+# Source app env files into this shell so `sudo -u ubuntu -E` propagates
+# them to prisma + pm2. /var/www/bkstr/.env is rsync-preserved (DATABASE_URL).
+# /etc/bkstr/oauth.env is operator-staged (GOOGLE_*, NEXTAUTH_*); absence is
+# tolerated for first-deploy-before-staging cases but logged loudly so the
+# "Google sign-in fails with cryptic client_id error" failure mode is caught.
+set -a
+source /var/www/bkstr/.env
+if [ -f /etc/bkstr/oauth.env ]; then
+  source /etc/bkstr/oauth.env
+  echo "[start.sh] OAuth env sourced from /etc/bkstr/oauth.env (keys: $(grep -oE '^[A-Z_]+=' /etc/bkstr/oauth.env | tr -d '=' | tr '\n' ' '))"
+else
+  echo "[start.sh] WARN: /etc/bkstr/oauth.env not present — Google sign-in will fail until staged."
+fi
+set +a
+
 # Prisma migration runs HERE (not before-install). At this point .env is
 # in /var/www/bkstr/.env (rsync preserved it via --exclude) and
 # node_modules/.bin/prisma is a real symlink (enable-symlinks: yes in
@@ -27,10 +42,12 @@ sudo -u ubuntu -E npx prisma migrate deploy --schema prisma/schema.prisma
 # commands so the daemon owns its own files in /home/ubuntu/.pm2/.
 export PM2_HOME=/home/ubuntu/.pm2
 
-# Graceful reload: reloads if running, starts if not.
+# Graceful reload with --update-env so newly added OAuth vars propagate to
+# the running process (without --update-env, pm2 reuses the env captured at
+# the original `pm2 start` invocation, leaving GOOGLE_CLIENT_ID undefined).
 # First deploy hits the start branch (no existing process); subsequent
 # deploys hit the reload branch (zero-downtime).
-sudo -u ubuntu -E pm2 reload bkstr-web || sudo -u ubuntu -E pm2 start npm --name "bkstr-web" -- run start
+sudo -u ubuntu -E pm2 reload bkstr-web --update-env || sudo -u ubuntu -E pm2 start npm --name "bkstr-web" -- run start
 
 # Save PM2 process list so pm2-ubuntu.service can resurrect it on boot.
 sudo -u ubuntu -E pm2 save
