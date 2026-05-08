@@ -104,7 +104,9 @@ pkill -f 'next-server' 2>/dev/null || true
 
 Verified end-to-end via controlled `aws ec2 reboot-instances` before Phase 1 close. Boot id changed from `4bd5e610-…` → `88352098-…`, uptime reset, all four key services (postgresql, nginx, codedeploy-agent, pm2-ubuntu) came back active. `journalctl -u pm2-ubuntu` showed the full sequence: `[PM2] Resurrecting → Restoring processes located in /home/ubuntu/.pm2/dump.pm2 → Process /usr/bin/npm restored`. PM2 daemon PID 842 (fresh), next-server PID 946 (fresh), `:3000` re-bound, external `curl https://bkstr.tmrwgroup.ai/` returned 200 with Content-Length 34254 within 3s of post-reboot SSM agent recovery. Cold-boot ordering with postgres+nginx is verified working.
 
-### 10. Delete legacy `bkstr-app.service` systemd unit before Phase 2 kickoff
+### 10. ~~Delete legacy `bkstr-app.service` systemd unit before Phase 2 kickoff~~ **RESOLVED 2026-05-08**
+
+> Resolved during Phase 2 Pre-step. SSM-executed `systemctl disable` → `rm /etc/systemd/system/bkstr-app.service` → `daemon-reload`. Pre-state confirmed `inactive`+`disabled`; post-state shows no `bkstr`-named unit-files. `pm2-ubuntu.service` remained active and `bkstr-web` was undisturbed (same pid 1478 across the operation); prod still 200.
 
 The pre-structural-reset deploy chain installed `/etc/systemd/system/bkstr-app.service` as the original Next.js process supervisor. After adopting PM2 (commit `f5ca66c`) it was disabled and stopped. The unit file is still on disk; `systemctl status bkstr-app` shows `loaded (disabled / inactive (dead))`.
 
@@ -117,7 +119,9 @@ sudo systemctl daemon-reload
 
 Cleanup task; no functional change.
 
-### 11. Rotate Postgres `bkstr` user password before Phase 2's first real-world traffic
+### 11. ~~Rotate Postgres `bkstr` user password before Phase 2's first real-world traffic~~ **RESOLVED 2026-05-08**
+
+> Resolved during Phase 2 Pre-step. New 32-char alphanumeric password generated server-side via `openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32`; `ALTER USER bkstr WITH PASSWORD ...` applied; both `/var/www/bkstr/.env` and `/etc/bkstr/app.env` rewritten via Python URL-surgery (URL-encoded password, atomic temp-file replace preserving original ownership and mode 600); pre-rotation backups left at `*.pre-phase2-rotation`. Verified: direct `psql` round-trip with new password returned `bkstr / bkstr_app / 1`, `pm2 reload --update-env` clean (restart_time=3, "✓ Ready in 833ms"), all four prod routes returned 200. New password handed off to operator via `/home/ubuntu/.bkstr-new-pw.txt` (mode 600 ubuntu) — never printed to chat. Old password (Phase 1 chat history) is now invalid.
 
 The current password was generated server-side via `openssl rand -base64 24 | tr -d '/+=' | head -c 32` during Phase 1 Step 5. It is mode-protected at rest at `/var/www/bkstr/.env` (mode 600 ubuntu:ubuntu) and `/etc/bkstr/app.env` (mode 600 root:root). However, **the plaintext password appears in chat history of the Phase 1 build session** (it was printed at provisioning time for the operator's records). Before Phase 2 ships any real-world traffic, the password should be rotated so that the chat-history copy is no longer valid.
 
