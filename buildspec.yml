@@ -1,38 +1,36 @@
 version: 0.2
 
+env:
+  shell: bash
+
 phases:
   install:
     runtime-versions:
       nodejs: 20
     commands:
-      - node --version
-      - npm --version
-  pre_build:
-    commands:
-      - npm ci
-      - npx prisma generate
+      - echo "Installing dependencies (including devDependencies) with npm ci..."
+      - npm ci --include=dev
   build:
     commands:
+      - echo "Generating Prisma client..."
+      - npx prisma generate
+      - echo "Building Next.js application..."
       - npm run build
+      - echo "Pruning devDependencies for runtime artifact..."
+      - npm prune --omit=dev
   post_build:
     commands:
+      - echo "Ensuring hook scripts are executable..."
       - chmod +x scripts/*.sh
 
 artifacts:
+  enable-symlinks: yes
   files:
-    - 'appspec.yml'
-    - 'prisma.config.ts'
-    - 'package.json'
-    - 'package-lock.json'
-    - 'next.config.ts'
-    - 'next-env.d.ts'
-    - 'tsconfig.json'
-    - 'tailwind.config.ts'
-    - 'postcss.config.js'
-    - 'public/**/*'
-    - 'src/**/*'
-    - '.next/**/*'
-    - 'node_modules/**/*'
-    - 'prisma/**/*'
-    - 'scripts/**/*'
-  name: bkstr-build
+    - "**/*"
+    - ".next/**/*"
+    - "node_modules/**/*"
+  exclude-paths:
+    - ".git/**/*"
+    - ".github/**/*"
+    - "node_modules/.cache/**/*"
+    - ".next/cache/**/*"

@@ -54,6 +54,14 @@ Ubuntu 24.04 ships nginx 1.24.0 in its package repo. nginx 1.25+ adds HTTP/3 (QU
 
 **Severity:** none today (1.24 works, HTTPS + HTTP/2 enabled via listen-line parameter). **Suggested resolution:** decision deferred until Phase 2 has a concrete need (e.g., HTTP/3 for mobile clients, or a feature only in 1.26+). Default until then: stay on Ubuntu's repo nginx, accept the 1.24 syntax constraints. If pinning is needed: nginx's official repo (`nginx.org/packages/ubuntu`) is preferred over random PPAs.
 
+### 6. `start.sh` rsync excludes need expansion when user-upload directories land
+
+`scripts/start.sh` currently rsyncs the deployment release dir into `/var/www/bkstr/` with `--delete --exclude .env`. This is correct for Phase 1 (only `.env` needs preservation across deploys). When Phase 2 introduces persistent on-instance state — book content uploads, profile images, generated artifacts, or anything else not intended to be wiped on each deploy — `start.sh`'s `--exclude` list needs to grow.
+
+The reference selfandmatchnew chain excludes `public/images/products`, `public/images/blog`, `storage` for this reason. Whatever bkstr's equivalents are, they go in the rsync exclude list at the same time as the feature itself lands.
+
+**Severity:** none today (no user uploads in Phase 1). **Suggested resolution:** every PR adding persistent on-instance directories must update `start.sh` rsync excludes in the same diff. Add a checklist item to whatever PR template/conventions land for Phase 2.
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
