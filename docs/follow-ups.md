@@ -100,6 +100,47 @@ pkill -f 'next-server' 2>/dev/null || true
 
 **Severity:** medium (caused a real false-positive green deploy that almost passed undetected). **Suggested resolution:** roll into the local-hook-validation discipline (#2). Update any future validation runbook to use the PID-capture pattern.
 
+### ~~9. First EC2 reboot post-Phase-1 validates the `pm2-ubuntu.service` resurrect path~~ — **RESOLVED 2026-05-08**
+
+Verified end-to-end via controlled `aws ec2 reboot-instances` before Phase 1 close. Boot id changed from `4bd5e610-…` → `88352098-…`, uptime reset, all four key services (postgresql, nginx, codedeploy-agent, pm2-ubuntu) came back active. `journalctl -u pm2-ubuntu` showed the full sequence: `[PM2] Resurrecting → Restoring processes located in /home/ubuntu/.pm2/dump.pm2 → Process /usr/bin/npm restored`. PM2 daemon PID 842 (fresh), next-server PID 946 (fresh), `:3000` re-bound, external `curl https://bkstr.tmrwgroup.ai/` returned 200 with Content-Length 34254 within 3s of post-reboot SSM agent recovery. Cold-boot ordering with postgres+nginx is verified working.
+
+### 10. Delete legacy `bkstr-app.service` systemd unit before Phase 2 kickoff
+
+The pre-structural-reset deploy chain installed `/etc/systemd/system/bkstr-app.service` as the original Next.js process supervisor. After adopting PM2 (commit `f5ca66c`) it was disabled and stopped. The unit file is still on disk; `systemctl status bkstr-app` shows `loaded (disabled / inactive (dead))`.
+
+**Severity:** none today (disabled+inactive, no boot path activates it). **Suggested resolution before Phase 2:**
+```bash
+sudo systemctl disable bkstr-app   # idempotent; already disabled
+sudo rm /etc/systemd/system/bkstr-app.service
+sudo systemctl daemon-reload
+```
+
+Cleanup task; no functional change.
+
+### 11. Rotate Postgres `bkstr` user password before Phase 2's first real-world traffic
+
+The current password was generated server-side via `openssl rand -base64 24 | tr -d '/+=' | head -c 32` during Phase 1 Step 5. It is mode-protected at rest at `/var/www/bkstr/.env` (mode 600 ubuntu:ubuntu) and `/etc/bkstr/app.env` (mode 600 root:root). However, **the plaintext password appears in chat history of the Phase 1 build session** (it was printed at provisioning time for the operator's records). Before Phase 2 ships any real-world traffic, the password should be rotated so that the chat-history copy is no longer valid.
+
+**Procedure:**
+```bash
+# 1. Generate new password on EC2:
+NEW_PASS=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
+
+# 2. ALTER ROLE in postgres:
+sudo -u postgres psql -c "ALTER USER bkstr WITH PASSWORD '$NEW_PASS'"
+
+# 3. Update both .env files atomically:
+sudo sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://bkstr:${NEW_PASS}@localhost:5432/bkstr_app?schema=public|" /var/www/bkstr/.env /etc/bkstr/app.env
+
+# 4. Restart bkstr-web to pick up new env:
+sudo -u ubuntu PM2_HOME=/home/ubuntu/.pm2 pm2 reload bkstr-web
+
+# 5. Verify connectivity:
+curl -I https://bkstr.tmrwgroup.ai/   # should still be 200
+```
+
+**Severity:** medium (password is mode-protected on EC2 but exposed in chat-history backups). **Suggested resolution:** rotate before any Phase 2 user data lands.
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
