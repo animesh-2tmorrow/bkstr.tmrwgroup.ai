@@ -23,24 +23,25 @@ export const authOptions: NextAuthOptions = {
     signIn: "/login",
   },
   callbacks: {
-    async signIn({ user }) {
-      if (!user?.id) return true;
-      await prisma.subscriber.upsert({
-        where: { userId: user.id },
-        create: {
-          userId: user.id,
-          companyName: user.name?.trim() || "Personal",
-          email: user.email ?? "",
-        },
-        update: {},
-      });
-      return true;
-    },
     async session({ session, user }) {
       if (session.user && user) {
         (session.user as { id?: string }).id = user.id;
       }
       return session;
+    },
+  },
+  events: {
+    async createUser({ user }) {
+      if (!user.id || !user.email) {
+        throw new Error(`createUser event fired without id/email: ${JSON.stringify(user)}`);
+      }
+      await prisma.subscriber.create({
+        data: {
+          userId: user.id,
+          companyName: user.name?.trim() || "Personal",
+          email: user.email,
+        },
+      });
     },
   },
 };
