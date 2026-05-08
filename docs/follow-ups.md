@@ -300,6 +300,12 @@ Currently open-access — any authenticated subscriber can fetch any book; key v
 
 **Severity:** medium — not a Phase 2 blocker, but a Phase 3 prerequisite before external onboarding. **Suggested resolution:** define the access pattern with stakeholder input first; then the schema and route changes follow naturally. Likely shape: a `subscriber_books` join table (UUID PK, `subscriber_id` FK, `book_id` FK, `granted_at`, unique `(subscriber_id, book_id)`) plus a `WHERE EXISTS` clause in the agent endpoint's book lookup. Step 7's import script (or a dedicated grant flow) populates the join table.
 
+### 33. End-to-end agent fetch verification (tests 1–11) deferred to Step 7's walkthrough
+
+Step 5 closed without running the prompt's tests 1–11 (happy path, cache hit, 400/401/404 boundaries, 413 oversized content, 8000-char query cap, mid-stream Bedrock error → sanitized log). All eleven require a real `book_versions.content` row, which doesn't exist until Step 7's import script seeds the first markdown. Sanitization helper output was validated standalone via an SSM Node script (D5.12) — that closes the security-sensitive piece without burning the Step 5 deploy budget on a fixture-insert dance.
+
+**Severity:** low (functional surface, not a security gap). **Suggested resolution:** during Step 7's walkthrough, after the import script seeds tmrwgroup's first book and Animesh has an active API key, run the eleven curls from Step 5's prompt § "Functional (local)" against prod (or against `npm run dev` with an SSH-tunneled DATABASE_URL) and capture results. Test 11 (bogus MODEL_ID) costs two deploys; do it last so the bogus-then-revert pair lives at the end of Step 7 rather than interleaving with Step 7's own pipeline activity.
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
