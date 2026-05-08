@@ -1,0 +1,37 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - node --version
+      - npm --version
+  pre_build:
+    commands:
+      - npm ci
+      - npx prisma generate
+  build:
+    commands:
+      - npm run build
+  post_build:
+    commands:
+      - chmod +x scripts/*.sh
+
+artifacts:
+  files:
+    - 'appspec.yml'
+    - 'package.json'
+    - 'package-lock.json'
+    - 'next.config.ts'
+    - 'next-env.d.ts'
+    - 'tsconfig.json'
+    - 'tailwind.config.ts'
+    - 'postcss.config.js'
+    - 'public/**/*'
+    - 'src/**/*'
+    - '.next/**/*'
+    - 'node_modules/**/*'
+    - 'prisma/**/*'
+    - 'scripts/**/*'
+  name: bkstr-build

@@ -1,0 +1,22 @@
+[Unit]
+Description=bkstr.tmrwgroup.ai Next.js app
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/var/www/bkstr
+EnvironmentFile=/etc/bkstr/app.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bkstr-app
+
+[Install]
+WantedBy=multi-user.target

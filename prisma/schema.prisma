@@ -1,0 +1,153 @@
+// bkstr.tmrwgroup.ai — Prisma schema
+// Phase 1 scaffold: multi-tenant publisher/book/subscriber model.
+// No eval tables yet (deferred until Edward confirms eval depth).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum BookStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum SubscriptionTier {
+  STARTER
+  GROWTH
+  ENTERPRISE
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Publishers
+// Multi-tenant root. Seed at Step 5 with `tmrwgroup` and `etumos`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Publisher {
+  id        String   @id @default(uuid()) @db.Uuid
+  slug      String   @unique @db.VarChar(64)
+  name      String   @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  books Book[]
+
+  @@map("publishers")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Books
+// A "book" is a compressed knowledge artifact owned by a publisher.
+// Domain is a free-text categorization tag for now (Marketing Ops, QA, etc.).
+// Versions live in book_versions; the latest active version is the served one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Book {
+  id          String     @id @default(uuid()) @db.Uuid
+  publisherId String     @map("publisher_id") @db.Uuid
+  slug        String     @db.VarChar(128)
+  title       String     @db.VarChar(255)
+  domain      String     @db.VarChar(64)
+  status      BookStatus @default(DRAFT)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  publisher Publisher     @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+  versions  BookVersion[]
+
+  @@unique([publisherId, slug])
+  @@index([status])
+  @@index([domain])
+  @@map("books")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Book Versions
+// Append-only version chain. content_uri points to S3 in v1; placeholder
+// `s3://bkstr-books-placeholder/...` is acceptable for Phase 1.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BookVersion {
+  id         String   @id @default(uuid()) @db.Uuid
+  bookId     String   @map("book_id") @db.Uuid
+  version    Int
+  contentUri String   @map("content_uri") @db.Text
+  byteSize   Int      @map("byte_size")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@unique([bookId, version])
+  @@index([bookId, createdAt])
+  @@map("book_versions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscribers
+// Companies that consume books via API for their internal agent fleets.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Subscriber {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyName String   @map("company_name") @db.VarChar(255)
+  email       String   @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  apiKeys       SubscriberApiKey[]
+  subscriptions Subscription[]
+
+  @@index([email])
+  @@map("subscribers")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscriber API Keys
+// Hash-only storage. Plaintext key returned at issuance only, never persisted.
+// `key_prefix` retains the first ~8 characters of the plaintext (e.g. "bks_abc1")
+// so operators can identify a key in the UI without ever seeing the rest.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SubscriberApiKey {
+  id           String    @id @default(uuid()) @db.Uuid
+  subscriberId String    @map("subscriber_id") @db.Uuid
+  keyHash      String    @unique @map("key_hash") @db.VarChar(128)
+  keyPrefix    String    @map("key_prefix") @db.VarChar(16)
+  lastUsedAt   DateTime? @map("last_used_at")
+  revokedAt    DateTime? @map("revoked_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@index([subscriberId])
+  @@map("subscriber_api_keys")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscriptions
+// Tier + status pair for billing. Pricing is placeholder; no Stripe linkage
+// yet (the prompt's locked decision: Stripe SDK installed, no live calls).
+// `status` is a free-text string in Phase 1 — values aren't yet specified
+// (TRIALING, ACTIVE, PAST_DUE, CANCELED are the likely set).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Subscription {
+  id           String           @id @default(uuid()) @db.Uuid
+  subscriberId String           @map("subscriber_id") @db.Uuid
+  tier         SubscriptionTier
+  status       String           @db.VarChar(32)
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@index([subscriberId])
+  @@map("subscriptions")
+}
