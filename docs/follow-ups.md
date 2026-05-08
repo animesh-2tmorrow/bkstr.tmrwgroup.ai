@@ -78,6 +78,28 @@ A transitive dep of `prisma@^7.8.0` declares Node 22+ in its `engines` field. We
 
 **Severity:** none today (warn, doesn't block). Becomes a hard requirement if a future Prisma version converts the warn to error, OR if `@prisma/streams-local` adds Node 22-only API usage. **Suggested resolution:** monitor Prisma upgrade notes; either upgrade EC2 Node to 22+ when Phase 2 lands, or pin Prisma at the highest 7.x that doesn't bump this requirement.
 
+### 8. Phase C local validation must capture the spawned PID and kill that specific PID at end
+
+The Phase C validation script started `npm start` in the background to verify the unpacked artifact serves `:3000` correctly. At the end of the script, cleanup tried `pkill -f 'next start'` and `pkill -f 'npm start'`. **Both patterns missed the actual runtime process**, which renames itself to `next-server (v15.5.18)` after the npm/next exec chain completes. Result: an orphaned `next-server` process kept listening on `:3000` for ~8 minutes until the actual deploy ran — at which point PM2's `pm2 start npm --name bkstr-web -- run start` hit `EADDRINUSE: :::3000` and retried 16 times until PM2 marked the entry errored. Production was briefly served by the orphan, not the deploy's PM2-managed process.
+
+The deploy itself was correct; the bug is in the validation script's cleanup discipline.
+
+**Fix shape for next time:** capture the PID into a file at spawn-time, kill that specific PID at end. Don't rely on `pkill -f` against a name that the runtime may rename.
+
+```bash
+# Right way:
+sudo -u ubuntu nohup npm start > /tmp/.../validate-npm-start.log 2>&1 &
+NPM_PID=$!
+echo "$NPM_PID" > /tmp/.../validate.pid
+# ...validation curl checks...
+kill "$(cat /tmp/.../validate.pid)" 2>/dev/null || true
+sleep 2
+# Defensive backup: any next-server that escaped (none expected)
+pkill -f 'next-server' 2>/dev/null || true
+```
+
+**Severity:** medium (caused a real false-positive green deploy that almost passed undetected). **Suggested resolution:** roll into the local-hook-validation discipline (#2). Update any future validation runbook to use the PID-capture pattern.
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
