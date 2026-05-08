@@ -62,6 +62,22 @@ The reference selfandmatchnew chain excludes `public/images/products`, `public/i
 
 **Severity:** none today (no user uploads in Phase 1). **Suggested resolution:** every PR adding persistent on-instance directories must update `start.sh` rsync excludes in the same diff. Add a checklist item to whatever PR template/conventions land for Phase 2.
 
+### 7. EBADENGINE warning on `@prisma/streams-local@0.1.2` declaring `node >=22`
+
+Surfaced during Phase C local-repro `npm ci` on the EC2:
+
+```
+npm warn EBADENGINE Unsupported engine {
+  package: '@prisma/streams-local@0.1.2',
+  required: { bun: '>=1.3.6', node: '>=22.0.0' },
+  current: { node: 'v20.20.2', npm: '10.8.2' }
+}
+```
+
+A transitive dep of `prisma@^7.8.0` declares Node 22+ in its `engines` field. We're on Node 20 (matching the EC2's repo nginx-era stack) and `npm ci` treats this as `warn`, not error — install + build + runtime all proceed.
+
+**Severity:** none today (warn, doesn't block). Becomes a hard requirement if a future Prisma version converts the warn to error, OR if `@prisma/streams-local` adds Node 22-only API usage. **Suggested resolution:** monitor Prisma upgrade notes; either upgrade EC2 Node to 22+ when Phase 2 lands, or pin Prisma at the highest 7.x that doesn't bump this requirement.
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
