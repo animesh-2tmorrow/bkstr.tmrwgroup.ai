@@ -452,3 +452,19 @@ The route still verifies (1) the book exists and (2) the targeted version has co
 **Choice:** Step 7's import populates all of these. `Book.slug` auto-slugifies from `--title` (override with `--slug`); `Book.domain` is required CLI arg `--domain`. `BookVersion.contentUri` is set to `inline://<book_version_id>` to communicate inline storage; the UUID is generated client-side via `crypto.randomUUID()` so id and contentUri can be set in a single insert with no two-phase create-then-update. `BookVersion.byteSize` is `Buffer.byteLength(content, 'utf8')`.
 
 **Schema-debt note:** as of Step 7, **inline `content` is the source of truth.** `content_uri` is a forward-looking placeholder pointing nowhere real. Cleanup deferred to follow-up #45 — either drop `content_uri` (commit to inline storage) or design a clean inline-vs-S3 dual-storage model with a clear precedence rule. Either resolution is Phase 3 work.
+
+### D7.8 — `tsx` ships as a runtime dependency, not a devDependency
+
+**Choice:** moved `tsx@4.21.0` from `devDependencies` to `dependencies` in `package.json` after the first Step 7 deploy revealed `npm run import-book` fails with `sh: 1: tsx: not found` post-deploy.
+
+**Reasoning:** the buildspec runs `npm prune --omit=dev` after `npm run build` to slim the deployed bundle. devDependencies (including the originally-placed `tsx`) are removed before the artifact rsync's to `/var/www/bkstr/`. Result: the import script ships at `/var/www/bkstr/scripts/import-book.ts` and the npm alias `"import-book": "tsx scripts/import-book.ts"` is in `package.json`, but the `tsx` binary isn't reachable from `node_modules/.bin/`. The script is dead-on-arrival as a deployed primitive.
+
+Three real fix options were considered. **Picked (a) move tsx to runtime deps** because:
+- `docs/operations.md` documents `npm run import-book -- ...` as a single self-contained primitive. Keeping the contract clean matters more than the ~3-5 MB bundle bloat.
+- Alternative (b) — change the npm alias to `npx -y tsx@4.21.0 ...` — adds 2-5s cold-start per invocation as npx caches tsx. Burns ~10-25s when seeding 5+ books in a row.
+- Alternative (c) — pre-compile to JS at build time — is a heavier refactor that postpones the fix.
+- Phase 3 is likely to want tsx for other operations scripts (admin imports, data migrations, ad-hoc queries) — promoting now forecloses re-litigating.
+
+**Trade-off accepted:** tsx is conceptually a dev tool but in this codebase it's also the runtime entrypoint for our operations scripts. Shipping it in production node_modules is the honest framing of that role. The alternative (claiming "tsx is dev-only" while having a documented operations primitive that depends on it) is a dishonest trade between bundle aesthetics and tooling correctness.
+
+**Process note:** the prompt's instruction was "if `tsx` not present, add as exact pin" without specifying which dependency section. Step 7's first deploy validated the script's logic but didn't validate the deploy pipeline's interaction with the dependency placement. Filed as informational learning: any future "ops script that uses dev tooling" addition should explicitly verify post-prune availability before considering the work done.
