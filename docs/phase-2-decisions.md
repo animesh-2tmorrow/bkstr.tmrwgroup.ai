@@ -83,3 +83,61 @@ Decisions made during Phase 2 product work. Every flagged decision in `bkstr-pha
 ## Open questions for Step 1 STOP-gate review
 
 (All resolved per D1.8–D1.10 above. Animesh's local validation walk is the remaining gate before push.)
+
+---
+
+## Step 2 — Bedrock IAM + SDK setup
+
+### D2.1 — Model selection: `us.anthropic.claude-sonnet-4-5-20250929-v1:0` (US inference profile)
+
+**Choice:** the US cross-region inference profile, ARN `arn:aws:bedrock:us-east-1:049405321468:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0`. Not the foundation-model ARN.
+
+**Forced choice (not preference):** the Sonnet 4.5 foundation model (`anthropic.claude-sonnet-4-5-20250929-v1:0`) reports `inferenceTypesSupported: ["INFERENCE_PROFILE"]` in our region. Direct `InvokeModel` against the foundation-model ARN is not supported — Bedrock requires invocation through an inference profile. Two profiles are available in our account (us-east-1):
+- `us.anthropic...` — routes within US regions only (us-east-1, us-east-2, us-west-2)
+- `global.anthropic...` — routes globally
+
+We picked **US** because EC2 is in us-east-1, the US-only region pool gives more predictable latency and lower egress, and US-internal failover already provides resilience without global routing. Phase 3+ may revisit if cross-region disaster-recovery requirements expand.
+
+**Why Sonnet 4.5 over Haiku 4.5:** matches Lab's choice (same operator, same patterns), handles 50k+ token system prompts comfortably (full marketing-ops markdown will fit), and Zach's iteration loop benefits more from Sonnet's reasoning quality than from Haiku's lower latency. Cost per fetch is reasonable for an internal alpha. Phase 3 may revisit if usage scales or if a fast-path tier emerges.
+
+### D2.2 — Policy scope: `bkstr-bedrock-access` inline, model+profile resources only
+
+**Choice:** inline policy on `bkstr-ec2-role` named `bkstr-bedrock-access`, allowing only `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` against four ARNs (the US inference profile + the three foundation-model ARNs the profile internally routes to).
+
+**Stream permission included for Phase 3 readiness.** Phase 2 is non-streaming per the locked decision; the `InvokeModelWithResponseStream` permission is unused today, but pre-granting avoids a policy update when streaming lands. Tradeoff accepted: a slightly broader IAM surface today for one less migration step later. Both actions are still scoped to the same model — there's no `bedrock:*`, no list/describe, no embedding/rerank actions.
+
+**The four-ARN gotcha.** When using inference profiles, Bedrock internally invokes the underlying foundation model in whichever region wins routing. That internal invocation needs IAM permission too — granting only the profile ARN is insufficient. The policy lists all three foundation-model ARNs (us-east-1, us-east-2, us-west-2) so any internal routing is permitted. Filed follow-up #16 to re-audit when AWS expands the US profile's region pool.
+
+### D2.3 — Region: `us-east-1`
+
+**Choice:** us-east-1, matching the EC2 region and Phase 1's locked decision.
+
+**Reasoning:** Sonnet 4.5 is available in us-east-1 (verified via `aws bedrock get-foundation-model-availability` returning `AUTHORIZED`/`AVAILABLE`). Cross-region calls would add latency without benefit. The chosen US inference profile still gives intra-US routing flexibility (us-east-2, us-west-2 as failover) without the EC2 having to issue cross-region API calls itself.
+
+### Smoke test verification (2026-05-08)
+
+Inline node `--input-type=module` test invoked via SSM, hitting the US inference profile from the EC2's instance-profile credentials (no AWS CLI keys involved). No file artifact left on EC2.
+
+```json
+{
+  "ok": true,
+  "latency_ms": 1696,
+  "response_text": "bkstr Phase 2 Bedrock smoke test OK",
+  "usage": {
+    "input_tokens": 28,
+    "output_tokens": 16,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "stop_reason": "end_turn",
+  "model": "claude-sonnet-4-5-20250929"
+}
+```
+
+Confirms: IAM path works, model actually responds (exact phrase echoed), `usage` object populated with `input_tokens`/`output_tokens` (Step 5's `fetch_logs` will pull these), latency is in the expected 1–3s range for short responses.
+
+**Side observation worth noting:** AWS SDK v3 will deprecate Node 20 support after first week of January 2027 (we're on Node 20). 8+ months runway from today; consider folding a Node 22 bump into a Phase 3 ops sweep before the deprecation window closes.
+
+### D2.4 — Bedrock SDK version pin
+
+**Choice:** `@aws-sdk/client-bedrock-runtime` pinned to exact `3.1045.0` (no caret), matching Phase 1's installed version. Dropped `^` so future `npm install` runs don't silently bump the SDK and introduce surprises.

@@ -176,6 +176,42 @@ These aren't broken — clicking `#` is a no-op except scroll-to-top, which matc
 
 **Severity:** medium (ongoing — track each as a Phase 2 feature wiring task; none are Phase 1 blockers). **Suggested resolution:** every Phase 2 PR that introduces a new destination updates the corresponding `<a href="#">` to the real route in the same diff.
 
+### 15. PM2 fork-mode `EADDRINUSE` noise during `pm2 reload`
+
+Surfaced during Step 1's first deploy (commit `aa35024`). pm2 reload spawns a new process before the old one fully releases port 3000, so the new process logs several `Error: listen EADDRINUSE: address already in use :::3000` lines while it retries the bind. The new process eventually succeeds (smoke tests confirmed the new code was running and bound on :3000), and pm2 jlist reports `online`, so this is cosmetic — but the log noise looks like a real failure to anyone tailing `pm2 logs bkstr-web` post-deploy.
+
+This is **not** the orphan-detection class of follow-up #8 (a manually-spawned `next-server` from a smoke test). #8 was about processes pm2 didn't track. #15 is about pm2's own reload mechanic in fork mode (pm2 has no graceful reload semantics in fork mode the way it does in cluster mode — it's effectively kill-then-start with a small overlap window).
+
+**Fix shapes (decision deferred — three real options, each with a tradeoff):**
+
+1. Switch `pm2 reload` to `pm2 restart` in `start.sh` — explicit kill-then-start, no overlap, no EADDRINUSE noise. **Cost:** ~1s of downtime per deploy (was effectively zero with reload).
+2. Switch to pm2 cluster mode with 2 instances — true zero-downtime reload via worker rotation. **Cost:** ~2x memory baseline, more moving parts, requires Next.js to be cluster-safe (stateless server-side, sticky session not required since we use database sessions).
+3. Tune `kill_timeout` higher in pm2 ecosystem config — give the old process longer to release the port before the new one tries to bind. **Cost:** longer worst-case deploy time if a process hangs.
+
+**Severity:** low cosmetic (it's noise, not a failure). **Suggested resolution:** option 1 in Phase 3 polish unless the noise becomes confusing in operations.
+
+### 16. Audit `bkstr-bedrock-access` resource list when AWS announces new US regions for Sonnet inference profiles
+
+Surfaced during Step 2 (2026-05-08). The `bkstr-bedrock-access` inline policy on `bkstr-ec2-role` scopes the foundation-model resource list to `us-east-1`, `us-east-2`, `us-west-2` — the three regions the `us.anthropic.claude-sonnet-4-5-20250929-v1:0` cross-region inference profile currently routes to. AWS occasionally adds regions to the US inference profile pool; the policy must include those new regions or the profile's internal routing will fail with `AccessDeniedException` on the foundation-model invocation step.
+
+**Detection:** when `aws bedrock get-inference-profile --inference-profile-identifier us.anthropic.claude-sonnet-4-5-20250929-v1:0` shows a new region in `models[].modelArn`, update the policy.
+
+**Severity:** low (only manifests if AWS expands the profile and we hit the new region during routing). **Suggested resolution:** add to a pre-Phase-3 ops audit checklist; optionally script a periodic check.
+
+### 17. Node 20 → Node 22 bump before AWS SDK v3 deprecates Node 20 (Jan 2027)
+
+AWS SDK v3 announced deprecation of Node 20 runtime support after the first week of January 2027. EC2 currently runs Node 20.20.2; CodeBuild's `runtime-versions.nodejs: 20` matches. About 8 months runway from May 2026. Worth folding a Node 22 bump into a Phase 3 ops sweep — not urgent now. Lab uses Node 20 too; coordinate the bump across both projects so we don't end up with split runtime versions on the same EC2 fleet.
+
+**Severity:** low (no failure today; deprecation window is months out). **Suggested resolution:** Phase 3 ops sweep; bump CodeBuild's `runtime-versions.nodejs`, install Node 22 on EC2 via nvm or apt, retest the deploy chain, coordinate timing with Lab.
+
+### 18. Bedrock prompt caching for repeated book-markdown system prompts
+
+Sonnet 4.5 supports prompt caching, visible in Step 2's smoke test as `cache_creation_input_tokens` / `cache_read_input_tokens` fields in the `usage` object (currently both 0). The Phase 2 expected pattern — same book markdown sent as a system prompt across many fetches by the same subscriber — is the canonical case prompt caching is designed for. Enabling caching could meaningfully reduce per-fetch cost once fetch volume scales.
+
+**Why deferred:** Phase 2 ships one book and one subscriber for an internal alpha; per-fetch cost is negligible at this scale, and adding cache-control blocks to the request shape complicates the agent endpoint without measurable benefit yet. Revisit when (a) Zach's iteration loop produces meaningful fetch volume, OR (b) Phase 3 onboards additional subscribers.
+
+**Severity:** medium (real cost optimization that becomes obvious to evaluate the moment fetch volume crosses any meaningful threshold; not a correctness issue). **Suggested resolution:** Phase 3 evaluation. Implementation is small — wrap the system-prompt content block with `{"cache_control": {"type": "ephemeral"}}` per Bedrock's docs and verify cache-read tokens dominate cache-creation in the usage object after warm-up.
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
