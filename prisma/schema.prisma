@@ -81,9 +81,11 @@ model BookVersion {
   version    Int
   contentUri String   @map("content_uri") @db.Text
   byteSize   Int      @map("byte_size")
+  content    String?  @db.Text
   createdAt  DateTime @default(now()) @map("created_at")
 
-  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  book      Book       @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  fetchLogs FetchLog[]
 
   @@unique([bookId, version])
   @@index([bookId, createdAt])
@@ -177,6 +179,7 @@ model Subscriber {
   user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   apiKeys       SubscriberApiKey[]
   subscriptions Subscription[]
+  fetchLogs     FetchLog[]
 
   @@index([email])
   @@map("subscribers")
@@ -199,6 +202,7 @@ model SubscriberApiKey {
   createdAt    DateTime  @default(now()) @map("created_at")
 
   subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  fetchLogs  FetchLog[]
 
   @@index([subscriberId])
   @@map("subscriber_api_keys")
@@ -224,4 +228,38 @@ model Subscription {
 
   @@index([subscriberId])
   @@map("subscriptions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fetch Logs
+// One row per agent-endpoint Bedrock invocation. Captures metadata + the
+// query string. Response bodies are NEVER persisted (D3.3). Token counts
+// and latency are nullable so error rows carry honest NULLs rather than
+// sentinel zeros. status is free-form TEXT today (success/error/timeout);
+// will enum-ize in Phase 3 once values stabilize (follow-up #20).
+// No retention policy at internal-alpha (follow-up #19).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model FetchLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  subscriberId  String   @map("subscriber_id") @db.Uuid
+  bookVersionId String   @map("book_version_id") @db.Uuid
+  apiKeyId      String   @map("api_key_id") @db.Uuid
+  model         String   @db.Text
+  query         String   @db.Text
+  inputTokens   Int?     @map("input_tokens")
+  outputTokens  Int?     @map("output_tokens")
+  latencyMs     Int?     @map("latency_ms")
+  status        String   @db.Text
+  errorMessage  String?  @map("error_message") @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  subscriber  Subscriber       @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  bookVersion BookVersion      @relation(fields: [bookVersionId], references: [id], onDelete: Restrict)
+  apiKey      SubscriberApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Restrict)
+
+  @@index([subscriberId, createdAt(sort: Desc)])
+  @@index([bookVersionId])
+  @@index([apiKeyId, createdAt(sort: Desc)])
+  @@map("fetch_logs")
 }

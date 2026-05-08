@@ -141,3 +141,44 @@ Confirms: IAM path works, model actually responds (exact phrase echoed), `usage`
 ### D2.4 — Bedrock SDK version pin
 
 **Choice:** `@aws-sdk/client-bedrock-runtime` pinned to exact `3.1045.0` (no caret), matching Phase 1's installed version. Dropped `^` so future `npm install` runs don't silently bump the SDK and introduce surprises.
+
+---
+
+## Step 3 — Schema additions for content + fetch_logs
+
+### D3.1 — Markdown stored as a single TEXT column on `book_versions`
+
+**Choice:** add `content` (nullable `TEXT`) directly on `book_versions`. No separate `book_content` table.
+
+**Reasoning:** versioning is already handled by `book_versions` being its own append-only table — each version is a row with its own `content_uri` (S3 placeholder from Phase 1) and now its own inline content. A separate `book_content` table would force a join on every fetch with no benefit at internal-alpha scale (one book, one version active at a time). When Step 5's LRU cache reads a version's content, it's a single row read keyed by `book_version_id` — the cleanest shape Postgres can give us.
+
+**Nullable on purpose.** Existing rows have no content; Step 7's import script populates. Never want a publisher row blocked from existing because content hasn't been uploaded yet. Phase 3 may revisit if the column starts hurting query plans (TOAST overhead on large rows is a known Postgres edge case but irrelevant at our row-size and row-count scale).
+
+### D3.2 — `fetch_logs` column set + nullability
+
+**Choice:** columns are `id, subscriber_id, book_version_id, api_key_id, model, query, input_tokens, output_tokens, latency_ms, status, error_message, created_at`. All three FKs are `NOT NULL`. `model`, `query`, `status` are `NOT NULL`. `input_tokens`, `output_tokens`, `latency_ms`, `error_message` are nullable.
+
+**FK NOT NULL rationale:** every fetch comes through the agent endpoint with a Bearer key for an authenticated subscriber against a specific book_version. There is no shape of valid log row that lacks any of the three.
+
+**Token-count + latency nullable:** error rows (Bedrock 4xx, timeout, network failure) won't have these populated. Forcing `NOT NULL` would push us toward sentinel zero values, which would silently corrupt Step 6's "avg tokens", "p95 latency" metrics. Honest NULLs let analytics queries `WHERE input_tokens IS NOT NULL` cleanly.
+
+**`error_message` nullable:** populated only on non-success rows. Filed forward-pointer to Step 5: implementation must include a sanitization layer ensuring this never carries Bedrock response content (see follow-up #21).
+
+**FK delete behaviors:**
+- `subscriber_id ON DELETE CASCADE` — subscriber teardown takes the fetch history with them.
+- `book_version_id ON DELETE RESTRICT` — never want a book_version deleted while logs reference it; restrict forces an explicit cleanup path if a publisher pulls a version.
+- `api_key_id ON DELETE RESTRICT` — key revocation must NOT cascade-delete logs (revocation should preserve audit trail; only full subscriber teardown should sweep logs).
+
+### D3.3 — Query string IS logged. Response body is NOT.
+
+**Choice:** asymmetric on purpose.
+
+**Reasoning:** the query is the user's input — useful for debugging ("why did Zach see this output?"), useful for future eval work (replaying queries against new model versions), and not particularly sensitive. The response body is the publisher's compressed knowledge interpolated through the model — logging it creates a leak surface (a DBA dump exposes content the publisher pays to gate behind API keys), inflates row size unpredictably, and adds nothing we can't get by re-running the query against the same `book_version_id` later.
+
+**Forward-pointer to Step 5:** `error_message` field needs a sanitization layer. Bedrock's error responses occasionally echo prompt content; we must strip that before persisting. Filed as follow-up #21.
+
+### D3.4 — No retention policy on `fetch_logs` at internal-alpha
+
+**Choice:** unbounded growth for now. Filed follow-up #19 for revisit.
+
+**Reasoning:** internal alpha will produce on the order of 10s–100s of fetches per day. Even at 1k/day, the table reaches 365k rows in a year — well within Postgres single-table comfort zone for the index shape we have. Adding retention policy now (pg_cron sweeps, partitioning, app-side sweepers) is premature optimization that creates moving parts before the moving parts pay for themselves. Revisit when the table hits ~100k rows or when Edward asks about cost.

@@ -212,6 +212,26 @@ Sonnet 4.5 supports prompt caching, visible in Step 2's smoke test as `cache_cre
 
 **Severity:** medium (real cost optimization that becomes obvious to evaluate the moment fetch volume crosses any meaningful threshold; not a correctness issue). **Suggested resolution:** Phase 3 evaluation. Implementation is small — wrap the system-prompt content block with `{"cache_control": {"type": "ephemeral"}}` per Bedrock's docs and verify cache-read tokens dominate cache-creation in the usage object after warm-up.
 
+### 19. `fetch_logs` retention policy
+
+Surfaced during Step 3 schema design (D3.4). Internal alpha has no retention policy — table grows unbounded. At expected internal-alpha volume (10s–100s of fetches/day), the table reaches manageable scale; the table remains well within Postgres single-table comfort zone for years. Not a problem today, becomes one at sustained higher volume.
+
+**Severity:** low at current scale (becomes medium when fetch volume crosses ~10/min sustained or table approaches 100k rows). **Suggested resolution:** revisit when table hits ~100k rows or when Edward asks about cost. Three implementation shapes worth weighing then: (a) pg_cron sweep (`DELETE WHERE created_at < now() - interval '90 days'`), (b) app-side sweep on a daily cron lambda, (c) declarative monthly partitioning (cleanest but most setup).
+
+### 20. Enum-ize `fetch_logs.status` once values stabilize
+
+Step 3 ships `status` as free-form `TEXT` (D3.2). Today's expected values are `success`, `error`, `timeout`. Once those values prove stable across Phase 2 implementation, enum-ize for query plan benefits + invariant enforcement. Postgres enum migrations are reversible but require `ALTER TYPE`; doing it now would force decisions on values that might still drift.
+
+**Severity:** low (cosmetic — free-form TEXT works correctly, just doesn't give the type-system safety net we'd prefer). **Suggested resolution:** Phase 3, when Step 5's implementation has accumulated real `status` values across observed failure modes.
+
+### 21. Step 5 must sanitize and truncate `fetch_logs.error_message`
+
+**This is a forward-pointer for Step 5, not a defer.** When Step 5 implements the agent endpoint, the catch handler that populates `fetch_logs.error_message` must strip any Bedrock response content from the error message before persisting, and truncate the result (suggested 500-char cap) before inserting. Bedrock's error responses occasionally echo prompt or response content in debug fields; logging that defeats D3.3's "response body is never persisted" rule.
+
+**Column is `TEXT` at schema level for flexibility; app layer enforces the bound.** Step 3's migration ships `error_message TEXT` (no length constraint) — keeping the schema flexible avoids future Postgres `ALTER COLUMN ... TYPE varchar(N)` migrations if the cap turns out to need adjustment. The 500-char limit is enforced in the Step 5 insert path, not by the column type.
+
+**Severity:** high — this is a privacy/leak vector if missed. **Suggested resolution:** Step 5's implementation prompt should include this as an explicit checklist item. Sanitization shape: keep `err.name` + `err.message` (then `.slice(0, 500)`), strip any field that looks like a Bedrock body (`err.$response`, `err.$metadata.requestId` are safe; anything else gets dropped before reaching the insert).
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
