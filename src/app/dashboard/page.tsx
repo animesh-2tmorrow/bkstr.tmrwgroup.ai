@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -30,12 +31,12 @@ export default async function DashboardPage() {
           </div>
         </div>
         <nav className="flex-grow p-4 space-y-1 text-sm font-medium text-gray-600">
-          <a href="#" className="block px-4 py-2.5 rounded-lg nav-item active">
+          <Link href="/dashboard" className="block px-4 py-2.5 rounded-lg nav-item active">
             Active Books
-          </a>
-          <a href="#" className="block px-4 py-2.5 rounded-lg hover:bg-[#EAE2D0] hover:text-gray-900">
+          </Link>
+          <Link href="/dashboard/api-keys" className="block px-4 py-2.5 rounded-lg hover:bg-[#EAE2D0] hover:text-gray-900">
             API Keys
-          </a>
+          </Link>
           <a href="#" className="block px-4 py-2.5 rounded-lg hover:bg-[#EAE2D0] hover:text-gray-900">
             Usage Metrics
           </a>

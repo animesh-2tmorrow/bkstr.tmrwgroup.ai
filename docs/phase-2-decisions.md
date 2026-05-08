@@ -182,3 +182,61 @@ Confirms: IAM path works, model actually responds (exact phrase echoed), `usage`
 **Choice:** unbounded growth for now. Filed follow-up #19 for revisit.
 
 **Reasoning:** internal alpha will produce on the order of 10s–100s of fetches per day. Even at 1k/day, the table reaches 365k rows in a year — well within Postgres single-table comfort zone for the index shape we have. Adding retention policy now (pg_cron sweeps, partitioning, app-side sweepers) is premature optimization that creates moving parts before the moving parts pay for themselves. Revisit when the table hits ~100k rows or when Edward asks about cost.
+
+---
+
+## Step 4 — API key issuance, auth middleware, dashboard UI
+
+### D4.1 — Key format: `bks_<32 base64url>` (192 bits of entropy)
+
+**Choice:** `bks_` prefix + 32 base64url characters (encoded from 24 random bytes via `crypto.randomBytes(24)`).
+
+**Reasoning:** the `bks_` tag makes keys self-identifying in logs and grep — operators and security tooling can scan for `bks_` to find leaked credentials in error reports, JIRA tickets, screenshots. 192 bits of entropy is well past any brute-force threshold; a 32-char base64url tail is short enough to fit on one terminal line. No `bks_test_` / `bks_live_` distinction in Phase 2 — single environment, no need yet. Phase 3 may introduce `bks_live_` and `bks_test_` if a sandbox tier emerges.
+
+### D4.2 — `key_prefix` is first 12 chars (`bks_` + 8 chars), btree-indexed
+
+**Choice:** store `plaintext.slice(0, 12)` as the `key_prefix` column. Lookup pattern: `WHERE key_prefix = $1 AND revoked_at IS NULL`, then constant-time hash compare across the (typically one, occasionally zero, theoretically many) candidates.
+
+**Reasoning:** 8 characters of base64url is 48 bits — enough to keep collision probability negligible at our key counts (you'd need millions of keys before any prefix collision was likely), but **insufficient as a credential alone** (48 bits is brute-forceable). The hash compare on the full 192-bit plaintext is the actual auth check; the prefix is purely a fast-path lookup index. Revealing the prefix in dashboard UI and logs is intentional — it lets operators identify which key was used without ever seeing the secret.
+
+The btree index on `key_prefix` (added in this Step's migration) means auth lookup is O(log n) on table size, not seq scan. Without the index, every authenticated API call would scan the entire table — pre-emptively a hot-path scan we don't want to discover under load.
+
+### D4.3 — SHA-256 hex hash. No bcrypt/argon2.
+
+**Choice:** `crypto.createHash('sha256').update(plaintext).digest('hex')` — 64-char hex string, fits in `varchar(128)`.
+
+**Reasoning:** bcrypt/argon2 are slow-by-design (compute-bound) precisely to make brute-forcing low-entropy human passwords impractical. API keys generated from `crypto.randomBytes(24)` carry 192 bits of entropy — brute-forcing them is computationally infeasible regardless of hash algorithm. Slow hashes would cost ~100ms per request on the auth hot path for zero security benefit. SHA-256 is fast, deterministic, and indexed cleanly. The unique index on `key_hash` enforces global uniqueness as a sanity belt-and-suspenders.
+
+### D4.4 — Show-once strict, gated behind explicit confirmation
+
+**Choice:** `POST /api/keys` returns the plaintext exactly once. No re-fetch path. The dashboard generate-flow modal:
+1. Displays plaintext + a copy button
+2. Requires a checkbox ("I have copied this key and stored it securely") before the "Done" button enables
+3. Holds the plaintext only in React component state during the modal lifecycle — never `localStorage`, never `sessionStorage`, no `console.log`
+4. State is dropped when the modal unmounts
+
+**Reasoning:** users who lose a key revoke and regenerate. Better UX would be reckless — every persisted-plaintext convenience is a new leak surface. The checkbox-gate forces the user to acknowledge the irreversibility before dismissing the modal, preventing the "tab closed before copy" footgun.
+
+### D4.5 — Revoke is soft delete (`revoked_at` set)
+
+**Choice:** `UPDATE subscriber_api_keys SET revoked_at = NOW() WHERE id = $1`. No row deletion.
+
+**Reasoning:** half is forced — `fetch_logs.api_key_id ON DELETE RESTRICT` (Step 3) blocks hard delete when any fetch logs reference the key. Half is choice — even without the FK, soft delete preserves audit trail ("which key was used to fetch this book on this date"), supports unrevoke if the operator changes their mind, and matches how every other auth system represents revocation. Hard delete only happens if a Subscriber teardown cascades through (and even then the logs cascade with the subscriber).
+
+### D4.6 — Per-route auth helper, not Next.js root middleware.ts
+
+**Choice:** `requireApiKey(request)` lives at `src/lib/auth/api-key.ts` and is called at the top of `/api/agent/fetch` (Step 5). No `middleware.ts` at the project root.
+
+**Reasoning:** Next.js root middleware runs on the **edge runtime**, where Prisma 7's driver-adapter (`@prisma/adapter-pg` + `pg`) does not run — `pg` is Node-only. Putting auth in middleware would require a separate edge-compatible code path for the auth DB lookup (e.g., Prisma's HTTP-based driver, or a separate verifier service). Per-route helpers run on the Node runtime where Prisma already works. The trade-off accepted: a one-line `await requireApiKey(req)` at the top of each protected route, instead of one `middleware.ts` config. For the single agent endpoint Phase 2 ships, the trade-off is trivial.
+
+### D4.7 — `name` column added with `DEFAULT ''` for backfill safety
+
+**Choice:** `ALTER TABLE subscriber_api_keys ADD COLUMN name TEXT NOT NULL DEFAULT ''`. Empty string is allowed; the dashboard UI italicizes "(no name)" on rows where `name.trim() === ''`.
+
+**Reasoning:** any pre-existing rows (Phase 1 had zero, but the migration must be safe regardless) get `name = ''` rather than failing on NOT NULL. Empty allowed but the UI nudges toward naming. A future Phase 3 may add a backfill script if the empty-name population becomes annoying; for internal alpha at one user with new keys, irrelevant.
+
+### D4.8 — `key_prefix` btree index added in this Step (not deferred)
+
+**Choice:** add `CREATE INDEX subscriber_api_keys_key_prefix_idx ON subscriber_api_keys(key_prefix)` in this same migration as the `name` column, not deferred to a Phase 3 perf pass.
+
+**Reasoning:** correctness-adjacent. The auth helper's lookup pattern is `WHERE key_prefix = $1 AND revoked_at IS NULL`; without the index, every authenticated API call to the agent endpoint does a sequential scan. At Phase 2 scale (one user, a handful of keys) the scan is fine; at any meaningful scale it's a hot-path bottleneck that's invisible in dev and painful in prod. Adding the index now costs nothing and forecloses a future "why is the agent endpoint slow" debugging session.

@@ -232,6 +232,38 @@ Step 3 ships `status` as free-form `TEXT` (D3.2). Today's expected values are `s
 
 **Severity:** high — this is a privacy/leak vector if missed. **Suggested resolution:** Step 5's implementation prompt should include this as an explicit checklist item. Sanitization shape: keep `err.name` + `err.message` (then `.slice(0, 500)`), strip any field that looks like a Bedrock body (`err.$response`, `err.$metadata.requestId` are safe; anything else gets dropped before reaching the insert).
 
+### 22. API key expiry (`expires_at` column + enforcement)
+
+Step 4 ships keys with no expiry — they live until explicitly revoked. Phase 2 internal-alpha is fine without this; a future paid customer or first security review will likely ask for time-bounded keys. Defer until that ask materializes; not worth pre-building.
+
+**Severity:** low (no user yet asking; deferred per locked decision). **Suggested resolution:** add `expires_at TIMESTAMP` column, default null (no expiry), then enforce in `requireApiKey` with `(revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()))`. UI surface for setting expiry on key generation. Mention in the security write-up at first paid customer or security review.
+
+### 23. Rate limiting on `/api/agent/fetch` and `/api/keys`
+
+No rate limits in Phase 2. Single internal-alpha user; the agent endpoint will see a few fetches per minute at most. Will need rate limiting before any external surface — both per-IP (defense against unauthenticated probes hitting auth endpoints) and per-key (preventing a leaked key from running up the Bedrock bill).
+
+**Severity:** medium when internal-alpha graduates to broader access; low until then. **Suggested resolution:** evaluate against a Redis-backed token-bucket library (e.g., `@upstash/ratelimit`) once external traffic is in scope. Per-key limits may want to vary by `subscriber.subscription.tier`.
+
+### 24. Partial index `subscriber_api_keys WHERE revoked_at IS NULL`
+
+Step 6's "active agents" metric will likely query `SELECT COUNT(DISTINCT subscriber_api_keys.id) WHERE revoked_at IS NULL AND subscriber_id = $1`. The full btree index on `subscriber_id` works, but a partial index `(subscriber_id) WHERE revoked_at IS NULL` would be smaller and more selective for that exact predicate. Defer until Step 6's query is written and we observe the actual access pattern — premature without the call site to plan against.
+
+**Severity:** low (no functional impact; perf optimization only). **Suggested resolution:** add when Step 6's "active agents" query lands, if EXPLAIN ANALYZE shows the partial index would help. Most likely value at Phase 3 scale, irrelevant at Phase 2.
+
+### 25. Schema-wide TIMESTAMPTZ standardization
+
+Currently mixed: Phase 1 tables (`publishers`, `books`, `book_versions`, `subscribers`, `subscriber_api_keys`, `subscriptions`) use `timestamp(3)` without timezone. Step 3's `fetch_logs.created_at` uses `timestamptz(6)`. NextAuth tables (Step 1) use `timestamp(3)` without timezone for `email_verified` and `expires`. Mixed nullable shapes too.
+
+The one consistent rule: every column is in UTC because that's what Postgres does when no TZ is specified. The mismatch is purely cosmetic in our single-timezone deployment, but standardization helps when (a) Phase 3+ users span multiple timezones, (b) any query bridges columns from different tables (`SELECT NOW() - created_at` works regardless, `created_at AT TIME ZONE` calls hit different surface depending on column type).
+
+**Severity:** low cosmetic. **Suggested resolution:** Phase 3 cleanup migration. Pick `TIMESTAMPTZ(3)` (or whichever precision) as the standard; convert via `ALTER COLUMN ... TYPE TIMESTAMPTZ USING (col AT TIME ZONE 'UTC')`. Test against a copy of prod data first; type changes can rewrite tables (Postgres 12+ avoids the rewrite when the conversion is in-place compatible, which this should be).
+
+### 26. `curl -I` on App Router API routes returns 400; runbook hygiene
+
+Surfaced during Step 2's no-op deploy smoke test. NextAuth's App Router handler exports `GET` + `POST` only, not `HEAD` (`curl -I` sends HEAD by default). The 400 is correct behavior — Next.js's App Router is strict about unhandled methods — but it surprises operators expecting `curl -I` to be a universal "is this thing alive?" check. Same will apply to Step 4's `/api/keys` and `/api/keys/[id]`.
+
+**Severity:** low (documentation/runbook only; no code fix needed). **Suggested resolution:** prefer `curl -X GET <url> -o /dev/null -w "%{http_code}\n"` in any smoke-test script that targets API routes. Fold into a Phase 3 ops runbook or a `scripts/smoke.sh` if one ever materializes. Optionally: add a tiny `/api/health` route that explicitly handles HEAD (`export async function HEAD() { return new Response(null) }`) for `curl -I` compatibility.
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

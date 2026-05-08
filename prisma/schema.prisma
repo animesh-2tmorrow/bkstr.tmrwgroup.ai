@@ -195,6 +195,7 @@ model Subscriber {
 model SubscriberApiKey {
   id           String    @id @default(uuid()) @db.Uuid
   subscriberId String    @map("subscriber_id") @db.Uuid
+  name         String    @default("") @db.Text
   keyHash      String    @unique @map("key_hash") @db.VarChar(128)
   keyPrefix    String    @map("key_prefix") @db.VarChar(16)
   lastUsedAt   DateTime? @map("last_used_at")
@@ -205,6 +206,7 @@ model SubscriberApiKey {
   fetchLogs  FetchLog[]
 
   @@index([subscriberId])
+  @@index([keyPrefix])
   @@map("subscriber_api_keys")
 }
 
