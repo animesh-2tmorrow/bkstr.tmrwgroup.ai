@@ -264,6 +264,42 @@ Surfaced during Step 2's no-op deploy smoke test. NextAuth's App Router handler 
 
 **Severity:** low (documentation/runbook only; no code fix needed). **Suggested resolution:** prefer `curl -X GET <url> -o /dev/null -w "%{http_code}\n"` in any smoke-test script that targets API routes. Fold into a Phase 3 ops runbook or a `scripts/smoke.sh` if one ever materializes. Optionally: add a tiny `/api/health` route that explicitly handles HEAD (`export async function HEAD() { return new Response(null) }`) for `curl -I` compatibility.
 
+### 27. RAG / chunking for books that exceed the 150k token guard
+
+Step 5's content-size guard hard-rejects books exceeding ~150k tokens (per the 4-chars/token estimate) with HTTP 413. For the marketing-ops markdown Zach is iterating against this is comfortably under; for any future longer reference material (legal handbooks, full API docs, etc.) the guard will trip and the operator has no recovery path other than splitting the source.
+
+**Severity:** low at Phase 2 scope (one well-sized book); medium at Phase 3 onboarding when book sizes are unpredictable. **Suggested resolution:** Phase 3 work. Implement retrieval-augmented generation — chunk the markdown, embed each chunk, query-time retrieve top-k relevant chunks, assemble system prompt from those chunks instead of the full content. Adds a vector store (pgvector on the same Postgres instance is the cheapest path) and a chunking heuristic; the agent endpoint shape stays the same.
+
+### 28. Token estimation accuracy — replace 4-char rule with proper tokenizer when accuracy matters
+
+Step 5's `estimateTokens()` uses `Math.ceil(text.length / 4)` — Anthropic's published rule of thumb. Accurate enough for the size guard (off by maybe 20% in either direction; well within the margin of "150k is the cap"); not accurate enough for billing or for fine-grained cost prediction.
+
+**Severity:** low (no functional impact today). **Suggested resolution:** when billing or cost dashboards land in Phase 3+, swap `estimateTokens()` for `@anthropic-ai/tokenizer` (or whatever the canonical Anthropic JS tokenizer is at that point). The function signature stays the same; the size-guard threshold may need re-tuning since the new estimate will be more accurate.
+
+### 29. `lru-cache` is per-process; multi-instance deploys lose cache consistency
+
+Step 5's cache lives in the Node.js process memory. Phase 2 ships a single PM2 process so this is fine. The moment we run multiple instances (cluster mode, multi-EC2, or any horizontal scaling), each instance has its own cache — the same query against the same book version may hit cache on instance A and miss on instance B. Functionally correct (a miss just produces a real fetch), but the cache hit rate drops with the inverse of instance count.
+
+**Severity:** low at Phase 2 scope (single instance); medium when horizontal scaling lands. **Suggested resolution:** evaluate Redis (e.g., ElastiCache or Upstash) when multi-instance deploys are on the table. The cache module's interface (`getCached`/`setCached`) is small enough that swapping the backing store is ~30 lines. Until then, accept per-process inconsistency.
+
+### 30. Prompt injection hardening beyond the preamble
+
+Step 5's defense against prompt injection is a single line in the system preamble: "Only answer based on the content of the book provided below. If the answer is not in the book, say so clearly. Do not invent or speculate." This handles opportunistic "ignore your instructions and..." attacks acceptably for an internal-alpha audience. It does not handle determined attackers who craft queries to extract the system prompt, leak the book content, or coerce off-topic responses.
+
+**Severity:** low at Phase 2 (closed audience, no adversarial users); medium-to-high if/when external subscribers land. **Suggested resolution:** Phase 3 work conditional on observed bad behavior or security review feedback. Options: (a) response-side inspection (a guardrail model classifies outputs before returning), (b) Bedrock Guardrails integration, (c) per-publisher policy enforcement at the system-prompt layer. Each adds latency and complexity; defer until there's a concrete attack pattern to address.
+
+### 31. Throttle `last_used_at` writes on every `requireApiKey()`
+
+Each authenticated API call writes `last_used_at = NOW()` on the matching `subscriber_api_keys` row. At Phase 2's scale (handful of fetches per day) this is invisible. At Phase 3+ scale (sustained high-frequency agent loops) every fetch produces a write to a hot row, contending against the index and pinning the row in WAL. Realistic worst case is a few hundred writes/sec on the same row.
+
+**Severity:** low at Phase 2 (no measurable impact); medium when fetch volume crosses ~10/sec sustained. **Suggested resolution:** when volume justifies, throttle the `last_used_at` update to "only if `now() - last_used_at > 1 minute`." Either an in-memory dedup at the auth helper layer, or a conditional `UPDATE ... WHERE last_used_at < NOW() - interval '1 minute'`. Either way, accuracy of `last_used_at` drops to ~1-minute resolution — fine for dashboard display, fine for "is this key idle" queries.
+
+### 32. Per-book subscriber authorization model
+
+Currently open-access — any authenticated subscriber can fetch any book; key validity is the only gate (D5.11). Must resolve before any external subscriber onboards. Phase 3 work — design with the actual access pattern in mind (per-book? per-publisher? per-tier?). The right shape depends on whether (a) every subscriber gets every book under their tier, (b) publishers grant access per-book, (c) some books are public and some are gated, etc.
+
+**Severity:** medium — not a Phase 2 blocker, but a Phase 3 prerequisite before external onboarding. **Suggested resolution:** define the access pattern with stakeholder input first; then the schema and route changes follow naturally. Likely shape: a `subscriber_books` join table (UUID PK, `subscriber_id` FK, `book_id` FK, `granted_at`, unique `(subscriber_id, book_id)`) plus a `WHERE EXISTS` clause in the agent endpoint's book lookup. Step 7's import script (or a dedicated grant flow) populates the join table.
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

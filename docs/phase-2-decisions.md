@@ -240,3 +240,92 @@ The btree index on `key_prefix` (added in this Step's migration) means auth look
 **Choice:** add `CREATE INDEX subscriber_api_keys_key_prefix_idx ON subscriber_api_keys(key_prefix)` in this same migration as the `name` column, not deferred to a Phase 3 perf pass.
 
 **Reasoning:** correctness-adjacent. The auth helper's lookup pattern is `WHERE key_prefix = $1 AND revoked_at IS NULL`; without the index, every authenticated API call to the agent endpoint does a sequential scan. At Phase 2 scale (one user, a handful of keys) the scan is fine; at any meaningful scale it's a hot-path bottleneck that's invisible in dev and painful in prod. Adding the index now costs nothing and forecloses a future "why is the agent endpoint slow" debugging session.
+
+---
+
+## Step 5 — Agent fetch endpoint
+
+### D5.1 — Endpoint shape: `POST /api/agent/fetch`, SSE response, Bearer auth
+
+**Choice:** the agent endpoint is `POST /api/agent/fetch`. Authentication is Bearer-key via `requireApiKey()` (Step 4's helper). Successful responses are server-sent-events (SSE) streams; pre-stream failures use HTTP 4xx/5xx, mid-stream failures send `event: error` and close.
+
+**Reasoning:** SSE is the natural shape for an LLM-backed endpoint — Bedrock responses arrive token-by-token, and downstream agent loops want to start consuming as soon as the model starts producing. The "200 if stream opened" rule means the HTTP status decision is committed before we know whether the model will actually finish cleanly; mid-stream errors get represented as a final `event: error` message instead of being smuggled into the HTTP status (which the client may have already started rendering against). REST conventions of "errors are 5xx" don't fit streaming responses.
+
+### D5.2 — Request body: `{ book_id, version_id?, query }`. version_id optional, defaults to latest.
+
+**Choice:** required `book_id` (UUID), optional `version_id` (UUID; latest if omitted), required `query` (string, non-empty). Latest version resolves via `bookVersion.findFirst({ where: { bookId }, orderBy: { version: 'desc' } })`.
+
+**Reasoning:** subscribers care about "the book" most of the time, not specific versions. Defaulting to latest keeps the common case ergonomic; opting into a specific `version_id` lets eval/comparison tooling pin to a known snapshot. UUIDs validated by regex before the DB lookup so a malformed input is a 400, not a Postgres error.
+
+### D5.3 — Query length capped at 8000 chars
+
+**Choice:** reject queries over 8000 characters with HTTP 400. Pre-checked before any Bedrock call.
+
+**Reasoning:** Bedrock charges per input token. An 8000-char query is roughly 2000 tokens — generous for any reasonable question, well below abuse territory. Without the cap, a misbehaving client could ship a 1MB "query" through the system prompt path before we hit the size guard, racking up Bedrock charges. The cap is a cheap pre-gate.
+
+### D5.4 — System prompt: hardcoded preamble + book markdown; user query as user message
+
+**Choice:** the system prompt is a fixed preamble (`"You are an assistant answering questions about the following book. Only answer based on the content of the book provided below. If the answer is not in the book, say so clearly. Do not invent or speculate."` plus separator and markdown). The user query becomes the `user` role message, not interpolated into the system prompt.
+
+**Reasoning:** keeping the query out of the system prompt limits prompt-injection surface — anything in the user message can be ignored by the model per the system prompt's "only answer based on this content." This is not hardened defense (a determined attacker can phrase prompt-injection attempts in ways the preamble doesn't anticipate), but it's the floor that makes opportunistic injections unproductive. Filed follow-up #30 for hardening if behavior degrades or a security review flags it.
+
+### D5.5 — Content size guard: 150k tokens estimated via 4-char/token rule
+
+**Choice:** `estimateTokens(content) > 150_000` rejects with 413 + `status='content_too_large'`. Estimate is `Math.ceil(content.length / 4)`.
+
+**Reasoning:** Sonnet 4.5's context window is 200k tokens; reserving ~50k for the user query, the system prompt scaffolding, and the response leaves ~150k for the book. The 4-chars/token approximation is a published Anthropic rule of thumb — accurate enough for a hard-reject gate, not for billing (filed follow-up #28). RAG/chunking for books that exceed this is filed as #27 and deferred to Phase 3; today's behavior is hard-reject so a too-large book fails loudly rather than silently truncates.
+
+### D5.6 — In-memory LRU cache, 100 entries, 15-min TTL
+
+**Choice:** `lru-cache@11.3.6` exact-pinned. Key = `${book_version_id}:${sha256(query.trim().toLowerCase())}`. Value = `{ text, input_tokens, output_tokens }`. Max 100 entries, TTL 15 minutes. Cache hits replay as 50-char SSE chunks (so clients don't have to special-case "everything at once") with cached token counts and a real `latency_ms`. Errors NOT cached.
+
+**Reasoning:** the expected workload is the same query asked many times within minutes (Zach iterating, agent loops re-asking). Caching produces order-of-magnitude latency improvement for repeated queries at zero quality cost. In-memory is the right scope at Phase 2 (single PM2 process); follow-up #29 tracks moving to Redis when multi-instance deploys land. The 15-minute TTL is a guess at "how long is a 'session' worth of repeated queries" — Phase 3 with real telemetry can tune.
+
+### D5.7 — Error taxonomy
+
+**Choice:** logged-vs-not and HTTP-status mapping per kickoff prompt's table. Specifically:
+
+| Failure | HTTP | Logged? | `status` |
+|---|---|---|---|
+| Bad body / missing fields / query too long / bad UUIDs | 400 | NO | — |
+| Auth failed (`requireApiKey` throws) | 401 | NO | — |
+| Book / version not found, no content | 404 | NO | — |
+| Content exceeds size estimate | 413 | YES | `content_too_large` |
+| Bedrock errors before first token | 502 | YES | `error` |
+| Bedrock no-first-token within 30s (pre-stream) | 504 | YES | `timeout` |
+| Mid-stream Bedrock error | 200 + `event: error` | YES | `error` |
+| Mid-stream first-token-timeout (post-stream-open) | 200 + `event: error` | YES | `timeout` |
+| Happy path | 200 + full stream + `event: done` | YES | `success` |
+| Cache hit | 200 + replayed stream + `event: done` | YES | `cache_hit` |
+
+**Reasoning:** 400/401/404 are caller bugs (or unauthenticated probes) — logging them creates dashboard noise without operational signal. Anything that consumed real resources (Bedrock invocation attempted, content guard tripped, cache hit served) gets logged so the dashboard's metrics are honest. Confirmed with operator that 400-not-logged is the right call for Phase 2; revisit if it turns out we need to surface caller-bug volume.
+
+### D5.8 — Sanitization helper at `lib/agent/sanitize.ts`, single-export shape
+
+**Choice:** `sanitize.ts` exports exactly one function: `sanitizeError(err: unknown): string`. App-generated short messages (`"No first token within 30s"`, `` `content_estimate exceeds ${MAX_CONTENT_TOKENS} tokens` ``, `"Bedrock returned no body"`) are assigned directly as string literals at the call site in `route.ts`, not routed through a helper.
+
+**Reasoning:** an earlier draft included a companion `sanitizeMessage(message: string): string` for static strings. That was wrong — its `string` parameter would also accept user input or Bedrock body content, creating a sanitization-bypass surface. A future caller writing `sanitizeMessage(err.message)` or `sanitizeMessage(query)` would pass type-check despite violating the rule.
+
+Three paths considered: (a) inline literals at call sites, (b) TypeScript template-literal-types to constrain to compile-time string literals, (c) doc comment + grep enforcement. Picked (a) because the actual messages are short literals (or template literals with one numeric module constant), so the 500-char cap is moot for them, and grep makes the literal-only pattern visible at every call site. The grep rule is now: every assignment to `errorMessage` is the initial `null`, a string literal, a template literal whose only interpolations are compile-time module-level constants (today: `MAX_CONTENT_TOKENS`), or `sanitizeError(err)`. Anything else is a sanitization-bypass risk and must be flagged in review.
+
+The `sanitizeError` whitelist deliberately drops `err.message`. Bedrock's error responses occasionally echo prompt or response content in `.message`; the only safe thing to log is the class name + code, mapped to a hardcoded human description. Anything outside that allowlist is dropped. The 500-char cap is enforced inside `sanitizeError`; #21's "schema TEXT, app-layer cap" pattern closes via this implementation choice.
+
+### D5.9 — Single fetch_logs write at end of request, in `finally` block
+
+**Choice:** every code path that gets past auth + body parse + book lookup produces exactly one `fetch_logs` insert via a closure (`writeLog`) called in `finally` of the relevant try block. No two-write pattern, no pending-then-update. The closure swallows insert errors (writes a `console.error` but doesn't throw), so a DB hiccup at log-write time doesn't crash the user-facing response.
+
+**Reasoning:** the prompt's "process crashes mid-request leave no row — acceptable at internal-alpha" makes this trivially correct. Single-write in `finally` is the simplest pattern that guarantees coverage across happy path, pre-stream errors, mid-stream errors, content-too-large, and cache hits. The closure pattern keeps the four call-sites (each `try` block's `finally`) syntactically simple. The Prisma insert error swallow means a log-write outage doesn't compound a user-facing failure.
+
+### D5.10 — First-token timeout 30s; AbortController on Bedrock; caller-disconnect propagates
+
+**Choice:** A single `AbortController` is created right before `bedrockClient.send()`. A `setTimeout(30s)` aborts it if no first chunk arrives. `request.signal.addEventListener("abort", ...)` plumbs caller-disconnect through to the same abort. If timeout fires before `send()` returns (pre-stream), result is HTTP 504. If timeout fires during body iteration before any chunk (post-stream-open), result is `event: error` over the already-open SSE stream with `status='timeout'`. Caller-disconnect during the stream cancels the upstream Bedrock call so we don't burn tokens for a client that's left.
+
+**Reasoning:** 30s is generous for Sonnet's typical first-token latency (~1-2s) but accommodates a cold-start Bedrock region or transient network slowness. Tighter would create false-positive timeouts; looser would let real failures hang the dashboard. AbortController is the standard SDK v3 pattern for cancellation. The branching on `request.signal.aborted` in the timeout handler avoids logging a "timeout" for what was actually a caller-disconnect — those are distinct failure modes.
+
+### D5.11 — Subscriber-to-book authorization: open access in Phase 2; per-book deferred
+
+**Choice:** Phase 2 has no subscriber-to-book authorization model. Any authenticated subscriber (any valid API key) can fetch any book. Key validity is the only gate. Per-book authorization deferred to a separate step before external subscribers land. See follow-up #32.
+
+**Reasoning:** Phase 2's locked scope is "one publisher, one book, one subscriber." Adding a `subscriber_books` join table now would introduce machinery for a multi-tenant scenario the locked scope doesn't include, and the design choices (per-book? per-publisher? per-tier?) are best made when the actual access pattern is known. Option (c) from the pre-gather report — open access today, follow-up filed, decision deferred to a step before external onboarding — keeps the Step 5 scope minimal and the Phase 3 design space open.
+
+The route still verifies (1) the book exists and (2) the targeted version has content, so a malformed `book_id` or content-less version fails 404 cleanly. The missing piece is "is THIS subscriber allowed THIS book," and the answer in Phase 2 is "yes, always."
