@@ -4,6 +4,11 @@
 set -e
 exec 2>&1
 
+# CodeDeploy invokes hooks from the agent's working directory, not from
+# the archive root. Move to archive root so relative paths resolve.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
 # 1. nginx reverse-proxy config for bkstr.tmrwgroup.ai (HTTP→HTTPS, :443→:3000).
 cp /var/www/bkstr/scripts/nginx-bkstr.conf /etc/nginx/sites-available/bkstr.conf
 ln -sf /etc/nginx/sites-available/bkstr.conf /etc/nginx/sites-enabled/bkstr.conf

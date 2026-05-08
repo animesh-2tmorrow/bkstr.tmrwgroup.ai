@@ -1,8 +1,12 @@
 #!/bin/bash
 # Pre-install hook: validate prerequisites + apply Prisma migrations.
-# Runs from the deployment-archive root (cwd has node_modules/, prisma/, etc.).
 set -e
 exec 2>&1
+
+# CodeDeploy invokes hooks from the agent's working directory, not from
+# the archive root. Move to archive root so relative paths resolve.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 # 1. Pre-staged secrets must exist; CodeDeploy never writes here.
 if [ ! -f /etc/bkstr/app.env ]; then

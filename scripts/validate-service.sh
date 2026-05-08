@@ -3,6 +3,11 @@
 # Non-zero exit triggers CodeDeploy auto-rollback.
 set -u
 
+# CodeDeploy invokes hooks from the agent's working directory, not from
+# the archive root. Move to archive root so relative paths resolve.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
 for i in 1 2 3 4 5 6 7 8 9 10; do
     code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:3000/ 2>/dev/null || echo 000)
     if [ "$code" = "200" ]; then
