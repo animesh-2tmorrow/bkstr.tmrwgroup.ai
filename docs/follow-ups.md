@@ -141,6 +141,37 @@ curl -I https://bkstr.tmrwgroup.ai/   # should still be 200
 
 **Severity:** medium (password is mode-protected on EC2 but exposed in chat-history backups). **Suggested resolution:** rotate before any Phase 2 user data lands.
 
+### 12. Custom `not-found.tsx` with cream theme + bkstr wordmark
+
+Surfaced during Step 8 Playwright audit (`/tmp/bkstr-step8-browser-audit.md`). Hitting any unrouted path renders Next.js's default 404 page — black text on white background, no cream theme, no bkstr wordmark, no "back to home" CTA. Functionally correct (returns HTTP 404; page title falls back to root metadata) but cosmetically inconsistent with the rest of the app.
+
+**Fix shape:** add `src/app/not-found.tsx` mirroring the login/signup card layout — `bg-[#FAF6EC]` rounded card on cream body, "404" in Fraunces, "This page could not be found" subhead, `<Link href="/">` back-to-home CTA. ~30 lines.
+
+**Severity:** low (cosmetic, not a deploy issue). **Suggested resolution:** Phase 2 polish.
+
+### 13. Set `metadata.title` on the custom not-found page
+
+When the custom `not-found.tsx` lands per #12, set its `export const metadata = { title: '404 — bkstr' }` (or similar). Currently any unrouted path inherits the root metadata (`bkstr | Compressed Knowledge for AI Agents`), so browser tabs and social previews show the landing-page title even when the user is on a 404. One line, same diff as #12.
+
+**Severity:** low (cosmetic, easily missed in audits). **Suggested resolution:** ship in the same commit as #12.
+
+### 14. Wire `#` placeholder links to real destinations as features land
+
+Step 8's audit confirmed all `#` placeholder links match the Manus visual contract (Direction 2 / Revision 6 left them as placeholders for not-yet-implemented destinations). Per-destination tracking:
+
+| Placeholder | Page | Phase 2 destination |
+|---|---|---|
+| `Book a demo` | Landing hero CTA | contact-sales form or Calendly link |
+| `Browse all →` | Landing Registry section header | real registry route (likely `/registry`) |
+| `Forgot?` | Login form | password reset flow (depends on Phase 2 auth design) |
+| `Registry` `Pricing` `Documentation` `API Status` | Footer Product column | real routes |
+| `About` `Blog` `Careers` `Contact` | Footer Company column | real content |
+| `Terms of Service` `Privacy Policy` `Security` `BAA` | Footer Legal column | real legal docs |
+
+These aren't broken — clicking `#` is a no-op except scroll-to-top, which matches Manus contract behavior. Each turns into a real link as the corresponding feature ships.
+
+**Severity:** medium (ongoing — track each as a Phase 2 feature wiring task; none are Phase 1 blockers). **Suggested resolution:** every Phase 2 PR that introduces a new destination updates the corresponding `<a href="#">` to the real route in the same diff.
+
 ---
 
 *Last updated: 2026-05-08. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
