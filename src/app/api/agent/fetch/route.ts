@@ -14,7 +14,7 @@ import { sanitizeError } from "@/lib/agent/sanitize";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
+const MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0-bogus";
 const MAX_TOKENS = 2000;
 const MAX_QUERY_LEN = 8000;
 const FIRST_TOKEN_TIMEOUT_MS = 30_000;
