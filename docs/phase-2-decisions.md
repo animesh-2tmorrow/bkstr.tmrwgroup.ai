@@ -468,3 +468,90 @@ Three real fix options were considered. **Picked (a) move tsx to runtime deps** 
 **Trade-off accepted:** tsx is conceptually a dev tool but in this codebase it's also the runtime entrypoint for our operations scripts. Shipping it in production node_modules is the honest framing of that role. The alternative (claiming "tsx is dev-only" while having a documented operations primitive that depends on it) is a dishonest trade between bundle aesthetics and tooling correctness.
 
 **Process note:** the prompt's instruction was "if `tsx` not present, add as exact pin" without specifying which dependency section. Step 7's first deploy validated the script's logic but didn't validate the deploy pipeline's interaction with the dependency placement. Filed as informational learning: any future "ops script that uses dev tooling" addition should explicitly verify post-prune availability before considering the work done.
+
+### D7.9 — Publisher auto-create on import (operator-facing simplification)
+
+**Choice:** the import script upserts the publisher row by slug (D7.2 → D7.4), creating it if absent. The operator does not need a separate "create publisher" step before importing the first book. `npm run import-book -- --publisher tmrwgroup-test ...` against a fresh schema works.
+
+**Reasoning:** auto-create is the right ergonomics at internal-alpha scale (one publisher today, no governance around publisher creation). Phase 3 may want explicit publisher provisioning gated by an admin role — at that point, the upsert becomes a `findUnique` and a separate admin flow handles creation. Today's behavior is intentional.
+
+### D7.10 — Idempotency verified end-to-end in production
+
+**Choice:** the SHA-256 content-diff idempotency rule (D7.3) was verified in Step 8 by re-importing `gif-grep.md` (one of the 5 seed corpus books) twice. The second invocation produced the `unchanged: ... no-op.` log line and did not insert a new `book_versions` row, confirming D7.3's contract holds against real production data.
+
+**Reasoning:** verification closure for D7.3. The D7.3 design decision is now backed by real production evidence, not just unit-style synthetic-fixture tests.
+
+### D7.11 — Step 8 seed corpus: 5 books sourced from skillsmp.com
+
+**Choice:** the production seed corpus is 5 SKILL.md files imported under publisher `tmrwgroup`: `gif-grep`, `node-connect`, `hermes-dogfood` (the ~20KB outlier at 20,478 bytes), `ci-diagnostics`, `docker-patterns` (8,772 bytes). Size range 2,611 to 20,478 bytes. All v1 at close-out.
+
+**Reasoning:** the corpus exercises a realistic size distribution without exceeding the 150k token guard from Step 5. Five books is enough variety for the dashboard's Books table to populate and to validate cross-book aggregates; few enough that re-import is fast. Sourced from skillsmp.com (public marketplace, permissive-looking SKILL.md files); authoritative content sourcing question filed as #45.
+
+### D7.12 — First production Bedrock call evidence
+
+**Choice:** the first real `POST /api/agent/fetch` against Bedrock during Step 8 returned: 902 input tokens, 116 output tokens, 2999ms latency, with content drawn from the `book_versions.content` column for the targeted book. The response visibly drew from the seeded markdown (model paraphrased the imported content rather than hallucinating).
+
+**Reasoning:** end-to-end smoke evidence that the Step 5 plumbing works against real Bedrock + real content + real fetch_logs write. Latency in the expected 2-3s range for Sonnet 4.5 first response. Token counts populated correctly (D5.10's usage capture path works). Closes the deferred Test 1 from #33.
+
+### D7.13 — Manual `ANALYZE` after bulk import; not yet automated
+
+**Choice:** after the 5-book seed import, ran `ANALYZE books; ANALYZE book_versions; ANALYZE fetch_logs;` manually via psql to update Postgres planner statistics. The `getBooksWithMetrics` execution time dropped from ~2ms (pre-ANALYZE, planner using stale empty-table stats) to 0.281ms (post-ANALYZE, accurate cardinality estimates). Filed #49 to formalize this as either a script flag or a runbook step.
+
+**Reasoning:** Postgres autovacuum eventually catches up but its trigger is row-count delta — a 5-row jump from a 0-row table doesn't trigger autovacuum's threshold. Manual `ANALYZE` is the right call after any bulk import that produces a significant row-count change against a previously-small table. Phase 3 should automate this either inside `import-book.ts` (`--analyze` flag) or as a post-bulk-import operations step in `docs/operations.md`.
+
+### D7.14 — Query plans captured at small-row-count baseline; index activation deferred
+
+**Choice:** EXPLAIN ANALYZE captured for the two dashboard queries against the 5-book / 5-version / 1-fetch_log post-Step-8 state:
+- `getBooksWithMetrics`: triple Seq Scan + Hash Right Joins + Sort + GroupAggregate, 0.281ms post-ANALYZE.
+- `getRecentFetchLogs`: Seq Scan + Filter; the composite index `fetch_logs_subscriber_id_created_at_idx` is dormant at this row count.
+
+The planner correctly chooses Seq Scan over the index for these row counts (D6 / pre-gather caveat).
+
+**Reasoning:** index activation is row-count-dependent. The seq-scan-at-low-rows result is correct planner behavior, not a bug. Re-capture EXPLAIN ANALYZE when `fetch_logs` reaches 100+ rows from real use (per #33's residual checklist) to verify the index path activates as expected. If at scale the planner still prefers seq scan, that's a tuning question for Phase 3 — not a Phase 2 blocker.
+
+### D7.15 — Test 11 executed via dedicated test branch, not direct on `main`
+
+**Choice:** Test 11 (deliberate `MODEL_ID = "...-bogus"`) was executed on `test/step-5-test-11-bogus-model` — bogus commit `c7f4fbf`, then revert + verification commit `137d42a`. Pipeline source briefly reconfigured to deploy from the test branch. `origin/main` stayed at `4a6abff` throughout, never carried the bogus value.
+
+**Reasoning:** keeping the bogus commit out of `origin/main`'s history means `git log origin/main` shows clean Phase 2 progression; the audit trail lives on the named test branch, permanently inspectable. Two production deploys (bogus + revert) on the test branch counted against the Step 5 deploy budget (3/3 used at close). Local `main` was reset to `origin/main` at Step 9 close-out.
+
+### D7.16 — Test 11 result: bogus `MODEL_ID` → HTTP 200 with sanitized JSON error body + sanitized `fetch_logs.error_message`
+
+**Choice:** with `MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0-bogus"` deployed, a real curl invocation produced:
+- HTTP 200 with a sanitized error message in the response body. The response was a JSON body (not SSE), confirming this was the pre-stream error path — Bedrock rejected the model ID before any tokens streamed. The route returned HTTP 200 rather than the 4xx/5xx the pre-stream error path appeared intended to return; precise mapping is captured in #55.
+- A `fetch_logs` row with `status='error'`, `error_message='j (ValidationException): Unknown error'`, `model='us.anthropic.claude-sonnet-4-5-20250929-v1:0-bogus'`, `query` populated, `input_tokens` and `output_tokens` null (per D3.2 and D5.7).
+- No AWS SDK metadata, no Bedrock response body, no system prompt, no book content present in the persisted error message.
+
+**Reasoning:** validates the route-integration layer of D5.8 — every value flowing into `errorMessage` came from `sanitizeError(err)` (this was the pre-stream catch path's `errorMessage = sanitizeError(err)` assignment). The whitelist approach successfully strips Bedrock's response-shaped error payload to a four-token sanitized string. Status-code shape (200 vs intended 502) is orthogonal to the sanitization invariant and is captured separately as #55. Closes the route-integration gap that D5.12's helper-alone validation could not cover.
+
+### D7.17 — Test 11 recovery verified post-revert
+
+**Choice:** after reverting `MODEL_ID` to the canonical value and redeploying, a fresh curl against the same book produced:
+- HTTP 200 with a clean SSE stream
+- Latency 6856ms (cold cache, real Bedrock invocation)
+- 899 input / 385 output tokens
+- New `fetch_logs` row with `status='success'`
+
+**Reasoning:** the recovery path works. Reverting a hot-config change in `route.ts` (MODEL_ID) and redeploying restores correct behavior without manual cleanup of the cache or any other runtime state. Cache miss on the post-revert curl confirmed by the latency (cache hits would be <100ms per D5.6); cache state was clean because the bogus build's errors were never cached (D5.6 — errors NOT cached).
+
+### D7.18 — Test 11 commit hygiene: bogus commit isolated to a test branch, not merged
+
+**Choice:** the bogus `MODEL_ID` commit was never merged into `origin/main`. The full Test 11 audit trail lives at:
+- `origin/test/step-5-test-11-bogus-model` — the bogus commit + the revert-with-verification commit
+- `origin/main` — clean throughout, no Test 11 ghost commits
+
+After Step 8 close, local `main` was reset to `origin/main` (the c7f4fbf commit existed locally only; never on origin/main).
+
+**Reasoning:** keeping audit history on a separate branch is the cleanest pattern for "deliberate temporary breaks." Future readers of `git log origin/main` see Phase 2's clean progression; readers wanting to see Test 11's evidence go to the named test branch. No ambiguity, no force-push, no re-write.
+
+### D7.19 — Sanitization invariant verified end-to-end across three layers
+
+**Choice:** Step 5 + Step 8 collectively verified the `fetch_logs.error_message` sanitization invariant via (1) static grep at commit `31f0e7b` confirming every `errorMessage` assignment is `null`, a string literal, a template literal over module constants, or `sanitizeError(err)`; (2) helper-alone runtime at commit `4ec4022` (D5.12) running 11 synthetic Bedrock-shaped errors with `LEAK_PAYLOAD_DO_NOT_LOG` markers through `sanitizeError`, zero leaks in any output; (3) route-integration via Test 11 (D7.16) confirming the persisted error message is sanitized against a real Bedrock `ValidationException`.
+
+**Reasoning:** belt-and-suspenders across static, runtime-isolated, and integration layers — each catches a different regression class. The three-layer pattern is reusable for any future security-sensitive logging path.
+
+### D7.20 — Test 11 surfaced two non-blocking observations
+
+**Choice:** Test 11's sanitized error string was `"j (ValidationException): Unknown error"`. Two issues filed: **#53** — the leading `j` is Webpack/Next.js's minified name for the AWS SDK error class (sanitization correctly reads `err.constructor.name`, but minification degrades readability). **#54** — the `ERROR_CLASS_MESSAGES` whitelist is keyed on the minified `className`, so the `"Bedrock validation error"` mapping misses and falls back to `"Unknown error"`.
+
+**Reasoning:** neither observation breaks the security invariant (no leak content, cap + format hold). Both are operator-experience concerns. Phase 3 fix likely keys the whitelist on `err.name` (the AWS SDK sets this as a string property that survives minification) instead of `err.constructor.name`. Single fix closes both.
