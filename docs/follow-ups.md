@@ -399,6 +399,76 @@ As of Step 7, **inline `content` is the source of truth.** `content_uri` is dead
 
 Either resolution is meaningful schema work and should land alongside #27 (RAG/chunking) since both touch the storage shape.
 
+### 46. `import-book.ts` should auto-load `.env` via dotenv or `node --env-file`
+
+The script imports `prisma` from `@/lib/db` which expects `process.env.DATABASE_URL` at the time the Prisma client constructs. Currently the script does NOT auto-load `.env` — operators have to run `set -a; source /var/www/bkstr/.env; set +a; npm run import-book -- ...` for the script to see DATABASE_URL. Surfaced during Step 8's first import attempt.
+
+**Severity:** low (functional with the env-source workaround; operator-experience friction only). **Suggested resolution:** add `import "dotenv/config";` at the top of `scripts/import-book.ts`, OR change the npm alias to `"import-book": "node --env-file=.env --import tsx scripts/import-book.ts"` (Node 20.6+ supports `--env-file`). Either approach removes the env-source step. Document the new behavior in `docs/operations.md` (#47 closes the ops-doc side).
+
+### 47. `docs/operations.md` should document env-source prerequisite + Prisma-vs-psql URL format
+
+Two missing pieces in the current ops doc:
+1. The env-source prerequisite for `import-book` (until #46 lands).
+2. The `DATABASE_URL` format Prisma uses (`postgresql://...?schema=public`) is rejected by raw `psql` (which doesn't recognize `?schema=public` as a valid query param). Operators copy-pasting the env's `DATABASE_URL` into psql get `psql: error: invalid URI query parameter: "schema"` and waste time wondering why. Document the workaround: strip `?schema=public` for psql, OR use `sudo -u postgres psql -d bkstr_app` for direct Postgres access.
+
+**Severity:** low (documentation only; both workarounds exist and are well-known). **Suggested resolution:** ~10 lines added to `docs/operations.md` covering env-source and the URL-format mismatch. Could land in the same PR as #46 since they're both about environment setup.
+
+### 48. `import-book.ts` reports `id=<uuid>` ambiguously — that's `book_version.id`, not `book.id`
+
+The success log line is `imported: <publisher>/<book> v<n> (<bytes>, id=<uuid>)`. The `<uuid>` is the newly-created `book_version.id`, but the natural operator interpretation is "this is the book's id." During Step 8, used the value directly in a `POST /api/agent/fetch` body's `book_id` field and got `404 Book not found` because the agent endpoint expects `book.id`, not `book_version.id`.
+
+**Severity:** medium — cosmetic but actively misleading; cost an extra round of debugging during Step 8's first agent fetch attempt. **Suggested resolution:** either (a) rename the log field to `version_id=<uuid>` to disambiguate, OR (b) print both `book_id=<uuid> version_id=<uuid>` so operators don't need to look up the `book.id` separately. (b) is friendlier; the script already has both values at log time.
+
+### 49. Add `--analyze` flag to `import-book.ts` or document `ANALYZE` as a post-bulk-import step
+
+Postgres autovacuum's `ANALYZE` trigger is row-count-delta-based; a 5-row jump from a 0-row table doesn't reach the threshold. Step 8's seed import left `book_versions` and `fetch_logs` with stale planner statistics, producing slightly off query plans for the dashboard until manually `ANALYZE`d (D7.13). At Phase 2 internal-alpha scale this is invisible; at any larger seed import it's a planner-quality concern.
+
+**Severity:** low (autovacuum eventually catches up; the manual workaround is one psql line). **Suggested resolution:** either (a) add `--analyze` flag to `import-book.ts` that runs `ANALYZE books; ANALYZE book_versions; ANALYZE fetch_logs;` post-insert, OR (b) document in `docs/operations.md` as a recommended step after bulk seeding. (a) is more robust against operator forgetfulness; (b) keeps the script narrower.
+
+### 50. 3rd subscriber row appeared during Step 8 — `animesh@2tmorrow.com` Workspace identity
+
+A third subscriber row was created during Step 8's testing when Animesh signed in with the `animesh@2tmorrow.com` Google Workspace account (in addition to the existing `animeshk604@gmail.com` personal + `clawbot@tmrwgroup.ai` workspace identities). The behavior is correct per Step 1's `events.createUser` callback (D1.3) — any Google identity that completes OAuth gets a User + Subscriber row auto-created. But it confirms that the auto-create flow is open to any Google identity that the OAuth client accepts.
+
+**Severity:** low at internal-alpha (the audience is known); medium pre-pilot (becomes a real surface when external traffic can reach the OAuth endpoint). **Suggested resolution:** reconcile with #40's GCP Console verification. If the consent screen is "Internal," only Workspace-tenant identities can complete OAuth, and the auto-create scope is naturally bounded. If "External," add an email-domain allowlist gate in `events.createUser` before creating the User+Subscriber rows (or after — but blocking-create avoids the orphan-User-without-Subscriber state #21's framing rejected).
+
+### 51. Dashboard left-nav contains placeholder items not in Phase 2 scope
+
+The `DashboardShell` sidebar (`src/components/dashboard/dashboard-shell.tsx`) renders three items beyond the Phase 2 scope: `Usage Metrics`, `Team Access`, `Billing`. They link to `#` (no-op) per the Manus visual contract. Surfaced during the Step 8 dashboard walkthrough when clicking them produced "Why doesn't anything happen?"
+
+**Severity:** low (the `#` links match the locked Manus contract per #14, so functionally correct; visually odd). **Suggested resolution:** for Phase 2, either (a) hide these three items in the sidebar (one-line change in `NAV_ITEMS`), OR (b) wire each to a coming-soon page like Phase 1 did with `#` placeholders (doesn't fix the underlying click-does-nothing). (a) cleaner. Phase 3's role-model design will replace them with real items anyway. If Phase 3 isn't imminent, ship (a) so internal-alpha walkthroughs don't have the dead-link distraction.
+
+### 52. `MODEL_ID` is hardcoded in `route.ts` line 17; promote to env var
+
+`src/app/api/agent/fetch/route.ts:17` has `const MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";`. Test 11 demonstrated that switching MODEL_ID requires a code change + deploy cycle. For Phase 3 (model A/B testing, per-subscriber model selection, fallback chains), this needs to be configurable without redeploying — at minimum an env var, ideally a per-subscriber/per-book setting.
+
+**Severity:** low (Phase 2 doesn't need to vary the model). **Suggested resolution:** Phase 3 cleanup. Move to `process.env.BEDROCK_MODEL_ID` with a hardcoded fallback to the current value. Document in `/etc/bkstr/oauth.env` (or a new `/etc/bkstr/runtime.env`) alongside the OAuth keys. Future Phase 3+ work may further extend to per-publisher or per-subscription-tier model selection.
+
+### 53. Sanitized errors retain minified class identifier (`j` instead of `ValidationException`)
+
+Surfaced during Test 11. The sanitized `fetch_logs.error_message` was `"j (ValidationException): Unknown error"`. The leading `j` is Webpack/Next.js's minified name for the AWS SDK's error class. `sanitizeError` correctly reads `err.constructor.name`, but in production builds that name has been minified.
+
+**Severity:** low cosmetic (security invariant unaffected — see D7.19; only the human-readable class name is degraded). **Suggested resolution:** check `err.name` first (the AWS SDK sets this to a string property like `"ValidationException"` that survives minification), fall back to `err.constructor.name` only if `err.name` is absent. Two-line change in `sanitize.ts`. Pairs with #54 for a holistic fix to the helper.
+
+### 54. `sanitizeError` collapses categorizable errors to "Unknown error" in production
+
+Surfaced during Test 11. The `ERROR_CLASS_MESSAGES` whitelist in `sanitize.ts` is keyed on the resolved `className` value. In production with minified bundles, `className` becomes `j` (per #53), which isn't in the whitelist, so the human-message lookup falls through to `"Unknown error"` instead of the intended `"Bedrock validation error"`. Net result: every Bedrock error in production maps to "Unknown error" rather than the categorized message Step 5's `ERROR_CLASS_MESSAGES` map intended.
+
+**Severity:** low cosmetic (security invariant unaffected; same root cause as #53). **Suggested resolution:** key the `ERROR_CLASS_MESSAGES` whitelist on `err.name` instead of `className`. `err.name` is a string property on AWS SDK error instances ("ValidationException", "ThrottlingException", etc.) that survives minification. With #53's fix in place, the lookup succeeds and produces the intended human-readable message. Single PR closes both.
+
+### 55. Agent fetch route's HTTP status doesn't match its apparent intent — investigate before deciding
+
+Surfaced during Step 8's Test 11. The bogus-MODEL_ID curl produced HTTP 200 with a sanitized JSON error body (not SSE), confirming the pre-stream error path executed — Bedrock rejected the model ID before any tokens streamed. **The route returned HTTP 200, but the source code's pre-stream error path (`route.ts:213`, `:221`, `:233`) calls `jsonResponse({error: errorMessage}, 504)` and `jsonResponse({error: errorMessage}, 502)` for the timeout, error, and no-body branches respectively, and D5.7's locked taxonomy maps pre-stream Bedrock errors → 502 / pre-stream timeout → 504.** The observed 200 contradicts the source.
+
+Plausible causes worth investigating in this order: (a) Next.js App Router or some middleware is silently overriding the explicit status from the `Response` constructor; (b) the production bundle's transformation breaks the `jsonResponse` helper's `status` argument; (c) the curl was actually against a code path other than the pre-stream error branch (less likely given JSON-not-SSE confirms pre-stream). Capturing full HTTP response headers from a fresh bogus-MODEL_ID curl in production (or logging the constructed `Response.status` server-side) would distinguish these.
+
+The behavior question — should the agent endpoint use non-2xx status codes for errors at all — only becomes a real design call once the source-vs-runtime mismatch is understood. If the source already says "use 502" and runtime is delivering 200, that's a bug to fix rather than a design choice to relitigate. If after investigation we deliberately want 200-everywhere as the contract, that's a documented update to D5.7 + a code change.
+
+- *Arguments for non-2xx on pre-stream errors:* standard HTTP semantics; HTTP-aware tooling (CDN edges, retry libraries, observability paging) keys on 5xx for circuit-breaking. Pre-stream errors are the only ones where an HTTP status reaches the client before any streaming starts, so the status carries real signal there.
+- *Arguments for 200-everywhere:* streaming endpoints have a different contract; mid-stream errors must use the body regardless (status can't change after commit); consistency means clients write one error-handling path; structured error in body already carries every signal downstream needs.
+
+**Severity:** low-to-medium — security invariant unaffected (D7.19 holds), but the route's runtime behavior diverges from its source code, which is a class of bug that quietly compounds. **Suggested resolution:** investigate before deciding. Step 1: capture full HTTP response headers from a fresh bogus-MODEL_ID curl (the test branch still exists at `origin/test/step-5-test-11-bogus-model`). Step 2: if runtime returns 200 despite source saying 502, fix the bug. Step 3: if after fix we want 200-everywhere as the new design, deliberate update to D5.7 + route code + documentation.
+
+
 ---
 
-*Last updated: 2026-05-09. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
+*Last updated: 2026-05-10. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
