@@ -516,6 +516,11 @@ If Phase 4+ ever introduces meaningful service-account behavior (separate rate-l
 
 **Severity:** low (no functional impact at Phase 3 scale; bot identity coexists with human identities at the same role). **Suggested resolution:** Phase 4+ when service-account behavior diverges from human-subscriber behavior. Migration shape: `ALTER TYPE "Role" ADD VALUE 'SERVICE_ACCOUNT'`; UPDATE specific identities; downstream query authors decide whether `SUBSCRIBER OR SERVICE_ACCOUNT` is the new "authenticated client" superset or whether SERVICE_ACCOUNT gets its own auth path entirely.
 
+### 63. Scale Stream 2 Sweep 2 spot-check sample size with corpus growth
+
+Surfaced during Stream 2 implementation review. The migration script `scripts/migrate-content-to-s3.ts` performs a verification spot-check at the end of Sweep 2 (S3 → DB integrity check) using a hardcoded `take: 3` Prisma query. Fine for the Phase 3 5-row corpus (60% coverage); becomes statistically meaningless once the corpus grows beyond ~30 rows.
+
+**Severity:** low at current scale; revisit when book corpus exceeds ~30 rows. **Suggested resolution:** replace `take: 3` with `take: Math.min(10, Math.ceil(total * 0.1))` (capped at 10 to keep verification time bounded). Pairs cleanly with #44 (content size guard) since both are import-script polish items.
 
 ---
 

@@ -10,6 +10,11 @@ import {
 } from "@/lib/agent/system-prompt";
 import { cacheKey, getCached, setCached } from "@/lib/agent/cache";
 import { sanitizeError } from "@/lib/agent/sanitize";
+import {
+  EmptyBookContentError,
+  loadBookContent,
+  servedFrom,
+} from "@/lib/storage/book-content";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,19 +101,16 @@ export async function POST(request: NextRequest): Promise<Response> {
   const version = versionId
     ? await prisma.bookVersion.findUnique({
         where: { id: versionId },
-        select: { id: true, bookId: true, content: true },
+        select: { id: true, bookId: true, content: true, contentUri: true },
       })
     : await prisma.bookVersion.findFirst({
         where: { bookId: book.id },
         orderBy: { version: "desc" },
-        select: { id: true, bookId: true, content: true },
+        select: { id: true, bookId: true, content: true, contentUri: true },
       });
 
   if (!version || version.bookId !== book.id) {
     return jsonResponse({ error: "Book version not found" }, 404);
-  }
-  if (!version.content || version.content.length === 0) {
-    return jsonResponse({ error: "Book version has no content" }, 404);
   }
 
   // From here on, every code path produces a fetch_logs row.
@@ -139,18 +141,10 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
   };
 
-  // 4. Size guard
-  if (estimateTokens(version.content) > MAX_CONTENT_TOKENS) {
-    status = "content_too_large";
-    errorMessage = `content_estimate exceeds ${MAX_CONTENT_TOKENS} tokens`;
-    try {
-      return jsonResponse({ error: "Content exceeds size limit" }, 413);
-    } finally {
-      await writeLog();
-    }
-  }
-
-  // 5. Cache lookup
+  // 4. Cache lookup (before content load — design A6.3 / OQ-6).
+  //    Cache key is keyed on version.id + query, so we don't need the
+  //    actual content for HITS. This avoids paying a DB-then-S3 round
+  //    trip on every cache hit once content lives in S3.
   const ck = cacheKey(version.id, query);
   const cached = getCached(ck);
   if (cached) {
@@ -182,14 +176,53 @@ export async function POST(request: NextRequest): Promise<Response> {
     return new Response(stream, { headers: SSE_HEADERS });
   }
 
-  // 6. Build prompt + open Bedrock stream
+  // 5. Cache miss — load content via the dual-storage seam (D9.2). Per
+  //    CC-4 we log the served-from arm to pm2 (no fetch_logs schema column).
+  let content: string;
+  try {
+    content = await loadBookContent(version);
+    console.log(
+      `[agent/fetch] served_from=${servedFrom(version)} version_id=${version.id} bytes=${content.length}`,
+    );
+  } catch (err) {
+    if (err instanceof EmptyBookContentError) {
+      status = "error";
+      errorMessage = "Book version has no content";
+      try {
+        return jsonResponse({ error: errorMessage }, 404);
+      } finally {
+        await writeLog();
+      }
+    }
+    status = "error";
+    errorMessage = sanitizeError(err);
+    console.error("[agent/fetch] loadBookContent failed:", errorMessage);
+    try {
+      return jsonResponse({ error: "Failed to load book content" }, 502);
+    } finally {
+      await writeLog();
+    }
+  }
+
+  // 6. Size guard
+  if (estimateTokens(content) > MAX_CONTENT_TOKENS) {
+    status = "content_too_large";
+    errorMessage = `content_estimate exceeds ${MAX_CONTENT_TOKENS} tokens`;
+    try {
+      return jsonResponse({ error: "Content exceeds size limit" }, 413);
+    } finally {
+      await writeLog();
+    }
+  }
+
+  // 7. Build prompt + open Bedrock stream
   const command = new InvokeModelWithResponseStreamCommand({
     modelId: MODEL_ID,
     contentType: "application/json",
     body: JSON.stringify({
       anthropic_version: "bedrock-2023-05-31",
       max_tokens: MAX_TOKENS,
-      system: buildSystemPrompt(version.content),
+      system: buildSystemPrompt(content),
       messages: [{ role: "user", content: query }],
     }),
   });
@@ -199,7 +232,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   request.signal.addEventListener("abort", onCallerAbort, { once: true });
   const firstTokenTimer = setTimeout(() => abortController.abort(), FIRST_TOKEN_TIMEOUT_MS);
 
-  // 7. Send the command — pre-stream failure path
+  // 8. Send the command — pre-stream failure path
   let response;
   try {
     response = await bedrockClient.send(command, { abortSignal: abortController.signal });
@@ -236,7 +269,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
   }
 
-  // 8. SSE stream — at this point HTTP 200 is committed; mid-stream errors
+  // 9. SSE stream — at this point HTTP 200 is committed; mid-stream errors
   //    surface as `event: error`, not as HTTP status.
   const bedrockBody = response.body;
   const fullText: string[] = [];

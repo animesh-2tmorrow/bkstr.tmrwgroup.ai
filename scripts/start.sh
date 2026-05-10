@@ -15,11 +15,17 @@ cd /var/www/bkstr
 
 # Source app env files into this shell so `sudo -u ubuntu -E` propagates
 # them to prisma + pm2. /var/www/bkstr/.env is rsync-preserved (DATABASE_URL).
-# /etc/bkstr/oauth.env is operator-staged (GOOGLE_*, NEXTAUTH_*); absence is
-# tolerated for first-deploy-before-staging cases but logged loudly so the
-# "Google sign-in fails with cryptic client_id error" failure mode is caught.
+# Each /etc/bkstr/*.env file is operator-staged (mode 600 root) and absence
+# is tolerated with a loud WARN so first-deploy-before-staging is recoverable.
 set -a
 source /var/www/bkstr/.env
+# Phase 3 D9.4: per-service env files; add new ones above this comment
+if [ -f /etc/bkstr/aws.env ]; then
+  source /etc/bkstr/aws.env
+  echo "[start.sh] AWS env sourced from /etc/bkstr/aws.env (keys: $(grep -oE '^[A-Z_]+=' /etc/bkstr/aws.env | tr -d '=' | tr '\n' ' '))"
+else
+  echo "[start.sh] WARN: /etc/bkstr/aws.env not present — S3-backed book content reads will fail until staged."
+fi
 if [ -f /etc/bkstr/oauth.env ]; then
   source /etc/bkstr/oauth.env
   echo "[start.sh] OAuth env sourced from /etc/bkstr/oauth.env (keys: $(grep -oE '^[A-Z_]+=' /etc/bkstr/oauth.env | tr -d '=' | tr '\n' ' '))"
@@ -27,6 +33,7 @@ else
   echo "[start.sh] WARN: /etc/bkstr/oauth.env not present — Google sign-in will fail until staged."
 fi
 set +a
+
 
 # Prisma migration runs HERE (not before-install). At this point .env is
 # in /var/www/bkstr/.env (rsync preserved it via --exclude) and
