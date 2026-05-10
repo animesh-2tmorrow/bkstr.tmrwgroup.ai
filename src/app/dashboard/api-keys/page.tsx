@@ -21,7 +21,13 @@ export default async function ApiKeysPage() {
   const initial = (session.user.name?.[0] ?? userEmail[0] ?? "?").toUpperCase();
 
   return (
-    <DashboardShell active="api-keys" companyName={companyName} userEmail={userEmail} initial={initial}>
+    <DashboardShell
+      active="api-keys"
+      companyName={companyName}
+      userEmail={userEmail}
+      initial={initial}
+      role={session.user.role}
+    >
       <ApiKeysList />
     </DashboardShell>
   );

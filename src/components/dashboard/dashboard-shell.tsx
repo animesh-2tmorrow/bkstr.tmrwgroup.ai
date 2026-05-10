@@ -2,23 +2,39 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { SignOutLink } from "@/components/auth/sign-out-link";
 
-export type DashboardNavKey = "books" | "api-keys" | "fetch-logs";
+export type DashboardNavKey =
+  | "books"
+  | "api-keys"
+  | "fetch-logs"
+  | "pricing"
+  | "billing";
 
 type Props = {
   active: DashboardNavKey;
   companyName: string;
   userEmail: string;
   initial: string;
+  // Phase 3 Stream 3 — role is optional; pages that don't fetch it (older
+  // pre-Stream-3 surfaces) still render. ADMIN gets the Pricing link.
+  role?: string;
   children: ReactNode;
 };
 
-const NAV_ITEMS: ReadonlyArray<{ key: DashboardNavKey; href: string; label: string }> = [
+const NAV_ITEMS: ReadonlyArray<{
+  key: DashboardNavKey;
+  href: string;
+  label: string;
+  adminOnly?: boolean;
+}> = [
   { key: "books", href: "/dashboard", label: "Active Books" },
   { key: "api-keys", href: "/dashboard/api-keys", label: "API Keys" },
   { key: "fetch-logs", href: "/dashboard/fetch-logs", label: "Fetch Logs" },
+  { key: "pricing", href: "/dashboard/pricing", label: "Pricing", adminOnly: true },
+  { key: "billing", href: "/dashboard/billing", label: "Billing" },
 ];
 
-export function DashboardShell({ active, companyName, userEmail, initial, children }: Props) {
+export function DashboardShell({ active, companyName, userEmail, initial, role, children }: Props) {
+  const visibleItems = NAV_ITEMS.filter((item) => !item.adminOnly || role === "ADMIN");
   return (
     <div className="min-h-screen flex">
       <aside className="w-64 bg-[#FAF6EC] border-r border-[#E5DCC8] flex flex-col">
@@ -29,7 +45,7 @@ export function DashboardShell({ active, companyName, userEmail, initial, childr
           </div>
         </div>
         <nav className="flex-grow p-4 space-y-1 text-sm font-medium text-gray-600">
-          {NAV_ITEMS.map((item) => {
+          {visibleItems.map((item) => {
             const isActive = item.key === active;
             const className = isActive
               ? "block px-4 py-2.5 rounded-lg nav-item active"
@@ -45,9 +61,6 @@ export function DashboardShell({ active, companyName, userEmail, initial, childr
           </a>
           <a href="#" className="block px-4 py-2.5 rounded-lg hover:bg-[#EAE2D0] hover:text-gray-900">
             Team Access
-          </a>
-          <a href="#" className="block px-4 py-2.5 rounded-lg hover:bg-[#EAE2D0] hover:text-gray-900">
-            Billing
           </a>
         </nav>
         <div className="p-6 border-t border-[#E5DCC8]">

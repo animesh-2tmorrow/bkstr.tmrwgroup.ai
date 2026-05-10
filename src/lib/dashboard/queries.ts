@@ -13,6 +13,20 @@ export type BookWithMetrics = {
   lastFetchedAt: Date | null;
 };
 
+// Phase 3 Stream 3 — per-subscriber access state for the Books table.
+// Computed by joining BookPrice + AccessGrant for the current subscriber.
+// `state` is the rendered status: "granted" if any active grant exists
+// (regardless of source — matches CC-2 / D10.2's checkout-block rule),
+// "for_sale" if a BookPrice row + Stripe Price exist and no grant,
+// "not_for_sale" otherwise.
+export type BookAccessState = {
+  bookId: string;
+  state: "granted" | "for_sale" | "not_for_sale";
+  unitAmountCents: number | null;
+  stripePriceId: string | null;
+  grantSource: string | null;
+};
+
 // Single aggregate query — books + version max + cross-subscriber fetch
 // metrics in one round-trip. LEFT JOINs so books with zero versions or
 // zero fetches still appear with zeros. COUNT cast to int (4-byte) is
@@ -120,6 +134,64 @@ export async function getRecentFetchLogs(opts: {
     bookTitle: r.bookVersion.book.title,
     bookVersion: r.bookVersion.version,
   }));
+}
+
+// Phase 3 Stream 3 — per-subscriber access map for the Books table.
+// Returns one entry per book the system knows about (matches BooksTable's
+// row set). Active grants short-circuit to "granted" regardless of source;
+// otherwise BookPrice presence + a non-null stripePriceId determines whether
+// the row is purchasable.
+export async function getBookAccessStates(subscriberId: string): Promise<Map<string, BookAccessState>> {
+  const [books, prices, grants] = await Promise.all([
+    prisma.book.findMany({ select: { id: true } }),
+    prisma.bookPrice.findMany({
+      where: { currency: "USD" },
+      select: { bookId: true, unitAmountCents: true, stripePriceId: true },
+    }),
+    prisma.accessGrant.findMany({
+      where: {
+        subscriberId,
+        revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+      select: { bookId: true, source: true },
+    }),
+  ]);
+
+  const priceByBook = new Map(prices.map((p) => [p.bookId, p]));
+  const grantByBook = new Map(grants.map((g) => [g.bookId, g]));
+
+  const out = new Map<string, BookAccessState>();
+  for (const b of books) {
+    const grant = grantByBook.get(b.id);
+    const price = priceByBook.get(b.id);
+    if (grant) {
+      out.set(b.id, {
+        bookId: b.id,
+        state: "granted",
+        unitAmountCents: price?.unitAmountCents ?? null,
+        stripePriceId: price?.stripePriceId ?? null,
+        grantSource: grant.source,
+      });
+    } else if (price && price.stripePriceId) {
+      out.set(b.id, {
+        bookId: b.id,
+        state: "for_sale",
+        unitAmountCents: price.unitAmountCents,
+        stripePriceId: price.stripePriceId,
+        grantSource: null,
+      });
+    } else {
+      out.set(b.id, {
+        bookId: b.id,
+        state: "not_for_sale",
+        unitAmountCents: price?.unitAmountCents ?? null,
+        stripePriceId: price?.stripePriceId ?? null,
+        grantSource: null,
+      });
+    }
+  }
+  return out;
 }
 
 export async function getSubscriberIdForEmail(email: string): Promise<string | null> {

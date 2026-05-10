@@ -15,8 +15,11 @@ cd /var/www/bkstr
 
 # Source app env files into this shell so `sudo -u ubuntu -E` propagates
 # them to prisma + pm2. /var/www/bkstr/.env is rsync-preserved (DATABASE_URL).
-# Each /etc/bkstr/*.env file is operator-staged (mode 600 root) and absence
-# is tolerated with a loud WARN so first-deploy-before-staging is recoverable.
+# /etc/bkstr/<service>.env files are operator-staged (mode 600 root) per
+# D9.4 / D10.3 — one file per concern (OAuth, Stripe, AWS, …) so independent
+# rotations don't cross-contaminate. Absence is tolerated for first-deploy-
+# before-staging cases but logged loudly so the "feature enabled in code but
+# secrets not staged" failure mode is caught at deploy time, not at first use.
 set -a
 source /var/www/bkstr/.env
 # Phase 3 D9.4: per-service env files; add new ones above this comment
@@ -31,6 +34,12 @@ if [ -f /etc/bkstr/oauth.env ]; then
   echo "[start.sh] OAuth env sourced from /etc/bkstr/oauth.env (keys: $(grep -oE '^[A-Z_]+=' /etc/bkstr/oauth.env | tr -d '=' | tr '\n' ' '))"
 else
   echo "[start.sh] WARN: /etc/bkstr/oauth.env not present — Google sign-in will fail until staged."
+fi
+if [ -f /etc/bkstr/stripe.env ]; then
+  source /etc/bkstr/stripe.env
+  echo "[start.sh] Stripe env sourced from /etc/bkstr/stripe.env (keys: $(grep -oE '^[A-Z_]+=' /etc/bkstr/stripe.env | tr -d '=' | tr '\n' ' '))"
+else
+  echo "[start.sh] WARN: /etc/bkstr/stripe.env not present — Stripe Checkout + webhooks will fail until staged."
 fi
 set +a
 

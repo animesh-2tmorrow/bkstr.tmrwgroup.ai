@@ -270,3 +270,76 @@ Reversible: re-import the affected book (creates a new version with inline conte
 ### Resume book imports
 
 After Sweep 2 verifies, `npm run import-book` is safe to run again. Note that import-book still writes inline content + `content_uri = inline://<id>`; converting import-book to write directly to S3 is filed as a separate piece of work (design A8 step 5; Phase 4-tail).
+
+---
+
+## SEED grants and the checkout-block rule (D10.2)
+
+**SEED grants are operator-only.** Do **not** insert `INSERT INTO access_grants ... source='SEED'` rows for real subscribers casually — per [D10.2](./phase-3-decisions.md#d102--checkout-dedup-blocks-any-active-access_grant-regardless-of-source), any active `access_grant` blocks Stripe Checkout Session creation regardless of source, so a misplaced `SEED` grant will prevent legitimate purchases (the subscriber gets HTTP 409 from `POST /api/checkout` with `{ source: 'SEED' }` until the SEED row is removed or revoked).
+
+`SEED`'s only sanctioned uses are:
+
+1. **Grandfathered backfills.** The Phase 3 Stream 1 patch (D9.6) inserted 15 SEED rows — one per `(subscriber, book)` pair that existed before per-book authorization was enforced. That's a known, deliberate, one-time backfill.
+2. **Test data in dev/staging only.** Local seed scripts may create SEED grants to bypass the Stripe sandbox.
+
+For real production grants from operator action (manual unlock, support escalation, comp), use `source='MANUAL'` and populate `granted_by` with the operator's `users.id`. To unblock a Checkout that's wrongly 409'ing because of a SEED row, either:
+
+- Soft-revoke: `UPDATE access_grants SET revoked_at = NOW() WHERE subscriber_id = ? AND book_id = ? AND source = 'SEED';` — preserves the audit trail.
+- Hard-delete: `DELETE FROM access_grants WHERE subscriber_id = ? AND book_id = ? AND source = 'SEED';` — only when the grant should never have existed.
+
+The 15 backfilled rows are intentional. Do not bulk-revoke them without separately confirming each subscriber has paid (or has another `MANUAL`/`SUBSCRIPTION` grant).
+
+---
+
+## Stripe webhook setup runbook
+
+Stream 3's Stripe integration relies on the webhook endpoint at `POST /api/webhooks/stripe` receiving and verifying Stripe events. Configuration lives entirely in the Stripe Dashboard — there's nothing to flip in our codebase. Re-run this runbook whenever an environment is rotated, the webhook signing secret is leaked, or the public origin changes.
+
+### One-time per environment
+
+1. **Pick the Stripe account.** Phase 3 OQ-1 — existing `tmrwgroup` account or new dedicated `bkstr` account. **Operator decision required before staging keys.** This decision is sticky: once Customer/Product/Price objects exist in one account, migrating them is a manual rebuild.
+2. **Open the Stripe Dashboard webhook page** for the chosen account, in the right mode:
+   - Test mode: <https://dashboard.stripe.com/test/webhooks>
+   - Live mode: <https://dashboard.stripe.com/webhooks>
+3. **Add a new endpoint** with URL `https://bkstr.tmrwgroup.ai/api/webhooks/stripe` (production) or your dev tunnel URL for local. Do not use `localhost:3000` directly; Stripe needs a public HTTPS URL. Use Stripe CLI (`stripe listen --forward-to localhost:3000/api/webhooks/stripe`) for local development — the CLI prints a one-time webhook signing secret that you put in your local `.env`.
+4. **Subscribe to event types** — minimal Phase 3 Stream 3 set:
+   - `payment_intent.succeeded` — the only event with a handler today; provisions the `access_grant`.
+   - (Future, no handler yet but enabling them now gives early signal in `webhook_events`): `payment_intent.payment_failed`, `charge.refunded`, `checkout.session.completed`.
+5. **Copy the signing secret** (`whsec_…`) shown after endpoint creation. This is the **only** time Stripe shows it; rotate by deleting and recreating the endpoint.
+6. **Stage the secret on EC2** in `/etc/bkstr/stripe.env`:
+   ```bash
+   sudo tee /etc/bkstr/stripe.env <<'EOF'
+   STRIPE_SECRET_KEY=sk_test_...
+   STRIPE_PUBLISHABLE_KEY=pk_test_...
+   STRIPE_WEBHOOK_SECRET=whsec_...
+   EOF
+   sudo chmod 600 /etc/bkstr/stripe.env
+   sudo chown root:root /etc/bkstr/stripe.env
+   ```
+   `scripts/start.sh` sources this file at deploy time; for an immediate reload without redeploying, run `sudo -u ubuntu pm2 reload bkstr-web --update-env` (the env vars must already be in the shell that runs that command — easiest to invoke through `start.sh`'s logic).
+
+### Sanity checks after staging
+
+- **Pm2 logs at boot:** `pm2 logs bkstr-web | grep -i stripe` should show `[start.sh] Stripe env sourced from /etc/bkstr/stripe.env (keys: ...)` rather than `WARN: /etc/bkstr/stripe.env not present`.
+- **Send a test event from Stripe Dashboard.** Endpoint → Send test webhook → pick `payment_intent.succeeded`. Stripe shows the response code; we want **200**. If you see **400 Invalid signature**, the `STRIPE_WEBHOOK_SECRET` doesn't match the endpoint — re-copy from Dashboard.
+- **Verify the row landed:** `SELECT event_id, source, status, processed_at FROM webhook_events ORDER BY received_at DESC LIMIT 5;` should show the test event with `status='processed'`.
+
+### Day-to-day operation
+
+- **Stuck handler diagnosis:** `SELECT event_id, status, error_message, received_at FROM webhook_events WHERE status = 'error' ORDER BY received_at DESC;` — these rows are events that hit our handler but threw. Stripe will retry on its own schedule; you can also force a retry from the Dashboard endpoint page. After fixing the underlying issue, the next retry transitions the row to `processed`.
+- **Replaying a missed event:** Stripe Dashboard → Endpoint → Events → individual event → Resend.
+- **Webhook IP allowlisting:** **NOT** wired into nginx today (per design OQ-11). Signature verification is the security primitive; IP allowlist would be a defense-in-depth layer for Phase 4 if log-noise from spam POSTs becomes an issue.
+
+---
+
+## Stripe pricing sync
+
+Pricing is operator-managed via the dashboard at `/dashboard/pricing` (ADMIN-only). The form lets an admin set or change USD pricing per book. Submitting the form:
+
+1. Searches Stripe for an existing Product with `metadata.book_id = <bookId>`. If absent, creates one with `name = book.title` + that metadata.
+2. Creates a fresh Stripe Price object (Stripe Prices are immutable; every change is a new Price).
+3. Upserts the local `book_prices` row, repointing `stripe_price_id` at the new Price.
+
+Old Price objects stay alive in Stripe — they're the audit trail per D9.7. Do not delete them via the Stripe Dashboard unless you're certain no historical Checkout Session, refund report, or analytics dashboard references them.
+
+For one-off pricing changes outside the dashboard (CSV import, scripted bulk update), the SQL path is `INSERT … ON CONFLICT (book_id, currency) DO UPDATE SET unit_amount_cents = …, stripe_price_id = …, updated_at = NOW();` — but the operator is responsible for separately creating the matching Stripe Price object so `stripe_price_id` points somewhere real. Easier and less error-prone to use the UI.

@@ -40,7 +40,13 @@ export default async function FetchLogsPage({
     : [[], null];
 
   return (
-    <DashboardShell active="fetch-logs" companyName={companyName} userEmail={userEmail} initial={initial}>
+    <DashboardShell
+      active="fetch-logs"
+      companyName={companyName}
+      userEmail={userEmail}
+      initial={initial}
+      role={session.user.role}
+    >
       <header className="mb-8 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">Fetch Logs</h1>

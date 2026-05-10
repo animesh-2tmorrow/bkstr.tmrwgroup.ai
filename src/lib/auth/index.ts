@@ -54,6 +54,16 @@ export const authOptions: NextAuthOptions = {
     async session({ session, user }) {
       if (session.user && user) {
         (session.user as { id?: string }).id = user.id;
+        // Phase 3 Stream 3 — hydrate role from the User row so ADMIN-gated
+        // surfaces (pricing UI, future moderation) can read session.user.role.
+        // The next-auth.d.ts augmentation pre-declared the type at Stream 1
+        // patch time; this is the runtime fill-in. Database-strategy sessions
+        // call this callback every request so a role bump propagates without
+        // requiring sign-out.
+        const userWithRole = user as { role?: string };
+        if (userWithRole.role) {
+          (session.user as { role?: string }).role = userWithRole.role;
+        }
       }
       return session;
     },
