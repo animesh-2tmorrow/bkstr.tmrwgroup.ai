@@ -522,6 +522,17 @@ Surfaced during Stream 2 implementation review. The migration script `scripts/mi
 
 **Severity:** low at current scale; revisit when book corpus exceeds ~30 rows. **Suggested resolution:** replace `take: 3` with `take: Math.min(10, Math.ceil(total * 0.1))` (capped at 10 to keep verification time bounded). Pairs cleanly with #44 (content size guard) since both are import-script polish items.
 
+### 64. Decide on PR-based workflow for bkstr going forward
+
+Surfaced during Stream 3 merge prep. The repo's de-facto convention is fast-forward merges with no GitHub PR records — Streams 1, 2, and 3 all landed as linear commits on `main` without a PR review trail. Stream 3 specifically tried to open a PR but `gh` CLI isn't installed on the operator workstation and there's no `GITHUB_TOKEN` in env, so the merge proceeded fast-forward to match precedent.
+
+Two viable directions:
+
+1. **Adopt PR records.** Install `gh` (`winget install GitHub.cli` on Windows), `gh auth login`, and route every non-trivial merge through `gh pr create` + `gh pr merge --merge` (or `--rebase` to preserve linear history while still creating a PR record). Gives a paper trail for every change, makes external code review possible, and is the conventional GitHub flow.
+2. **Formalize fast-forward-only.** Add `CONTRIBUTING.md` codifying the existing pattern: feature branch → rebase onto `main` → fast-forward merge → push. No PRs required. Document the tradeoff (loses review trail, gains simplicity for a single-operator repo).
+
+**Severity:** low; the choice is a workflow preference, not a correctness issue. **Suggested resolution:** decide before the next multi-stream phase (Phase 4+). If anyone else is added as a committer the answer becomes "PR records, full stop." For the single-operator-now era either path is fine; the harm is the inconsistency of having tried both ad-hoc.
+
 ---
 
 *Last updated: 2026-05-10. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
