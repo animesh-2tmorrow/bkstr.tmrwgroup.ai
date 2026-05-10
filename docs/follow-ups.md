@@ -355,7 +355,9 @@ Resolution depends on the multi-tenant role model — per-publisher? per-tier? a
 
 **Severity:** medium — Phase 3 prerequisite before external onboarding. **Suggested resolution:** define the role model with stakeholder input first, then split routes (`/dashboard/publisher/*` vs `/dashboard/subscriber/*`?), add scope filters to queries, gate sidebar nav by role. Some users may want both (a publisher who's also a subscriber to other publishers' books); design needs to handle that gracefully.
 
-### 40. Verify Google OAuth client consent screen is set to "Internal" (Workspace-only)
+### 40. ~~Verify Google OAuth client consent screen is set to "Internal" (Workspace-only)~~ **RESOLVED 2026-05-10**
+
+> Resolved by the OAuth signin allowlist patch (D8.1–D8.4). GCP Console verification confirmed the consent screen is set to "External" (not "Internal"). Mitigated via a `callbacks.signIn` gate in `src/lib/auth/index.ts` that rejects any Google identity not on `ALLOWED_EMAIL_DOMAINS` or `ALLOWED_EMAILS` before any DB row is created. Production env staged with `ALLOWED_EMAIL_DOMAINS=tmrwgroup.ai,2tmorrow.com` and `ALLOWED_EMAILS=animeshk604@gmail.com`. Fail-closed if both empty.
 
 The OAuth client at GCP Console (the `354236878710...` client_id) has its consent-screen scope (Internal vs External) configured server-side at Google, not visible from EC2. If the consent screen is set to "External," any Google account can complete the OAuth flow, which means our `events.createUser` callback will create a User + Subscriber row for any Google identity that hits the redirect URI. At Phase 2 internal-alpha this is bounded (the `2tmorrow.com` audience is small and the redirect URIs aren't leaked), but pre-pilot it becomes a real surface.
 
@@ -425,7 +427,9 @@ Postgres autovacuum's `ANALYZE` trigger is row-count-delta-based; a 5-row jump f
 
 **Severity:** low (autovacuum eventually catches up; the manual workaround is one psql line). **Suggested resolution:** either (a) add `--analyze` flag to `import-book.ts` that runs `ANALYZE books; ANALYZE book_versions; ANALYZE fetch_logs;` post-insert, OR (b) document in `docs/operations.md` as a recommended step after bulk seeding. (a) is more robust against operator forgetfulness; (b) keeps the script narrower.
 
-### 50. 3rd subscriber row appeared during Step 8 — `animesh@2tmorrow.com` Workspace identity
+### 50. ~~3rd subscriber row appeared during Step 8 — `animesh@2tmorrow.com` Workspace identity~~ **RESOLVED 2026-05-10**
+
+> Resolved alongside #40 via the OAuth signin allowlist patch (D8.1–D8.4). Root cause confirmed: GCP consent screen is "External," and there was no allowlist gate before this patch — any Google identity completing OAuth got a User+Subscriber row auto-created. The new `callbacks.signIn` rejects unallowed identities before `events.createUser` fires; future signins from non-allowlisted Google identities produce zero DB rows. The 3 existing rows are preserved per D8.4; deprecation of the gmail row is filed as #57.
 
 A third subscriber row was created during Step 8's testing when Animesh signed in with the `animesh@2tmorrow.com` Google Workspace account (in addition to the existing `animeshk604@gmail.com` personal + `clawbot@tmrwgroup.ai` workspace identities). The behavior is correct per Step 1's `events.createUser` callback (D1.3) — any Google identity that completes OAuth gets a User + Subscriber row auto-created. But it confirms that the auto-create flow is open to any Google identity that the OAuth client accepts.
 
@@ -467,6 +471,42 @@ The behavior question — should the agent endpoint use non-2xx status codes for
 - *Arguments for 200-everywhere:* streaming endpoints have a different contract; mid-stream errors must use the body regardless (status can't change after commit); consistency means clients write one error-handling path; structured error in body already carries every signal downstream needs.
 
 **Severity:** low-to-medium — security invariant unaffected (D7.19 holds), but the route's runtime behavior diverges from its source code, which is a class of bug that quietly compounds. **Suggested resolution:** investigate before deciding. Step 1: capture full HTTP response headers from a fresh bogus-MODEL_ID curl (the test branch still exists at `origin/test/step-5-test-11-bogus-model`). Step 2: if runtime returns 200 despite source saying 502, fix the bug. Step 3: if after fix we want 200-everywhere as the new design, deliberate update to D5.7 + route code + documentation.
+
+### 56. Friendlier rejection UI for OAuth signin allowlist
+
+The signin allowlist patch (D8.1–D8.4) returns `false` from `callbacks.signIn` for unallowed identities. NextAuth routes the rejected user to its default error page (`/api/auth/error?error=AccessDenied`) — accurate but bare. For internal-alpha gating this is acceptable; for any external-facing surface (or when Animesh shows the system to a stakeholder who happens to sign in with the wrong identity), a branded "this email isn't on the allowlist; contact <admin>" page would communicate the intent better.
+
+**Severity:** low (functional gate works; UX-only cosmetic). **Suggested resolution:** add `pages.error: "/access-denied"` to `authOptions` plus a server-rendered `src/app/access-denied/page.tsx` that reads the `?error=` query param and shows a friendly explanation. Phase 3 work; explicitly skipped in this patch per the kickoff prompt.
+
+### 57. Decide whether to deprecate the gmail identity in favor of Workspace identity
+
+The `animeshk604@gmail.com` subscriber row is from Animesh's Phase-1-era personal Google account. Post-allowlist (D8.3), it remains valid only because of the `ALLOWED_EMAILS` per-email override. The Workspace identity (`animesh@2tmorrow.com`) is the more durable choice for ongoing operator access — Workspace tenant controls (Workspace-only sign-in, audit logging, account suspension on offboarding) all apply there but not to a personal gmail.
+
+**Severity:** low (the gmail identity works fine today; deprecation is a clean-up choice not a security gap). **Suggested resolution:** Phase 3 decision. If deprecating: remove `animeshk604@gmail.com` from `ALLOWED_EMAILS` in `/etc/bkstr/oauth.env`, optionally soft-delete or hard-delete the existing User+Subscriber rows (cascade reaches accounts/sessions/api-keys). If keeping: tighten the per-email allowlist concept by defining a stable rule for which legacy identities are kept and why.
+
+### 58. DB-managed allowlist table (replaces env-var allowlist) once external onboarding is designed
+
+Today's allowlist (D8.3) uses two env vars in `/etc/bkstr/oauth.env`. That works for a small operator-managed list but doesn't scale to "the publisher admin can add stakeholders to the allowlist via the dashboard." A DB-managed table (e.g. `allowed_identities (email TEXT PRIMARY KEY, domain TEXT, granted_by UUID, granted_at TIMESTAMP, revoked_at TIMESTAMP)`) lets the allowlist live alongside subscribers and be edited via the dashboard.
+
+**Severity:** low until external onboarding lands. **Suggested resolution:** Phase 3, alongside #39 (publisher-vs-subscriber dashboard split) and #41 (admin upload UI). The schema change is small; the bigger work is defining who owns allowlist edits (which depends on the role-model resolution from #39). The callback function in `auth/index.ts` swaps env-var lookup for a Prisma query against the new table — single helper, behavior preserved.
+
+### 59. Verify Google OAuth consent-screen branding + verification status
+
+GCP Console marks the consent screen as "External" (per #40's resolution context) and the OAuth client as unverified — meaning external Google users hit a "Google hasn't verified this app" warning during the OAuth flow. Internal-alpha audience is small and informed; pre-pilot a stakeholder seeing the warning may bail mid-flow. Branding (logo, support email, privacy policy URL) plus optional Google verification submission would clean this up.
+
+**Severity:** low at internal-alpha; medium pre-pilot. **Suggested resolution:** Phase 3 ops sweep. Configure consent-screen branding in GCP Console (~30 min). Decide whether to submit for Google verification (~3-7 day approval; required if expanding to non-Workspace external users at meaningful scale). For Workspace-only audience the verification submission may be unnecessary depending on the consent-screen scope choice.
+
+### 60. PII in pm2 logs — rejected emails logged in plaintext on signIn rejection
+
+The signIn allowlist patch (D8.1–D8.4) emits `console.warn` on every rejection with the rejected email in plaintext (e.g. `[auth] signIn rejected (domain not allowed): someone@example.com`). At alpha-gate scale this is the right operational visibility — operators reading `pm2 logs bkstr-web` need to see which identities are bouncing off the gate to know whether the allowlist is too tight or whether legitimate users are being misrouted. At production-grade scale, plaintext emails in process logs become a data-handling concern: log shipping to a third-party aggregator, log retention policy, GDPR-style "right to erasure" requests against logs, etc.
+
+**Severity:** low at internal-alpha (audience known, logs not shipped externally); medium pre-pilot. **Suggested resolution:** Phase 3 / production-grade hardening. Two paths: (a) hash-and-log — `crypto.createHash('sha256').update(email).digest('hex').slice(0, 16)` produces a stable identifier per email that operators can correlate ("the same identity keeps bouncing") without storing the plaintext. (b) Redact-and-log — log only `<domain>` for unrecognized identities, full email only for known-allowlisted-but-failed-flows where the operator needs the actual identity for debugging. (a) is more rigorous; (b) is closer to the current operational model. Either way, documented log-handling policy lands alongside #58's DB-managed allowlist work.
+
+### 61. Negative-test verification residual — "fresh 4th-identity gmail rejected"
+
+Filed during the D8.x allowlist patch's pre-push approval. The post-deploy verification will run the positive tests (`*@tmrwgroup.ai`, `*@2tmorrow.com`, `animeshk604@gmail.com` per-email override all succeed), but Animesh may not have a 4th Google identity available in the deploy window for the negative test (a fresh gmail account that's NOT on `ALLOWED_EMAILS` AND has a non-allowlisted domain → expect rejection + no DB row). If positive-only verification ships, the negative-test verification remains a residual checklist item against future work.
+
+**Severity:** low (the security path is small, the diff is reviewed, and the unit-level guarantees of the callback are clear from inspection — a 4th-identity test is belt-and-suspenders). **Suggested resolution:** opportunistically run when a 4th Google identity becomes available — e.g. during Phase 3 onboarding when an external stakeholder hits the OAuth flow before being added to the allowlist. The expected `[auth] signIn rejected (domain not allowed):` log line + zero new `subscribers` rows confirms the gate is hot. Optionally: a new test Google account specifically for this purpose, exercised once and then forgotten.
 
 
 ---

@@ -555,3 +555,37 @@ After Step 8 close, local `main` was reset to `origin/main` (the c7f4fbf commit 
 **Choice:** Test 11's sanitized error string was `"j (ValidationException): Unknown error"`. Two issues filed: **#53** — the leading `j` is Webpack/Next.js's minified name for the AWS SDK error class (sanitization correctly reads `err.constructor.name`, but minification degrades readability). **#54** — the `ERROR_CLASS_MESSAGES` whitelist is keyed on the minified `className`, so the `"Bedrock validation error"` mapping misses and falls back to `"Unknown error"`.
 
 **Reasoning:** neither observation breaks the security invariant (no leak content, cap + format hold). Both are operator-experience concerns. Phase 3 fix likely keys the whitelist on `err.name` (the AWS SDK sets this as a string property that survives minification) instead of `err.constructor.name`. Single fix closes both.
+
+---
+
+## Step 8.x — OAuth signin allowlist (closes #40 + #50)
+
+### D8.1 — OAuth gating via NextAuth `signIn` callback rejection (no schema change)
+
+**Choice:** the gate is implemented as a `callbacks.signIn` function in `src/lib/auth/index.ts` that returns `false` for disallowed identities. NextAuth aborts the auth flow on falsy `signIn` return, which means the adapter's `createUser` never fires, which means `events.createUser` (D1.3) never fires, which means no `User` or `Subscriber` row is created for rejected attempts.
+
+**Reasoning:** the rejection point is upstream of every DB write — schema unchanged, no orphan rows possible, no cleanup needed. Alternative placements considered: (a) middleware at the redirect-URI route — would require duplicating identity-resolution logic; (b) inside `events.createUser` — fires after the User row is persisted, so rejection would orphan a User; (c) post-hoc cleanup job — the wrong shape for a security-prevention gate. The `signIn` callback is the canonical place per NextAuth docs and is what every existing recipe uses. Verified via Step-1 fix (148a6d7) precedent: callback-level gating composes cleanly with the existing `events.createUser` Subscriber-create.
+
+### D8.2 — Failsafe: BOTH allowlists empty → reject (fail closed)
+
+**Choice:** if `ALLOWED_EMAIL_DOMAINS` AND `ALLOWED_EMAILS` are both empty/unset at signin time, every Google identity is rejected. A module-load `console.warn` matches the existing pattern for `GOOGLE_CLIENT_ID`/`NEXTAUTH_SECRET` and surfaces the misconfiguration loudly at process startup.
+
+**Reasoning:** an env-misconfigured deploy that silently allows everyone is the worst-case failure mode. Failing closed turns "deployed without the env var" into a visible 100%-rejection (operators notice immediately, fix the env, restart pm2) rather than a silent "the gate is off." The startup warning is belt-and-suspenders so the misconfiguration is also visible in `pm2 logs bkstr-web` at boot rather than only on first sign-in attempt.
+
+### D8.3 (revised) — Allowlist via TWO env vars: domain-level + per-email override
+
+**Choice:** the gate reads two env vars:
+- `ALLOWED_EMAIL_DOMAINS` — comma-separated lowercase domains (e.g. `tmrwgroup.ai,2tmorrow.com`). Domain-level matching for trusted Workspace tenants.
+- `ALLOWED_EMAILS` — comma-separated lowercase full emails. Per-email override for trusted individual identities outside trusted domains.
+
+Logic order: (1) reject if email missing; (2) reject if both lists empty; (3) allow if email is in `ALLOWED_EMAILS`; (4) allow if email's domain is in `ALLOWED_EMAIL_DOMAINS`; (5) reject. Per-email allowlist wins over domain check.
+
+**Reasoning:** purely domain-level allowlisting forces a binary trust decision on entire public domains (e.g. allowing `gmail.com` to keep one legacy identity active opens billions of accounts). Per-email override exists to support trusted individuals (legacy personal accounts, contractors, board members) without that blast radius. Production setup at close-out: `ALLOWED_EMAIL_DOMAINS=tmrwgroup.ai,2tmorrow.com` (the two Workspace tenants), `ALLOWED_EMAILS=animeshk604@gmail.com` (Animesh's existing personal-account test identity).
+
+A DB-managed allowlist table would scale better for a large or stakeholder-driven allowlist; deferred to Phase 3 since (a) the env-var shape is the right abstraction at internal-alpha scale, (b) the change to a DB-table source is a swap behind the same callback function, and (c) Phase 3's role-model design (#39) will define who owns allowlist edits, which determines the DB schema for the allowlist table.
+
+### D8.4 — Existing subscriber rows preserved; cleanup is a separate decision
+
+**Choice:** the patch leaves all 3 existing `subscribers` rows (`animeshk604@gmail.com`, `clawbot@tmrwgroup.ai`, `animesh@2tmorrow.com`) untouched. The gate only fires on new sign-in attempts; existing database-strategy sessions remain valid until expiry per their `expires_at`. Filed follow-up #57 to decide whether to deprecate the gmail identity in favor of Workspace identity in Phase 3.
+
+**Reasoning:** the patch's blast radius is "no future leaks via auto-create-on-OAuth"; cleanup of pre-patch rows is a different concern (data hygiene, not security gap closure). Bundling them would conflate two questions: "stop the leak" and "tidy up data from when the leak existed." The first is urgent (closes #40/#50); the second is opinion (the gmail row is real test data that may still have utility). Separating the decisions lets each be made on its own merits.
