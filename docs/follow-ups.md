@@ -508,6 +508,14 @@ Filed during the D8.x allowlist patch's pre-push approval. The post-deploy verif
 
 **Severity:** low (the security path is small, the diff is reviewed, and the unit-level guarantees of the callback are clear from inspection — a 4th-identity test is belt-and-suspenders). **Suggested resolution:** opportunistically run when a 4th Google identity becomes available — e.g. during Phase 3 onboarding when an external stakeholder hits the OAuth flow before being added to the allowlist. The expected `[auth] signIn rejected (domain not allowed):` log line + zero new `subscribers` rows confirms the gate is hot. Optionally: a new test Google account specifically for this purpose, exercised once and then forgotten.
 
+### 62. Service-account / bot-identity distinction on the Role enum (Phase 4+)
+
+Phase 3's `Role` enum (D9.1) is `SUBSCRIBER | PUBLISHER | ADMIN`. The `clawbot@tmrwgroup.ai` identity that signed in during Phase 2 testing is currently `SUBSCRIBER` per ROLE-Q2 — the same role as a human end-user. Functionally fine today, but conflates a programmatic agent with a human subscriber for any audit/dashboard view that filters by role.
+
+If Phase 4+ ever introduces meaningful service-account behavior (separate rate-limit profile, audit-log filter, distinct API surface, automated workflows), promote `SERVICE_ACCOUNT` (or `BOT`) to the enum and migrate any identities matching a service-account naming pattern. Until then the conflation is harmless; explicit non-decision per ROLE-Q2.
+
+**Severity:** low (no functional impact at Phase 3 scale; bot identity coexists with human identities at the same role). **Suggested resolution:** Phase 4+ when service-account behavior diverges from human-subscriber behavior. Migration shape: `ALTER TYPE "Role" ADD VALUE 'SERVICE_ACCOUNT'`; UPDATE specific identities; downstream query authors decide whether `SUBSCRIBER OR SERVICE_ACCOUNT` is the new "authenticated client" superset or whether SERVICE_ACCOUNT gets its own auth path entirely.
+
 
 ---
 

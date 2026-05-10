@@ -27,6 +27,24 @@ enum SubscriptionTier {
   ENTERPRISE
 }
 
+// Phase 3 (D9.1) — role on User. SUBSCRIBER is the default for OAuth signups
+// per events.createUser; PUBLISHER and ADMIN are operator-promoted.
+enum Role {
+  SUBSCRIBER
+  PUBLISHER
+  ADMIN
+}
+
+// Phase 3 (D9.6) — provenance of an access_grants row. SEED grandfathers
+// pre-Phase-3 implicit access; SUBSCRIPTION/PURCHASE created by Stream 3
+// Stripe webhooks; MANUAL by admin/operator action.
+enum GrantSource {
+  MANUAL
+  SUBSCRIPTION
+  PURCHASE
+  SEED
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Publishers
 // Multi-tenant root. Seed at Step 5 with `tmrwgroup` and `etumos`.
@@ -60,8 +78,10 @@ model Book {
   createdAt   DateTime   @default(now()) @map("created_at")
   updatedAt   DateTime   @updatedAt @map("updated_at")
 
-  publisher Publisher     @relation(fields: [publisherId], references: [id], onDelete: Cascade)
-  versions  BookVersion[]
+  publisher    Publisher     @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+  versions     BookVersion[]
+  prices       BookPrice[]
+  accessGrants AccessGrant[]
 
   @@unique([publisherId, slug])
   @@index([status])
@@ -108,12 +128,14 @@ model User {
   emailVerified DateTime? @map("email_verified")
   name          String?
   image         String?
+  role          Role      @default(SUBSCRIBER)
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  accounts   Account[]
-  sessions   Session[]
-  subscriber Subscriber?
+  accounts      Account[]
+  sessions      Session[]
+  subscriber    Subscriber?
+  grantedAccess AccessGrant[] @relation("AccessGrantGrantor")
 
   @@map("users")
 }
@@ -180,6 +202,7 @@ model Subscriber {
   apiKeys       SubscriberApiKey[]
   subscriptions Subscription[]
   fetchLogs     FetchLog[]
+  accessGrants  AccessGrant[]
 
   @@index([email])
   @@map("subscribers")
@@ -264,4 +287,79 @@ model FetchLog {
   @@index([bookVersionId])
   @@index([apiKeyId, createdAt(sort: Desc)])
   @@map("fetch_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Access Grants (Phase 3, D9.6)
+// Per-book authorization. SEED grants grandfather pre-Phase-3 implicit access;
+// SUBSCRIPTION/PURCHASE rows are written by Stream 3's Stripe webhook handler;
+// MANUAL by operator/admin action. The route's authorization check (deferred
+// to a follow-up patch behind ENFORCE_BOOK_ACCESS env flag) reads from this
+// table. Soft-delete via revoked_at; expires_at nullable means "no expiry."
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AccessGrant {
+  id                    String      @id @default(uuid()) @db.Uuid
+  subscriberId          String      @map("subscriber_id") @db.Uuid
+  bookId                String      @map("book_id") @db.Uuid
+  source                GrantSource
+  stripeSubscriptionId  String?     @map("stripe_subscription_id") @db.VarChar(64)
+  stripePaymentIntentId String?     @map("stripe_payment_intent_id") @db.VarChar(64)
+  grantedAt             DateTime    @default(now()) @map("granted_at")
+  expiresAt             DateTime?   @map("expires_at")
+  revokedAt             DateTime?   @map("revoked_at")
+  grantedBy             String?     @map("granted_by") @db.Uuid
+
+  subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  book       Book       @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  grantor    User?      @relation("AccessGrantGrantor", fields: [grantedBy], references: [id], onDelete: SetNull)
+
+  @@unique([subscriberId, bookId, source])
+  @@index([subscriberId, bookId])
+  @@index([stripeSubscriptionId])
+  @@map("access_grants")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Book Prices (Phase 3, D9.7)
+// Per-book one-time price. UPDATE-in-place; price history NOT preserved at
+// schema level — Stripe Price objects are immutable and serve as the
+// system-of-record. Single-currency-USD at Phase 3 with currency CHAR(3)
+// shape future-proofing for multi-currency in a later phase.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BookPrice {
+  id              String   @id @default(uuid()) @db.Uuid
+  bookId          String   @map("book_id") @db.Uuid
+  currency        String   @default("USD") @db.Char(3)
+  unitAmountCents Int      @map("unit_amount_cents")
+  stripePriceId   String?  @unique @map("stripe_price_id") @db.VarChar(64)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@unique([bookId, currency])
+  @@map("book_prices")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Webhook Events (Phase 3, D9.3)
+// Idempotency table for inbound webhooks. event_id is the natural primary key
+// (Stripe's evt_… strings are globally unique). source discriminator lets the
+// table cover Stream 3 (stripe) and any future Stream 2 (s3 SNS notifications)
+// without parallel schemas. Insert pattern: INSERT … ON CONFLICT (event_id)
+// DO NOTHING RETURNING event_id — empty result means duplicate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model WebhookEvent {
+  eventId      String    @id @map("event_id") @db.VarChar(128)
+  source       String    @db.VarChar(32)
+  receivedAt   DateTime  @default(now()) @map("received_at")
+  processedAt  DateTime? @map("processed_at")
+  status       String    @db.VarChar(32)
+  errorMessage String?   @map("error_message") @db.Text
+
+  @@index([source, receivedAt(sort: Desc)])
+  @@map("webhook_events")
 }
