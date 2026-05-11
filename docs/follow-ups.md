@@ -636,6 +636,32 @@ Two viable paths:
 
 **Severity:** low; cosmetic, no functional impact on Buy / View / Download / agent fetch. **Suggested resolution:** path 1 if Phase 4 GA wants the Library polished now; path 2 if buyer feedback can wait until publisher edit-existing flow ships. Tie this entry to the ADMIN-as-seed-owner section in `docs/operations.md` — both are seed-corpus transitional state pending Edward/Zach.
 
+### 72. Consolidate Prisma 7 client-component import pattern (+ admin-API status-code consistency)
+
+Surfaced during Phase 4.5 Streams E + F live implementation. Both streams independently hit a webpack build failure when their client components imported the `Role` / `GrantSource` enums from `@/generated/prisma/client` — Prisma 7's generated `client.ts` pulls Node-only modules (`node:crypto`, `node:fs`, `node:events`) into the client bundle, which Next.js rejects with `UnhandledSchemeError`. Each stream worked around it independently:
+
+- **Stream E** (`src/components/dashboard/admin/role-mutation-modal.tsx`) declares a local string-literal union: `type Role = "SUBSCRIBER" | "PUBLISHER" | "ADMIN"`. Drops the type relationship with the generated enum; relies on the server-side handler to validate against the real Prisma enum.
+- **Stream F** (`src/components/dashboard/admin/admin-grants-table.tsx`, `revoke-grant-modal.tsx`) imports from `@/generated/prisma/enums` (pure const object, no Node imports). Keeps the type relationship.
+
+Stream F's approach is the canonical one — `enums.ts` is generated alongside `client.ts` specifically to be bundler-safe. Stream E's local-union path works but loses the compile-time link between the UI and the schema.
+
+**Suggested resolution:**
+- Pick **`@/generated/prisma/enums`** as the canonical import path for client components.
+- Retrofit Stream E's `role-mutation-modal.tsx` to import `Role` from there instead of the local union.
+- Add a one-paragraph note to a new `docs/frontend-conventions.md` (or append to `CLAUDE.md` if a project-wide doc doesn't exist) documenting the rule: "**Client components import Prisma enums from `@/generated/prisma/enums`, NOT `/client`.** The `/client` entrypoint pulls `node:*` modules that break webpack."
+
+**Secondary hygiene (caught during Stream F smoke verification):** the admin-API surface has a small status-code inconsistency between streams:
+- Stream E's `POST /api/admin/users/[id]/role` returns **401** on unauthenticated POST.
+- Stream F's `POST /api/admin/books/[id]/reassign` and `/api/admin/grants/[id]/revoke` return **403** on the same call shape.
+
+Both reject correctly. Semantically 401 = "no session at all," 403 = "authenticated but insufficient role." The split is harmless but worth aligning when this follow-up lands — pick one of:
+- (a) **401 then 403**: handler returns 401 if `!session`, 403 if `session.user.role !== 'ADMIN'`. The textbook semantics.
+- (b) **All 403**: simpler — admin endpoints are gated; non-ADMIN is "forbidden" regardless of whether they're signed in.
+
+Recommend (a) for cleaner client-side error handling, but (b) is defensible.
+
+**Severity:** low; both workarounds ship correctly today, the status codes both communicate "no" effectively. This is pure hygiene — file the consolidation as a Phase 4.5-tail cleanup, no urgency. Pair with the retrofit so both touchpoints land in one PR.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
