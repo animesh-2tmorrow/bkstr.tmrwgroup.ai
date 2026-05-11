@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { SignOutLink } from "@/components/auth/sign-out-link";
@@ -97,7 +98,14 @@ export function DashboardShell({ active, companyName, userEmail, initial, role, 
     <div className="min-h-screen flex">
       <aside className="w-64 bg-[#FAF6EC] border-r border-[#E5DCC8] flex flex-col">
         <div className="p-6 border-b border-[#E5DCC8]">
-          <div className="text-2xl font-bold serif italic">bkstr</div>
+          {/* Phase 5 Stream C / D14.7 — TMRW Group icon mark left of the
+              wordmark. alt="" because the adjacent "bkstr" text is the
+              accessible label; the icon is decorative. `priority` because the
+              sidebar header is above-the-fold on every dashboard page. */}
+          <div className="flex items-center gap-2">
+            <Image src="/logo-icon.png" alt="" width={28} height={36} priority />
+            <div className="text-2xl font-bold serif italic">bkstr</div>
+          </div>
           <div className="text-xs font-semibold text-gray-500 mt-1 uppercase tracking-wider">
             {companyName}
           </div>
@@ -129,6 +137,15 @@ export function DashboardShell({ active, companyName, userEmail, initial, role, 
             <div className="text-sm font-medium truncate">{userEmail}</div>
           </div>
           <SignOutLink />
+        </div>
+        {/* Phase 5 Stream C / D14.7 — TMRW Group platform attribution.
+            Separated from the user-info block above by border-t; the semantic
+            split is "your account" vs "platform attribution." px-6 py-4 (less
+            padding than the p-6 user-info block) reads as compact footer
+            rather than primary content. */}
+        <div className="px-6 py-4 border-t border-[#E5DCC8] flex flex-col items-start gap-1">
+          <span className="text-[10px] uppercase tracking-wider text-gray-500">A product by</span>
+          <Image src="/logo-full.png" alt="TMRW Group" width={60} height={80} />
         </div>
       </aside>
 

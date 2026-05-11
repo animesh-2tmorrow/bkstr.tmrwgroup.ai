@@ -60,3 +60,16 @@ This pins the system's access-creation perimeter at exactly two well-audited ent
 - **Future audits** can compare against the #86 baseline trace. If a `SEED` row appears with a `granted_at` after 2026-05-11, that's an unaudited new code path that needs investigation.
 
 **Cross-references:** D9.6 (original SEED-backfill rationale), D10.2 (checkout-block respects all active grants including SEED), `docs/operations.md:276-289` (SEED operator runbook), follow-up #86 (the trace that grounded this decision).
+
+### D14.7 TMRW Group brand attribution
+
+**Choice:** bkstr is wholly owned by TMRW Group and the visual identity should reflect that without compromising bkstr's standalone product surface. Three concrete placements:
+- **Favicon (browser tab):** TMRW Group icon mark at all standard sizes (16/32/48/96/192/256/512 + apple-touch-icon).
+- **Dashboard sidebar header:** TMRW Group icon mark (28×36px) immediately left of the "bkstr" wordmark. Vertical alignment center; gap 8px.
+- **Dashboard sidebar footer:** full stacked TMRW Group logo (60×80px) below "A product by" microcopy, separated from the user-info block by a border. Visible on every dashboard page (Active Books, Library, API Keys, Fetch Logs, Pricing, New Book, Billing, all Admin · *, Docs, Assistant).
+
+bkstr remains the primary brand in `<title>`, page H1s, and dashboard nav labels. TMRW Group is secondary attribution everywhere it appears.
+
+**Reasoning:** signals corporate parentage without diluting bkstr's product identity. The "A product by" microcopy frames TMRW Group as the platform owner, not co-equal branding. Easy to lift if bkstr ever needs standalone branding — single component edit (`dashboard-shell.tsx`), swap asset files (`public/logo-*.png`, `public/favicon*`), update metadata icons field. No nested coupling to the rest of the codebase. The Stream C patch touches one component, one metadata file, one decisions doc, and the `public/` asset folder. Zero schema, zero API routes, zero tests touched.
+
+**Cross-references:** D14.1–D14.6 are functional decisions (assistant scope, model, schema, perimeter); D14.7 is the first visual-identity decision in the running log. Future visual/brand decisions append here.
