@@ -547,6 +547,8 @@ Mechanically harmless — the 15-row count is correct and D9.6's stated purpose 
 
 **Severity:** low; no functional bug, but worth confirming the intent before the next role-related schema pass. **Suggested resolution:** either (a) document in the schema or D9.6 note that "subscribers" in the backfill means the table and dual-enrolment is intentional, or (b) tighten the backfill scope to `WHERE users.role = 'SUBSCRIBER'` if ADMIN-as-subscriber is meant to be a dev-only convenience that production should not carry. Decision can wait for Stream 1 patch 2 (ENFORCE_BOOK_ACCESS) since that's the natural touchpoint for re-examining the role-vs-table semantics across the access path.
 
+**Update (Phase 4 Stream A, 2026-05-11):** PUBLISHER_OWN (D11.3 / CC-3) is now a clean cousin to SEED — the role-vs-table-membership ambiguity flagged here is moot for the publisher-access case (publisher reads of own books go through PUBLISHER_OWN, never SEED). SEED retains its grandfathered-subscriber-table semantic untouched. The narrower question of "should SEED also be role-filtered" can be decided in isolation when Stream 1 patch 2 lands.
+
 ### 66. Buyer-facing content access in `/dashboard` (View + Download surfaces)
 
 For any book with an active grant (any source), expose two consumption surfaces on the dashboard row:
@@ -596,6 +598,8 @@ Once **every** book row has a non-null `publisher_user_id` — verified by `SELE
 Sequencing: this is Phase 4.5 work (after Stream A + Stream B both land and at least one operator-driven new-book upload via Stream B has been smoke-tested), not in Phase 4 itself. The tightening migration is one-line (`ALTER TABLE books ALTER COLUMN publisher_user_id SET NOT NULL`); the only operational concern is that any in-flight Stream B "new-book" requests during the migration must already have written a non-null value (which the form gate per Phase 4 design Q15+CC enforces).
 
 **Severity:** low; the nullable-FK state is correct-but-temporarily-loose. **Suggested resolution:** Phase 4.5 patch alongside the first wave of operator-driven publishing post-Phase-4 GA. Confirm via SQL that no nulls exist immediately before applying the ALTER.
+
+**Update (Phase 4 Stream A, 2026-05-11):** the migration has shipped — `20260511120000_phase_4_schema_part_1` adds the nullable column + FK + index; `20260511120100_phase_4_schema_part_2_backfill` runs a conditional `DO $$ … $$` block that assigns publisher_user_id IF Edward exists in `users` ELSE defers with `RAISE NOTICE`. Today (deploy day) Edward has not signed in → the DO block hits the defer branch and books stay unattributed. The operator re-runs the same DO block manually via psql once Edward signs in (runbook: `docs/operations.md` "Phase 4.5 — Edward / Zach publisher backfill"). Per [D11.10](./phase-4-decisions.md#d1110--bookdescription-and-bookpublisher_user_id-both-ship-nullable-pair-tighten-later-per-68), the related `book.description` column also ships nullable and pair-tightens here once every book carries prose. Update this entry's title to "Tighten `book.publisher_user_id` AND `book.description` to NOT NULL …" when scheduling the Phase 4.5 work.
 
 ---
 

@@ -435,3 +435,156 @@ If `UPDATE users SET role='SUBSCRIBER'` was run against the wrong user, recovery
 If the only ADMIN was accidentally demoted: provided their email is still in `ADMIN_EMAILS` in `/etc/bkstr/roles.env`, they'll be re-promoted automatically on their next signin (D11.11 rule 1, env presence promotes). If their email isn't in the file, re-add it, reload pm2, ask them to sign in. If the file itself is missing, restore it (the contents are operator-stable across deploys; the canonical values are recorded in this runbook and in the deploy decision log).
 
 ---
+
+## Phase 4.5 — Edward / Zach publisher backfill
+
+Phase 4 Stream A's migration `20260511120100_phase_4_schema_part_2_backfill` carries a conditional `DO $$ … $$` block that assigns `book.publisher_user_id` to Edward and creates a `PUBLISHER_OWN`-source `access_grants` row per book. The block runs at migration-deploy time. If Edward (`edward@tmrwgroup.ai`) has not yet signed in when the migration deploys, the DO block hits an `IF edward_id IS NULL THEN RAISE NOTICE … RETURN` branch and books stay unattributed. The operator then re-runs the same SQL manually once Edward signs in. This runbook entry is the operator path for that re-run.
+
+Zach is intentionally NOT in the automated backfill (per D11.10 — Edward owns all 5 existing seed books). When Zach's email lands, his books are first-class new-book creations via Stream B's `/dashboard/books/new` form. If a future operator decision reassigns existing books to Zach, hand-edit a fresh SQL patch — do not extend the migration's DO block (the migration is immutable history once deployed).
+
+### When to run this runbook
+
+The DO block returned at the `RAISE NOTICE 'Phase 4 Stream A: edward@tmrwgroup.ai not yet in users; publisher backfill deferred…'` branch. Verify by checking pm2 logs from the Stream A deploy:
+
+```bash
+pm2 logs bkstr-web --nostream | grep "Phase 4 Stream A"
+```
+
+Or by querying directly — every book row carries `publisher_user_id IS NULL` post-deploy:
+
+```bash
+psql "$DATABASE_URL" -c "SELECT COUNT(*) AS unattributed_books FROM books WHERE publisher_user_id IS NULL;"
+```
+
+If `unattributed_books > 0` AND Edward exists in `users`, this runbook applies. Skip the runbook if `unattributed_books = 0` (the migration completed the backfill successfully on the first try).
+
+### Step 0 — Confirm Edward has signed in
+
+```bash
+psql "$DATABASE_URL" -c "SELECT id, email, role, created_at FROM users WHERE email = 'edward@tmrwgroup.ai';"
+```
+
+Expected: one row. If empty → Edward has not signed in yet, and re-running the DO block now will hit the same `IF edward_id IS NULL` branch and no-op. Wait for him to sign in (or chase him to do so), then re-run Step 0 before proceeding.
+
+Also confirm his `subscribers` row exists (the auto-creation in `src/lib/auth/index.ts:154`):
+
+```bash
+psql "$DATABASE_URL" -c "SELECT s.id, s.company_name, s.email FROM subscribers s JOIN users u ON u.id = s.user_id WHERE u.email = 'edward@tmrwgroup.ai';"
+```
+
+Expected: one row. If empty → the auto-creation may have failed (rare; would also have surfaced as a signin error in pm2 logs). Run the DO block anyway — it sets `publisher_user_id` on books and defers `PUBLISHER_OWN` access_grants per its inner `IF edward_sub_id IS NOT NULL` guard.
+
+### Step 1 — Re-run the DO block
+
+The DO block is preserved verbatim in `prisma/migrations/20260511120100_phase_4_schema_part_2_backfill/migration.sql`. Operator can either copy it from that file or paste the block below directly. The DO block is idempotent via `ON CONFLICT DO NOTHING` on the (subscriber_id, book_id, source) unique index — re-running after partial success is safe.
+
+```bash
+psql "$DATABASE_URL" <<'SQL'
+DO $$
+DECLARE
+  edward_id     UUID;
+  edward_sub_id UUID;
+  books_updated INT := 0;
+  grants_made   INT := 0;
+BEGIN
+  SELECT "id" INTO edward_id FROM "users" WHERE "email" = 'edward@tmrwgroup.ai';
+  IF edward_id IS NULL THEN
+    RAISE NOTICE 'Phase 4 Stream A: edward@tmrwgroup.ai not yet in users; publisher backfill deferred.';
+    RETURN;
+  END IF;
+
+  SELECT "id" INTO edward_sub_id FROM "subscribers" WHERE "user_id" = edward_id;
+  IF edward_sub_id IS NULL THEN
+    RAISE NOTICE 'Phase 4 Stream A: edward user row exists but no subscribers row; PUBLISHER_OWN grants deferred.';
+  END IF;
+
+  UPDATE "books" SET "publisher_user_id" = edward_id WHERE "publisher_user_id" IS NULL;
+  GET DIAGNOSTICS books_updated = ROW_COUNT;
+  RAISE NOTICE 'Phase 4 Stream A: assigned % book(s) to edward@tmrwgroup.ai', books_updated;
+
+  IF edward_sub_id IS NOT NULL THEN
+    INSERT INTO "access_grants" ("id", "subscriber_id", "book_id", "source", "granted_at")
+    SELECT gen_random_uuid(), edward_sub_id, b."id", 'PUBLISHER_OWN'::"GrantSource", CURRENT_TIMESTAMP
+      FROM "books" b
+     WHERE b."publisher_user_id" = edward_id
+        ON CONFLICT ("subscriber_id", "book_id", "source") DO NOTHING;
+    GET DIAGNOSTICS grants_made = ROW_COUNT;
+    RAISE NOTICE 'Phase 4 Stream A: created % PUBLISHER_OWN grant(s) for edward@tmrwgroup.ai', grants_made;
+  END IF;
+END $$;
+SQL
+```
+
+Expected `NOTICE` output for the typical case (Edward signed in, subscribers row exists, books still unattributed):
+```
+NOTICE:  Phase 4 Stream A: assigned 5 book(s) to edward@tmrwgroup.ai
+NOTICE:  Phase 4 Stream A: created 5 PUBLISHER_OWN grant(s) for edward@tmrwgroup.ai
+```
+
+If re-running after partial success, the `ON CONFLICT` clause swallows duplicate grants and the UPDATE only touches rows still NULL — the counts may be lower (or zero) on the second run.
+
+### Step 2 — Verify the backfill
+
+```bash
+psql "$DATABASE_URL" <<'SQL'
+-- Every book has a publisher_user_id.
+SELECT COUNT(*) AS unattributed_books FROM books WHERE publisher_user_id IS NULL;
+-- Expected: 0
+
+-- Every book has a corresponding PUBLISHER_OWN grant for Edward.
+SELECT COUNT(*) AS publisher_own_grants
+FROM access_grants ag
+JOIN subscribers s ON s.id = ag.subscriber_id
+JOIN users u       ON u.id = s.user_id
+WHERE ag.source = 'PUBLISHER_OWN' AND u.email = 'edward@tmrwgroup.ai';
+-- Expected: 5
+
+-- Spot-check: book slug + publisher email pair.
+SELECT b.slug, u.email
+FROM books b
+JOIN users u ON u.id = b.publisher_user_id
+ORDER BY b.slug;
+-- Expected: 5 rows, all u.email = edward@tmrwgroup.ai
+```
+
+### Step 3 — Schedule the NOT NULL tightening
+
+Per [follow-up #68](./follow-ups.md#68-tighten-bookpublisher_user_id-to-not-null-after-phase-4-backfill-completes), once `SELECT COUNT(*) FROM books WHERE publisher_user_id IS NULL` returns 0 AND Stream B has been smoke-tested with at least one operator-driven new-book upload (so the form's `publisher_user_id = session.user.id` write is verified), open a follow-on migration:
+
+```sql
+ALTER TABLE "books" ALTER COLUMN "publisher_user_id" SET NOT NULL;
+```
+
+Paired with the same one-line tightening on `book.description` if/when the invariant becomes "every book has prose description." Both columns currently ship nullable per D11.10. The tightening is one-line per column and runs in seconds against the production corpus.
+
+The publisher_user_id FK's `ON DELETE` clause stays at `SET NULL` even after the NOT NULL flip — the rationale being that a publisher User deletion shouldn't cascade-delete their books (which may have buyers via access_grants). If the publisher_user_id is briefly null during such a delete, a follow-up reassignment task lifts the column back to non-null. The schema invariant in steady-state is "publisher_user_id is non-null" without precluding the rare publisher-User-deletion path.
+
+### When Zach onboards (and any future publisher)
+
+Stream B's `/dashboard/books/new` form is the canonical path. The form writes `publisher_user_id = session.user.id` server-side per the route's auth gate, and the inline `prisma.$transaction` inserts the matching `access_grants` row with `source = 'PUBLISHER_OWN'` (mirror of this runbook's DO block, but per-book at create time). No manual SQL needed for new books once Stream B has shipped.
+
+If a stakeholder wants to retroactively reassign EXISTING books to a different publisher (e.g. some of Edward's seed books are actually Zach's), hand-edit:
+
+```sql
+UPDATE "books" SET "publisher_user_id" = (SELECT id FROM users WHERE email = 'zach@tmrwgroup.ai')
+ WHERE slug IN ('<zach-book-1>', '<zach-book-2>');
+
+-- Also issue the matching PUBLISHER_OWN grants for Zach
+INSERT INTO "access_grants" ("id", "subscriber_id", "book_id", "source", "granted_at")
+SELECT gen_random_uuid(), s.id, b.id, 'PUBLISHER_OWN'::"GrantSource", CURRENT_TIMESTAMP
+  FROM "books" b
+  JOIN "subscribers" s ON s.user_id = b.publisher_user_id
+ WHERE b.publisher_user_id = (SELECT id FROM users WHERE email = 'zach@tmrwgroup.ai')
+    ON CONFLICT ("subscriber_id", "book_id", "source") DO NOTHING;
+
+-- Optional: revoke Edward's now-stale PUBLISHER_OWN grants for those books.
+-- Stream A's design keeps revoked rows for audit; revoke rather than delete.
+UPDATE "access_grants" SET "revoked_at" = NOW()
+ WHERE source = 'PUBLISHER_OWN'
+   AND book_id IN (SELECT id FROM books WHERE slug IN ('<zach-book-1>', '<zach-book-2>'))
+   AND subscriber_id = (SELECT s.id FROM subscribers s JOIN users u ON u.id = s.user_id WHERE u.email = 'edward@tmrwgroup.ai');
+```
+
+Run via psql in a single transaction (`BEGIN; … COMMIT;`) so a mid-step failure doesn't leave Zach's books partially assigned. Document the reassignment in a dated note appended to this runbook section.
+
+---

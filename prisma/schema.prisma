@@ -37,12 +37,14 @@ enum Role {
 
 // Phase 3 (D9.6) — provenance of an access_grants row. SEED grandfathers
 // pre-Phase-3 implicit access; SUBSCRIPTION/PURCHASE created by Stream 3
-// Stripe webhooks; MANUAL by admin/operator action.
+// Stripe webhooks; MANUAL by admin/operator action. Phase 4 (D11.3) adds
+// PUBLISHER_OWN for publishers' auto-grants on their own books (CC-3).
 enum GrantSource {
   MANUAL
   SUBSCRIPTION
   PURCHASE
   SEED
+  PUBLISHER_OWN
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,23 +71,35 @@ model Publisher {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Book {
-  id          String     @id @default(uuid()) @db.Uuid
-  publisherId String     @map("publisher_id") @db.Uuid
-  slug        String     @db.VarChar(128)
-  title       String     @db.VarChar(255)
-  domain      String     @db.VarChar(64)
-  status      BookStatus @default(DRAFT)
-  createdAt   DateTime   @default(now()) @map("created_at")
-  updatedAt   DateTime   @updatedAt @map("updated_at")
+  id              String     @id @default(uuid()) @db.Uuid
+  publisherId     String     @map("publisher_id") @db.Uuid
+  // Phase 4 (D11.10) — per-user publisher attribution. Nullable for staged
+  // authoring: at migration time Edward + Zach may not have signed in yet,
+  // and #68 tracks tightening this to NOT NULL once every existing book row
+  // has a non-null value. Paired with `description` for the same reason.
+  publisherUserId String?    @map("publisher_user_id") @db.Uuid
+  slug            String     @db.VarChar(128)
+  title           String     @db.VarChar(255)
+  // Phase 4 (D11.10) — long-form prose description. Nullable for staged
+  // authoring; tighten alongside #68 if/when the invariant becomes
+  // "every book has prose description." Stream B (publisher UI) writes this
+  // on new-book creation; existing 5 books backfill as NULL.
+  description     String?    @db.Text
+  domain          String     @db.VarChar(64)
+  status          BookStatus @default(DRAFT)
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
 
-  publisher    Publisher     @relation(fields: [publisherId], references: [id], onDelete: Cascade)
-  versions     BookVersion[]
-  prices       BookPrice[]
-  accessGrants AccessGrant[]
+  publisher     Publisher     @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+  publisherUser User?         @relation("BookPublisher", fields: [publisherUserId], references: [id], onDelete: SetNull)
+  versions      BookVersion[]
+  prices        BookPrice[]
+  accessGrants  AccessGrant[]
 
   @@unique([publisherId, slug])
   @@index([status])
   @@index([domain])
+  @@index([publisherUserId])
   @@map("books")
 }
 
@@ -132,10 +146,15 @@ model User {
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  accounts      Account[]
-  sessions      Session[]
-  subscriber    Subscriber?
-  grantedAccess AccessGrant[] @relation("AccessGrantGrantor")
+  accounts       Account[]
+  sessions       Session[]
+  subscriber     Subscriber?
+  grantedAccess  AccessGrant[] @relation("AccessGrantGrantor")
+  // Phase 4 (D11.10) — inverse of Book.publisherUser. A User's published books
+  // are surfaced via this relation in /dashboard/pricing (PUBLISHER scope filter)
+  // and Stream B's new-book creation. ON DELETE SET NULL preserves the books
+  // independent of the publisher's User row.
+  publishedBooks Book[]        @relation("BookPublisher")
 
   @@map("users")
 }
@@ -269,7 +288,10 @@ model FetchLog {
   id            String   @id @default(uuid()) @db.Uuid
   subscriberId  String   @map("subscriber_id") @db.Uuid
   bookVersionId String   @map("book_version_id") @db.Uuid
-  apiKeyId      String   @map("api_key_id") @db.Uuid
+  // Phase 4 (D11.12) — nullable to support Stream C dashboard surfaces
+  // (View, Download) which run with a session cookie, no API key in play.
+  // Existing agent_fetch rows continue to write a non-null apiKeyId.
+  apiKeyId      String?  @map("api_key_id") @db.Uuid
   model         String   @db.Text
   query         String   @db.Text
   inputTokens   Int?     @map("input_tokens")
@@ -278,10 +300,16 @@ model FetchLog {
   status        String   @db.Text
   errorMessage  String?  @map("error_message") @db.Text
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  // Phase 4 (D11.13) — provenance of the row. Default `agent_fetch` matches
+  // the existing /api/agent/fetch handler; Stream C surfaces will write
+  // `dashboard_view` / `dashboard_download`. VARCHAR(32) + app-side
+  // discipline (no Postgres enum) per the webhook_events.source precedent
+  // (D9.3); future Stream C consumers may add values without a migration.
+  source        String   @default("agent_fetch") @map("source") @db.VarChar(32)
 
-  subscriber  Subscriber       @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
-  bookVersion BookVersion      @relation(fields: [bookVersionId], references: [id], onDelete: Restrict)
-  apiKey      SubscriberApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Restrict)
+  subscriber  Subscriber        @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  bookVersion BookVersion       @relation(fields: [bookVersionId], references: [id], onDelete: Restrict)
+  apiKey      SubscriberApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: Restrict)
 
   @@index([subscriberId, createdAt(sort: Desc)])
   @@index([bookVersionId])
