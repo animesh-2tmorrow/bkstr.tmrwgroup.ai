@@ -38,12 +38,12 @@ type Props = {
 // guards inside /dashboard/pricing and /dashboard/books/new remain the
 // load-bearing authz check; this filter is UI-affordance only.
 //
-// Phase 4.5 Stream E — `adminOnly: true` re-introduces the strict-ADMIN gate
-// for the new /dashboard/admin/* surfaces. The shared layout at
+// Phase 4.5 Streams E + F — `adminOnly: true` re-introduces a strict-ADMIN
+// gate for /dashboard/admin/* surfaces (admin-users from Stream E;
+// admin-books + admin-grants from Stream F). The shared layout at
 // app/dashboard/admin/layout.tsx is the load-bearing redirect; this flag is
-// UI-affordance only (mirrors the publisherOrAdmin precedent). Stream F's
-// admin-books + admin-grants nav items will land here as additional entries
-// with adminOnly: true.
+// UI-affordance only — hide the nav for SUBSCRIBER + PUBLISHER so they don't
+// see dead links. Mirrors the publisherOrAdmin precedent.
 const NAV_ITEMS: ReadonlyArray<{
   key: DashboardNavKey;
   href: string;
@@ -58,16 +58,21 @@ const NAV_ITEMS: ReadonlyArray<{
   { key: "pricing", href: "/dashboard/pricing", label: "Pricing", publisherOrAdmin: true },
   { key: "new-book", href: "/dashboard/books/new", label: "New Book", publisherOrAdmin: true },
   { key: "billing", href: "/dashboard/billing", label: "Billing" },
-  { key: "admin-users", href: "/dashboard/admin/users", label: "Admin: Users", adminOnly: true },
+  // Phase 4.5 admin surfaces (Streams E + F). Order: users → books → grants
+  // so the workflow flows "manage who" → "manage what" → "manage access."
+  { key: "admin-users", href: "/dashboard/admin/users", label: "Admin · Users", adminOnly: true },
+  { key: "admin-books", href: "/dashboard/admin/books", label: "Admin · Books", adminOnly: true },
+  { key: "admin-grants", href: "/dashboard/admin/grants", label: "Admin · Grants", adminOnly: true },
 ];
 
 export function DashboardShell({ active, companyName, userEmail, initial, role, children }: Props) {
   // Phase 4 Stream B — PUBLISHER + ADMIN see authoring nav (Pricing, New Book);
   // SUBSCRIBER does not.
-  // Phase 4.5 Stream E — `adminOnly` gates a nav item to ADMIN-only; PUBLISHER
-  // does NOT see admin surfaces. Two-tier gating: items with neither flag are
-  // visible to all roles; items with `publisherOrAdmin` are visible to
-  // PUBLISHER + ADMIN; items with `adminOnly` are visible to ADMIN only.
+  // Phase 4.5 Streams E + F — `adminOnly` gates a nav item to ADMIN only;
+  // PUBLISHER does NOT see admin surfaces. Three-tier gating: items with
+  // neither flag are visible to all roles; items with `publisherOrAdmin` are
+  // visible to PUBLISHER + ADMIN; items with `adminOnly` are visible to ADMIN
+  // only.
   const visibleItems = NAV_ITEMS.filter((item) => {
     if (item.adminOnly) return role === "ADMIN";
     if (item.publisherOrAdmin) return role === "ADMIN" || role === "PUBLISHER";

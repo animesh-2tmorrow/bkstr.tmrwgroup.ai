@@ -1,4 +1,4 @@
-import { Prisma, Role } from "@/generated/prisma/client";
+import { Prisma, Role, type GrantSource } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 
 export type BookWithMetrics = {
@@ -309,6 +309,12 @@ export type AdminUserRow = {
   companyName: string | null;
   createdAt: Date;
   lastSigninAt: Date | null;
+  // Stream F's reassign modal uses this to disable target options without
+  // a subscribers row (rare; only fires when auto-subscriber-create on
+  // first signin failed). Surfaced here rather than on a separate
+  // ReassignableUser shape per the Phase 4.5 cross-stream consolidation
+  // call. Stream E's users-table does not render this column.
+  hasSubscriber: boolean;
 };
 
 export type AdminUsersSortBy = "email" | "created_at" | "last_signin_at";
@@ -350,11 +356,17 @@ function orderClauseFor(sortBy: AdminUsersSortBy, sortDir: AdminUsersSortDir) {
 }
 
 export async function getAdminUsers(opts: {
-  roleFilter?: Role;
+  // Accepts a single Role (Stream E's users-list filter tabs) or a Role[]
+  // (Stream F's reassign modal — `[PUBLISHER, ADMIN]`). Omit for "all roles."
+  roleFilter?: Role | Role[];
   sortBy?: AdminUsersSortBy;
   sortDir?: AdminUsersSortDir;
 }): Promise<AdminUserRow[]> {
-  const where: Prisma.UserWhereInput = opts.roleFilter ? { role: opts.roleFilter } : {};
+  const where: Prisma.UserWhereInput = opts.roleFilter
+    ? Array.isArray(opts.roleFilter)
+      ? { role: { in: opts.roleFilter } }
+      : { role: opts.roleFilter }
+    : {};
   const orderBy = orderClauseFor(opts.sortBy ?? "last_signin_at", opts.sortDir ?? "desc");
 
   const users = await prisma.user.findMany({
@@ -367,7 +379,7 @@ export async function getAdminUsers(opts: {
       role: true,
       createdAt: true,
       lastSigninAt: true,
-      subscriber: { select: { companyName: true } },
+      subscriber: { select: { id: true, companyName: true } },
     },
   });
 
@@ -379,6 +391,7 @@ export async function getAdminUsers(opts: {
     companyName: u.subscriber?.companyName ?? null,
     createdAt: u.createdAt,
     lastSigninAt: u.lastSigninAt,
+    hasSubscriber: u.subscriber !== null,
   }));
 }
 
@@ -410,5 +423,147 @@ export async function getBooksForLibrary(): Promise<LibraryBook[]> {
       (b.publisherUser?.name && b.publisherUser.name.trim().length > 0
         ? b.publisherUser.name
         : null) ?? b.publisher.name,
+  }));
+}
+
+// Phase 4.5 Stream F (D12.13) — ADMIN-scoped book ledger for
+// /dashboard/admin/books. Joins both the per-user publisher attribution
+// (Phase 4 D11.10) AND the tenant Publisher row so the table can render
+// "publisherUser.name → publisher.name" with the user's email as a
+// disambiguating subtitle (matches Stream F brief §4). USD price comes from
+// the same prices[0] take-1 shape as getPricingBooks (currency="USD" filter
+// + take 1, the BookPrice unique key is (bookId, currency) so this is
+// effectively a single-row lookup). The activeGrantCount column reads
+// `_count.accessGrants` with a where-filter for `revokedAt IS NULL` — Prisma
+// supports filtered _count via the relation-load.
+//
+// No role-filter — ADMIN sees every book. The query is one round-trip per
+// table render; the layout gate (auth() role === ADMIN) means this only
+// runs for ADMIN sessions.
+export type AdminBookRow = {
+  id: string;
+  title: string;
+  slug: string;
+  domain: string;
+  status: string;
+  publisherTenantName: string;
+  publisherUserId: string | null;
+  publisherUserName: string | null;
+  publisherUserEmail: string | null;
+  unitAmountCents: number | null;
+  activeGrantCount: number;
+};
+
+export async function getAdminBooks(): Promise<AdminBookRow[]> {
+  const books = await prisma.book.findMany({
+    orderBy: { title: "asc" },
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      domain: true,
+      status: true,
+      publisherUserId: true,
+      publisher: { select: { name: true } },
+      publisherUser: { select: { name: true, email: true } },
+      prices: {
+        where: { currency: "USD" },
+        select: { unitAmountCents: true },
+        take: 1,
+      },
+      _count: {
+        select: {
+          accessGrants: { where: { revokedAt: null } },
+        },
+      },
+    },
+  });
+
+  return books.map((b) => ({
+    id: b.id,
+    title: b.title,
+    slug: b.slug,
+    domain: b.domain,
+    status: b.status,
+    publisherTenantName: b.publisher.name,
+    publisherUserId: b.publisherUserId,
+    publisherUserName: b.publisherUser?.name ?? null,
+    publisherUserEmail: b.publisherUser?.email ?? null,
+    unitAmountCents: b.prices[0]?.unitAmountCents ?? null,
+    activeGrantCount: b._count.accessGrants,
+  }));
+}
+
+// Phase 4.5 Stream F — pool of users eligible to be a book's publisher.
+// Phase 4.5 Stream F — full access_grants ledger for /dashboard/admin/grants.
+// Filterable via search params: ?source / ?subscriber / ?book. Each filter
+// is single-select per Q-F4 (matches Stream E's tabs pattern). Joins
+// subscriber + book so the table can render subscriber email + book title
+// inline.
+export type AdminGrantRow = {
+  id: string;
+  source: GrantSource;
+  subscriberId: string;
+  subscriberEmail: string;
+  bookId: string;
+  bookTitle: string;
+  bookSlug: string;
+  grantedAt: Date;
+  revokedAt: Date | null;
+  expiresAt: Date | null;
+};
+
+export async function getAdminGrants(opts: {
+  source?: GrantSource;
+  subscriberId?: string;
+  bookId?: string;
+}): Promise<AdminGrantRow[]> {
+  // Build the where clause from optional filters — undefined keys are
+  // dropped by Prisma so the no-filter call returns every grant row.
+  const where: Prisma.AccessGrantWhereInput = {};
+  if (opts.source) where.source = opts.source;
+  if (opts.subscriberId) where.subscriberId = opts.subscriberId;
+  if (opts.bookId) where.bookId = opts.bookId;
+
+  const grants = await prisma.accessGrant.findMany({
+    where,
+    // Active grants first (revoked_at NULL), then most-recently-granted —
+    // matches "most operationally interesting at the top." NULLS FIRST is
+    // the implicit Postgres default for ASC; we want NULL revokedAt at the
+    // top, then chronological among revoked.
+    orderBy: [{ revokedAt: "asc" }, { grantedAt: "desc" }],
+    select: {
+      id: true,
+      source: true,
+      subscriberId: true,
+      bookId: true,
+      grantedAt: true,
+      revokedAt: true,
+      expiresAt: true,
+      subscriber: {
+        select: {
+          email: true,
+          // The subscribers.email column is the canonical address; the
+          // join-back to users is only needed for cases where subscribers.email
+          // is empty (rare; PrismaAdapter copies user.email into the
+          // subscriber row at signin per src/lib/auth/index.ts:154).
+          user: { select: { email: true } },
+        },
+      },
+      book: { select: { title: true, slug: true } },
+    },
+  });
+
+  return grants.map((g) => ({
+    id: g.id,
+    source: g.source,
+    subscriberId: g.subscriberId,
+    subscriberEmail: g.subscriber.email || g.subscriber.user?.email || "—",
+    bookId: g.bookId,
+    bookTitle: g.book.title,
+    bookSlug: g.book.slug,
+    grantedAt: g.grantedAt,
+    revokedAt: g.revokedAt,
+    expiresAt: g.expiresAt,
   }));
 }

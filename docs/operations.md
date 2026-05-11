@@ -438,6 +438,8 @@ If the only ADMIN was accidentally demoted: provided their email is still in `AD
 
 ## ADMIN-as-seed-owner — temporary publisher attribution for the 5 seed books (2026-05-11)
 
+> **Phase 4.5 Stream F update (2026-05-11):** the reassign UI at `/dashboard/admin/books` now productizes the SQL block in this section. **Prefer the UI** — click Reassign on a book row, pick the target publisher, click OK. The SQL block below is retained for break-glass / non-UI scenarios (UI broken, mass migration, scripted run). See "Stream F — book reassignment + grant revoke operator guide" near the bottom of this document for the UI walkthrough.
+
 **Current live state:** all 5 existing seed books are attributed to `animesh@2tmorrow.com` (user_id `588615d8-c2e7-4808-9e9b-997ba09e6cbd`, role=ADMIN) via `book.publisher_user_id`, with matching `PUBLISHER_OWN`-source `access_grants` rows on ADMIN's subscriber row (`sub_id=588615d8…`). This was an explicit operator action on 2026-05-11, triggered when `/dashboard/library` showed empty because:
 
 1. The 5 seed books were `status='DRAFT'` (the schema default; `import-book.ts` never sets ACTIVE). Stream C's Library route filters `status='ACTIVE'`. **Fix:** `UPDATE books SET status='ACTIVE' WHERE status='DRAFT'`.
@@ -1003,5 +1005,108 @@ SELECT created_at, actor_user_id, target_id, action_type,
 - `user.role_promote_admin` — any → ADMIN (rare; high-consequence security event).
 - `user.role_demote_publisher` — ADMIN → PUBLISHER (rare; enumerated for completeness).
 - `user.role_demote_subscriber` — PUBLISHER → SUBSCRIBER or ADMIN → SUBSCRIBER (the operator-explicit demote path).
+
+---
+
+## Stream F — book reassignment + grant revoke operator guide
+
+Phase 4.5 Stream F ships two ADMIN-only dashboard surfaces:
+
+- `/dashboard/admin/books` — every book in the system with current publisher attribution, USD price, active grant count, and a per-row Reassign button.
+- `/dashboard/admin/grants` — every `access_grants` row, filterable by source, with a per-row Revoke button on active (non-revoked) rows.
+
+Both surfaces gate on `role === ADMIN` at the shared `/dashboard/admin/layout.tsx`; SUBSCRIBER and PUBLISHER are redirected to `/dashboard`. The handlers (`POST /api/admin/books/[id]/reassign`, `POST /api/admin/grants/[id]/revoke`) re-check role server-side and write one `admin_actions` row per mutation per Stream G's `writeAuditEntry` helper.
+
+### Reassign UI supersedes the ADMIN-as-seed-owner SQL block
+
+The "Reassign seed books later" SQL block at line 452 of this document is now operator-redundant for the common path. Once Edward signs in:
+
+1. Navigate to `/dashboard/admin/books`.
+2. Find each of the 5 books that today show "Animesh (animesh@2tmorrow.com)" as publisher.
+3. Click Reassign on each row, pick `edward@tmrwgroup.ai` from the dropdown, click OK.
+4. The handler performs the three writes from the SQL block (move `publisher_user_id`, soft-revoke ADMIN's `PUBLISHER_OWN` grant, issue Edward's fresh `PUBLISHER_OWN` grant) plus one `admin_actions` audit row, atomically.
+
+The SQL block is retained for break-glass scenarios:
+- UI is unavailable (e.g. deploy-in-progress, Next build broken).
+- Mass migration where five clicks is operationally unwise — though Q-F2 / D12.11 explicitly chose single-at-a-time over bulk for Phase 4.5; bulk UX is a follow-up.
+- A scripted run from CI / a one-time job.
+
+Q-F3 / D12.13 lock — the UI's reassign handler ONLY touches `source = 'PUBLISHER_OWN'` grants. MANUAL / SEED / PURCHASE / SUBSCRIPTION grants on the same book stay untouched. Mirror the same scope when running the SQL block manually — the existing template already uses `WHERE source = 'PUBLISHER_OWN'`, preserve that.
+
+### Soft-revoke un-revoke path (Q-F5 — psql-only)
+
+The Revoke button at `/dashboard/admin/grants` performs soft-revoke per D12.6 — sets `revoked_at = NOW()`, never DELETE. Un-revoking a previously-revoked grant is **not** a UI action (Q-F5 is OOS for Stream F):
+
+```sql
+-- Reset a revoked grant back to active. Inverse of the Stream F Revoke button.
+UPDATE access_grants
+   SET revoked_at = NULL
+ WHERE id = '<grant-uuid>';
+```
+
+Side effects after un-revoke:
+- `requireBookAccess` (`src/lib/books/access.ts`) starts returning this row immediately on the next request — no cache plane between the UPDATE and the access check.
+- The Stripe-checkout-block rule (D10.2) re-activates: if this is a SEED-source grant and the subscriber tries to buy the book, `/api/checkout` will 409 again.
+- No `admin_actions` row is written by this UPDATE — un-revoke bypasses the audit helper by construction (the UI is the only path that flows through `writeAuditEntry`). Capture the un-revoke in a dated runbook note if it matters for the operator's audit context.
+
+Q-F5 + D12.6 together mean: revoking is a button click, un-revoking is a deliberate psql action. The asymmetry is intentional — un-revoke is rare and benefits from the friction of stepping into the database directly.
+
+### Hard-delete is psql-only (and rare)
+
+Soft-revoke retains the audit trail. Hard-delete is the unhappy-path:
+
+```sql
+-- DESTRUCTIVE — only when the grant should never have existed (test-data
+-- leakage, schema-bug spillover). For operator-driven revocation use
+-- /dashboard/admin/grants instead.
+DELETE FROM access_grants WHERE id = '<grant-uuid>';
+```
+
+The UI surface does NOT expose hard-delete. The `revoked_at` column is the load-bearing audit field; the row's continued presence in the table is part of the "we kept the receipt" guarantee.
+
+### Cross-reference: querying admin_actions for Stream F mutations
+
+Every reassign click and revoke click writes one row to `admin_actions` per D12.4 (write inside the mutation TX — see Stream G's "Querying admin_actions via psql" section earlier in this document for the canonical query shapes). For Stream F specifically:
+
+```sql
+-- Every book reassignment in the last week
+SELECT created_at,
+       actor_user_id,
+       target_id AS book_id,
+       before_state->>'publisher_user_id' AS old_publisher_user_id,
+       after_state->>'publisher_user_id'  AS new_publisher_user_id
+  FROM admin_actions
+ WHERE action_type = 'book.reassign_publisher'
+   AND created_at >= NOW() - INTERVAL '7 days'
+ ORDER BY created_at DESC;
+
+-- Every grant revocation in the last week
+SELECT created_at,
+       actor_user_id,
+       target_id AS grant_id,
+       after_state->>'revoked_at' AS revoked_at_iso
+  FROM admin_actions
+ WHERE action_type = 'grant.revoke'
+   AND created_at >= NOW() - INTERVAL '7 days'
+ ORDER BY created_at DESC;
+```
+
+The `actor_user_id` column resolves "who clicked Reassign / Revoke." Join against `users` to surface the email if needed:
+
+```sql
+SELECT a.created_at,
+       u.email AS actor_email,
+       a.action_type,
+       a.target_id,
+       a.before_state,
+       a.after_state
+  FROM admin_actions a
+  JOIN users u ON u.id = a.actor_user_id
+ WHERE a.action_type IN ('book.reassign_publisher', 'grant.revoke')
+ ORDER BY a.created_at DESC
+ LIMIT 50;
+```
+
+Q-F6 lock — the audit display surface is deferred. Until it ships, the queries above are the canonical lookup.
 
 ---
