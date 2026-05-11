@@ -723,7 +723,9 @@ Either path benefits from a related publisher-side change: **the new-book form (
 
 **Severity:** low UX. Doesn't block anything; matters for marketplace polish once real publisher content lands and buyers start scanning catalog rows quickly. **Suggested resolution:** the form character-count warning ships immediately as a small Phase 4.5-tail patch (it's a 15-line addition with no schema or API surface). The full-text affordance pairs with **#69** (Library pagination) and **#70** (Active vs Library overlap) into a "Library UX polish" mini-stream — all three are cosmetic-but-cumulative improvements to the same surface, and shipping them together keeps the design coherent.
 
-### 77. Fill `/dashboard/docs` with real content for all three role tiers
+### ~~77. Fill `/dashboard/docs` with real content for all three role tiers~~
+
+**#77 RESOLVED (2026-05-11)** — `src/content/docs/index.md` filled with tutorial-voice content across common + subscriber + publisher + admin tiers (203 lines, ~17KB). Buyer-voice matches the #71 seed-book description convention; agent-skill directive voice avoided per #75. Visual confirmation across ADMIN and SUBSCRIBER role views passed.
 
 Phase 5 Stream A landed the rendering surface with role-filtered markdown at `src/content/docs/index.md`. The placeholder content covers all four visibility tiers (common, subscriber, publisher, admin) but each is a one-paragraph stub. This follow-up fills them with real onboarding-grade prose.
 
