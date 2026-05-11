@@ -930,3 +930,78 @@ SELECT created_at,
 The "Recovering from a misplaced demotion" section earlier in this document (around line 433) used to note that no audit trail existed — that gap is now closed by `admin_actions` for mutations performed via the Phase 4.5 admin UI. For raw-SQL UPDATEs done outside the UI (e.g. break-glass recovery via psql), the audit trail still does not exist by construction — running `UPDATE users SET role=…` bypasses the `writeAuditEntry` helper entirely. Capture any such operator-direct SQL in a dated runbook note rather than relying on `admin_actions` to reflect it.
 
 ---
+
+## Stream E — role mutation operator guide
+
+Phase 4.5 Stream E ships `/dashboard/admin/users` (the table) and `POST /api/admin/users/[id]/role` (the mutation handler). The handler enforces five self-protection gates per D12.9 and writes one row to `admin_actions` per successful mutation per D12.4 / D12.5. The asymmetric modal at `src/components/dashboard/admin/role-mutation-modal.tsx` (D12.10) requires the operator to type the target email for any demote or any ADMIN promotion; the SUBSCRIBER→PUBLISHER promotion goes through with a simple OK/Cancel.
+
+### The env-file-vs-UI consistency story (R1 mitigation)
+
+D12.2 carves out a deliberate asymmetry between the env-driven role sync (`src/lib/auth/index.ts:74-101`, `syncRoleFromEnv`) and the UI role mutation (`POST /api/admin/users/[id]/role`):
+
+- **Env path is monotonic-upward only** (D11.11 rules 1-3). Removing an email from `PUBLISHER_EMAILS` does NOT demote that user; it just stops re-promoting them.
+- **UI path may demote** (D12.2 rule 4). Stream E's handler is allowed to write `role = 'SUBSCRIBER'` against a target user.
+
+The two paths interact at signin time. If an operator demotes Edward via the UI but leaves `edward@tmrwgroup.ai` in `PUBLISHER_EMAILS`, then on Edward's next signin the env-sync runs first (in `events.signIn` per `src/lib/auth/index.ts:183-223`), reads the DB role (now SUBSCRIBER), sees the env-derived role is PUBLISHER, and re-promotes Edward to PUBLISHER. The UI demote effectively had a TTL of "until next signin."
+
+**Operator workflow for a permanent demote:**
+
+1. Demote via the UI (`/dashboard/admin/users` → "Change role" → pick target role → type target email → confirm). This writes the audit row to `admin_actions`.
+2. Pull the email from the relevant list in `/etc/bkstr/roles.env` (the same edit + `pm2 reload --update-env` sequence as the "Adding" path in the Roles env file runbook above). This prevents the re-promote.
+
+Until both steps have run, the demote is best-thought-of as a "until next signin" annotation. The audit row in `admin_actions` records the UI action; the env-driven re-promotion at signin does NOT write to `admin_actions` (no admin actor — it runs from `events.signIn`), so a later "I demoted X yesterday; today X is back to PUBLISHER" mystery resolves to "the env file still has them" by direct file inspection.
+
+### SQL fallback for when the UI is unavailable
+
+If the dashboard is down, the deploy is mid-promotion, or the operator otherwise cannot reach `/dashboard/admin/users`, the direct UPDATE remains the break-glass path:
+
+```sql
+-- Demote a single user. Note: this path does NOT write to admin_actions.
+UPDATE users SET role = 'SUBSCRIBER' WHERE email = 'edward@tmrwgroup.ai';
+
+-- Promote a single user (env-file is the preferred path; this UPDATE is for
+-- the rare "I need to promote them right now without a signin" case).
+UPDATE users SET role = 'PUBLISHER' WHERE email = 'edward@tmrwgroup.ai';
+```
+
+**Caveats:**
+
+- Raw-SQL paths bypass `writeAuditEntry` entirely — there is no `admin_actions` row to point to later. Capture the rationale in a dated note in `docs/operations.md` (or this runbook's history) so the action is auditable by inspection of the docs.
+- The env-file-vs-UI consistency story above applies to the SQL path too. If you UPDATE Edward to SUBSCRIBER but leave him in `PUBLISHER_EMAILS`, his next signin re-promotes him.
+- For full auditability, prefer the UI path. The SQL fallback exists for break-glass scenarios.
+
+### Querying admin_actions for role-change history
+
+Use the existing "Querying admin_actions via psql" runbook section above. The canonical pivot for role-change history on a specific user is reproduced here for convenience:
+
+```sql
+-- Resolves "who changed Edward's role, when, from what to what"
+SELECT created_at, actor_user_id, action_type,
+       before_state->>'role' AS old_role,
+       after_state->>'role'  AS new_role
+  FROM admin_actions
+ WHERE target_type = 'user'
+   AND target_id = '<edward-user-uuid>'
+ ORDER BY created_at DESC;
+```
+
+For "every role-mutation in the last 7 days across every user":
+
+```sql
+SELECT created_at, actor_user_id, target_id, action_type,
+       before_state->>'role' AS old_role,
+       after_state->>'role'  AS new_role
+  FROM admin_actions
+ WHERE action_type LIKE 'user.role%'
+   AND created_at >= NOW() - INTERVAL '7 days'
+ ORDER BY created_at DESC;
+```
+
+`action_type` values written by Stream E (per D12.5):
+
+- `user.role_promote_publisher` — SUBSCRIBER → PUBLISHER (the routine Edward-onboarding shape).
+- `user.role_promote_admin` — any → ADMIN (rare; high-consequence security event).
+- `user.role_demote_publisher` — ADMIN → PUBLISHER (rare; enumerated for completeness).
+- `user.role_demote_subscriber` — PUBLISHER → SUBSCRIBER or ADMIN → SUBSCRIBER (the operator-explicit demote path).
+
+---

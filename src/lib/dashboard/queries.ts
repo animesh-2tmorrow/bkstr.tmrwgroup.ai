@@ -290,6 +290,98 @@ export type LibraryBook = {
   publisherName: string;
 };
 
+// Phase 4.5 Stream E — admin users-list row shape (D12.3 / Q-E8).
+// Read consumer is `/dashboard/admin/users` (the role-mutation surface). The
+// shape pulls every column the table renders in one round-trip:
+//   - email / name / role from the User row.
+//   - companyName from the 1:1 subscriber row (LEFT JOIN-equivalent via Prisma
+//     `subscriber: { select: { companyName: true } }`; a User without a
+//     Subscriber row — none today since events.createUser always creates one —
+//     surfaces as `companyName: null` and renders "—" in the table).
+//   - createdAt from the User row (immutable; insertion timestamp).
+//   - lastSigninAt from the Stream H column (D12.3); null for users that have
+//     not signed in since the column shipped → renders "—".
+export type AdminUserRow = {
+  id: string;
+  email: string;
+  name: string | null;
+  role: Role;
+  companyName: string | null;
+  createdAt: Date;
+  lastSigninAt: Date | null;
+};
+
+export type AdminUsersSortBy = "email" | "created_at" | "last_signin_at";
+export type AdminUsersSortDir = "asc" | "desc";
+
+// Phase 4.5 Stream E — admin users-list query (D12.3 / Q-E4 / Q-E7 / Q-E8).
+// Returns every user that matches the optional role filter, sorted by the
+// caller-supplied (sortBy, sortDir). Default ordering is `last_signin_at DESC
+// NULLS LAST` so the most-recently-active operators bubble to the top of the
+// table; never-signed-in rows sink to the bottom (where the operator can spot
+// them by the "—" in the Last signin column).
+//
+// No pagination (Q-E7): 3 users today; the prompt defers pagination to a
+// follow-up if the user count crosses ~50. Prisma's `findMany` without `take`
+// returns every row — at internal-alpha volume this is the right shape.
+//
+// Read consumer: `app/dashboard/admin/users/page.tsx` (ADMIN-only via the
+// layout guard at `app/dashboard/admin/layout.tsx`). The ADMIN-only guard is
+// re-checked by the page itself and by the route handler that consumes the
+// resulting `id` column for mutations — this query trusts its caller and does
+// no role check of its own.
+function orderClauseFor(sortBy: AdminUsersSortBy, sortDir: AdminUsersSortDir) {
+  // Prisma 7's `{ sort, nulls }` syntax is supported on nullable Date columns
+  // (e.g. lastSigninAt). For email + createdAt (both NOT NULL on the row),
+  // `nulls` is not applicable; using a plain `Prisma.SortOrder` string is the
+  // canonical shape.
+  if (sortBy === "last_signin_at") {
+    return {
+      lastSigninAt: {
+        sort: sortDir,
+        nulls: sortDir === "desc" ? ("last" as const) : ("first" as const),
+      },
+    } satisfies Prisma.UserOrderByWithRelationInput;
+  }
+  if (sortBy === "email") {
+    return { email: sortDir } satisfies Prisma.UserOrderByWithRelationInput;
+  }
+  return { createdAt: sortDir } satisfies Prisma.UserOrderByWithRelationInput;
+}
+
+export async function getAdminUsers(opts: {
+  roleFilter?: Role;
+  sortBy?: AdminUsersSortBy;
+  sortDir?: AdminUsersSortDir;
+}): Promise<AdminUserRow[]> {
+  const where: Prisma.UserWhereInput = opts.roleFilter ? { role: opts.roleFilter } : {};
+  const orderBy = orderClauseFor(opts.sortBy ?? "last_signin_at", opts.sortDir ?? "desc");
+
+  const users = await prisma.user.findMany({
+    where,
+    orderBy,
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      createdAt: true,
+      lastSigninAt: true,
+      subscriber: { select: { companyName: true } },
+    },
+  });
+
+  return users.map((u) => ({
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role,
+    companyName: u.subscriber?.companyName ?? null,
+    createdAt: u.createdAt,
+    lastSigninAt: u.lastSigninAt,
+  }));
+}
+
 export async function getBooksForLibrary(): Promise<LibraryBook[]> {
   const rows = await prisma.book.findMany({
     where: { status: "ACTIVE" },

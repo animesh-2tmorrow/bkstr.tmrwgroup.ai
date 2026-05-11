@@ -2,6 +2,12 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { SignOutLink } from "@/components/auth/sign-out-link";
 
+// Phase 4.5 Streams E + F — admin-* keys pre-declared together to minimize
+// the rebase footprint when Stream F lands. Stream E ships "admin-users"; the
+// "admin-books" + "admin-grants" keys exist here so the union type is stable
+// once Stream F adds its leaves (each Stream's nav items will be added to
+// NAV_ITEMS below independently — additive, no edit-collision). Trivial
+// rebase either way.
 export type DashboardNavKey =
   | "books"
   | "library"
@@ -9,7 +15,10 @@ export type DashboardNavKey =
   | "fetch-logs"
   | "pricing"
   | "new-book"
-  | "billing";
+  | "billing"
+  | "admin-users"
+  | "admin-books"
+  | "admin-grants";
 
 type Props = {
   active: DashboardNavKey;
@@ -28,11 +37,19 @@ type Props = {
 // this broader gate as part of the publisher-UI rollout. Server-side route
 // guards inside /dashboard/pricing and /dashboard/books/new remain the
 // load-bearing authz check; this filter is UI-affordance only.
+//
+// Phase 4.5 Stream E — `adminOnly: true` re-introduces the strict-ADMIN gate
+// for the new /dashboard/admin/* surfaces. The shared layout at
+// app/dashboard/admin/layout.tsx is the load-bearing redirect; this flag is
+// UI-affordance only (mirrors the publisherOrAdmin precedent). Stream F's
+// admin-books + admin-grants nav items will land here as additional entries
+// with adminOnly: true.
 const NAV_ITEMS: ReadonlyArray<{
   key: DashboardNavKey;
   href: string;
   label: string;
   publisherOrAdmin?: boolean;
+  adminOnly?: boolean;
 }> = [
   { key: "books", href: "/dashboard", label: "Active Books" },
   { key: "library", href: "/dashboard/library", label: "Library" },
@@ -41,14 +58,21 @@ const NAV_ITEMS: ReadonlyArray<{
   { key: "pricing", href: "/dashboard/pricing", label: "Pricing", publisherOrAdmin: true },
   { key: "new-book", href: "/dashboard/books/new", label: "New Book", publisherOrAdmin: true },
   { key: "billing", href: "/dashboard/billing", label: "Billing" },
+  { key: "admin-users", href: "/dashboard/admin/users", label: "Admin: Users", adminOnly: true },
 ];
 
 export function DashboardShell({ active, companyName, userEmail, initial, role, children }: Props) {
   // Phase 4 Stream B — PUBLISHER + ADMIN see authoring nav (Pricing, New Book);
   // SUBSCRIBER does not.
-  const visibleItems = NAV_ITEMS.filter(
-    (item) => !item.publisherOrAdmin || role === "ADMIN" || role === "PUBLISHER",
-  );
+  // Phase 4.5 Stream E — `adminOnly` gates a nav item to ADMIN-only; PUBLISHER
+  // does NOT see admin surfaces. Two-tier gating: items with neither flag are
+  // visible to all roles; items with `publisherOrAdmin` are visible to
+  // PUBLISHER + ADMIN; items with `adminOnly` are visible to ADMIN only.
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    if (item.adminOnly) return role === "ADMIN";
+    if (item.publisherOrAdmin) return role === "ADMIN" || role === "PUBLISHER";
+    return true;
+  });
   return (
     <div className="min-h-screen flex">
       <aside className="w-64 bg-[#FAF6EC] border-r border-[#E5DCC8] flex flex-col">
