@@ -662,6 +662,30 @@ Recommend (a) for cleaner client-side error handling, but (b) is defensible.
 
 **Severity:** low; both workarounds ship correctly today, the status codes both communicate "no" effectively. This is pure hygiene — file the consolidation as a Phase 4.5-tail cleanup, no urgency. Pair with the retrofit so both touchpoints land in one PR.
 
+### 73. Publisher edit-after-create UI for books
+
+Surfaced during the publisher-onboarding flow trace (2026-05-11). `POST /api/books/new` (`src/app/api/books/new/route.ts:154`) is **one-shot** for every Book field except price: title, slug, domain, description, and content body are set at create time and there is no publisher-facing route to update them afterward. Grepping `src/app/api/` for `book.update` returns exactly one call — at `src/app/api/admin/books/[id]/reassign/route.ts:144` — and that ADMIN-only mutation touches only `publisher_user_id`. Price is editable via `/dashboard/pricing` (Stream B's existing surface) but everything else is frozen at create time.
+
+Today the only paths to fix a typo or update content are: (a) SSM into the EC2 and run `npm run import-book` against the same `--publisher` + `--slug` (the import script's `unchanged: ... no-op.` SHA-256 short-circuit means re-running with the SAME content is safe; running with DIFFERENT content inserts a fresh `BookVersion` per its idempotency contract), or (b) direct SQL `UPDATE books SET ... WHERE id = '...'`. Both require operator intervention; neither is publisher-self-serve.
+
+The schema already supports content-updates cleanly — `BookVersion` is versioned (`version` column, `(book_id, version)` unique) and the agent fetch endpoint reads the latest version via `ORDER BY version DESC`. A new edit-route could `prisma.bookVersion.create` a new row with `version = max + 1` for content changes, and update `books.title|slug|description|domain` in place for metadata fields. No schema changes needed.
+
+**Severity:** medium. Will hit Edward + Zach the first time they want to fix a typo. Not blocking the reveal — the onboarding post should call out the one-shot constraint so they author final content before clicking Publish. **Suggested resolution:** Phase 5 or Phase 4.5-tail mini-stream. Shape: `/dashboard/books/[id]/edit` page (PUBLISHER-only via ownership check, same pattern as Stream B's pricing scope), POST handler that diffs the submitted content against the latest version's SHA-256 and only inserts a new BookVersion if changed (mirrors `scripts/import-book.ts` semantics). Metadata fields update in place. Stripe Product `name` + `description` get a best-effort refresh to match — failure logged but non-fatal (matches CC-9 step 10 pattern).
+
+### 74. DRAFT staging + preview for new books
+
+Surfaced alongside #73. `POST /api/books/new` hardcodes `status: BookStatus.ACTIVE` at `src/app/api/books/new/route.ts:283`, overriding the schema's `status BookStatus @default(DRAFT)`. The moment a publisher clicks "Publish book", the row is world-visible in `/dashboard/library` (filter predicate is `status: "ACTIVE"` per `src/lib/dashboard/queries.ts:400`). No preview surface exists, no staging step, no "are you sure?" between submit and live.
+
+Recommended shape:
+- **(a) Honour the schema default.** Remove the explicit `status: BookStatus.ACTIVE` from the new-book transaction. Books land DRAFT.
+- **(b) Preview route.** `/dashboard/books/[id]/preview` (PUBLISHER + ADMIN, ownership-gated) renders the book as it would appear to a buyer — title, description, publisher attribution, price, the markdown content rendered. Publisher-only visibility; not exposed to `/dashboard/library` until the status flips.
+- **(c) Publish action.** A "Publish" button on the preview surface that POSTs to `/api/books/[id]/publish` and flips `status: DRAFT → ACTIVE`. Same handler also writes an `admin_actions`-style audit row if the publisher is also an ADMIN, or a parallel publisher-action log if we want symmetric audit (Phase 5 design question).
+- **(d) Optional Unpublish.** Inverse action that flips `ACTIVE → DRAFT`. Removes the book from buyer Library without deleting. Useful for "I shipped a typo, take it down while I fix it" moments — pairs naturally with #73.
+
+The status enum already includes `DRAFT` and `ACTIVE` (and `ARCHIVED`, which Phase 5 could productize as a soft-delete state). The Library's existing `status: "ACTIVE"` predicate already gives buyer-side correct behaviour for free — DRAFT books simply don't surface.
+
+**Severity:** medium. Reasonable expectation for any publisher who has used a CMS before — submit ≠ publish. Not blocking the reveal — the onboarding post should explicitly state "submission is immediately live; preview by signing into a second browser as a different user." **Suggested resolution:** Phase 5 or Phase 4.5-tail; ships cleanly alongside #73 since the edit-route and the publish-route share a lot of UI scaffolding (both are book-detail surfaces). Bundle into one mini-stream.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
