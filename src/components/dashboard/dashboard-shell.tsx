@@ -19,6 +19,10 @@ export type DashboardNavKey =
   | "admin-users"
   | "admin-books"
   | "admin-grants"
+  // Phase 5 Stream B (D14.1) — admin AI assistant. ADMIN-only; placed
+  // adjacent to other admin-* keys to keep the union ordered by surface
+  // role. Read-only against Prisma; never mutates.
+  | "admin-assistant"
   // Phase 5 Stream A (D13.1) — in-product docs surface, visible to all
   // signed-in users (no role flag below). Placed last so it renders as the
   // bottom of the visible nav across SUBSCRIBER / PUBLISHER / ADMIN.
@@ -67,6 +71,9 @@ const NAV_ITEMS: ReadonlyArray<{
   { key: "admin-users", href: "/dashboard/admin/users", label: "Admin · Users", adminOnly: true },
   { key: "admin-books", href: "/dashboard/admin/books", label: "Admin · Books", adminOnly: true },
   { key: "admin-grants", href: "/dashboard/admin/grants", label: "Admin · Grants", adminOnly: true },
+  // Phase 5 Stream B (D14.1) — admin AI assistant. Placed after grants so
+  // the admin workflow reads "manage who / what / access / ask questions."
+  { key: "admin-assistant", href: "/dashboard/admin/assistant", label: "Admin · Assistant", adminOnly: true },
   // Phase 5 Stream A (D13.1) — Docs is visible to all signed-in users (no
   // role flag). Last entry so it renders at the bottom of the real nav for
   // every role; per-section role filtering happens inside the page (D13.2).

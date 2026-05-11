@@ -1110,3 +1110,71 @@ SELECT a.created_at,
 Q-F6 lock — the audit display surface is deferred. Until it ships, the queries above are the canonical lookup.
 
 ---
+
+## Assistant model env var (Phase 5 Stream B)
+
+The admin AI assistant at `/dashboard/admin/assistant` reads its model ID from `process.env.ASSISTANT_MODEL_ID` at module-load time (see `src/lib/admin/assistant/bedrock-client.ts`). The env var is staged via `/etc/bkstr/assistant.env`, sourced by `scripts/start.sh` on every deploy in the same pattern as `roles.env`, `oauth.env`, `aws.env`, and `stripe.env` (D9.4 / D10.3 / D14.2).
+
+### File path + permissions
+
+```
+/etc/bkstr/assistant.env       mode 600   root:root
+```
+
+Staged by the operator OUT-OF-BAND of the deploy pipeline — never committed to git. Matches every other `/etc/bkstr/*.env` file's contract.
+
+### Required key
+
+```
+ASSISTANT_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0
+```
+
+That's the buyer-side Sonnet 4.5 ID, copied verbatim from `src/app/api/agent/fetch/route.ts:22` per D14.2. Same model, same provisioned throughput, IAM role already approved.
+
+### Default if missing
+
+If `/etc/bkstr/assistant.env` is not staged (or doesn't contain `ASSISTANT_MODEL_ID`), the assistant defaults to the Sonnet 4.5 ID above. This is a SAFE fallback — the assistant still works on a fresh deploy where the operator hasn't gotten around to staging the file. Boot behavior surfaces this in pm2 logs:
+
+```
+[assistant] WARN: ASSISTANT_MODEL_ID missing — defaulting to Sonnet 4.5. Stage /etc/bkstr/assistant.env to silence or upgrade to Opus 4.7 (see follow-up #84).
+```
+
+The WARN is non-fatal; the module loads, the route works.
+
+### Currently approved model IDs
+
+The EC2 instance-profile IAM role `bkstr-ec2-role` is approved to invoke ONLY the following model:
+
+- `us.anthropic.claude-sonnet-4-5-20250929-v1:0` — Sonnet 4.5.
+
+Setting `ASSISTANT_MODEL_ID` to any other model returns a 403 AccessDeniedException from Bedrock at request time. Gate 1 IAM smoke test on 2026-05-11 confirmed Opus 4.7 (`us.anthropic.claude-opus-4-7-...`) returns 403 — operator picked path (c): "ship with Sonnet 4.5 default, Opus 4.7 upgrade is follow-up #84."
+
+### Upgrade path to Opus 4.7
+
+See follow-up #84 in `docs/follow-ups.md`. Two steps:
+
+1. AWS-side: grant the EC2 instance-profile role `bedrock:InvokeModel*` on the Opus 4.7 model ID.
+2. bkstr-side: edit `/etc/bkstr/assistant.env` on EC2, set `ASSISTANT_MODEL_ID=us.anthropic.claude-opus-4-7-...`, and `sudo -u ubuntu pm2 reload bkstr-web --update-env` to propagate. Re-run the Gate-1-shape smoke test BEFORE flipping the env var on the running box.
+
+No code change required for either step — D14.2 designed the env-read so the upgrade is config-only.
+
+### Staging the file (one-time operator action)
+
+```bash
+# On the EC2 box (i-0e25e88f90738b9dc):
+sudo install -m 0600 -o root -g root /dev/null /etc/bkstr/assistant.env
+sudo tee /etc/bkstr/assistant.env <<EOF
+ASSISTANT_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0
+EOF
+sudo -u ubuntu pm2 reload bkstr-web --update-env
+```
+
+Verify the env propagated:
+
+```bash
+sudo -u ubuntu pm2 logs bkstr-web --lines 50 | grep -i assistant
+# Expect: '[start.sh] Assistant env sourced from /etc/bkstr/assistant.env ...'
+# Or after restart (cold path): the WARN message should NOT appear.
+```
+
+---

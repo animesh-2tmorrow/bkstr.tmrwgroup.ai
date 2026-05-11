@@ -745,6 +745,52 @@ Adding a single `npm test` invocation between `npm install` and `npm run build` 
 
 (Note: #78 is intentionally an unused slot — numbering jumped from #77 to #79 at operator request.)
 
+### 80. Free-form SQL escape-hatch tool for the admin assistant
+
+Surfaced during Phase 5 Stream B implementation (2026-05-11). The five typed tools (`list_users`, `list_books`, `list_grants`, `read_audit_log`, `recent_fetch_logs`) cover the load-bearing admin questions but leave a long tail of questions unanswerable — e.g. "what's the average `fetch_logs.latency_ms` per book over the last 24h?" or "list every book whose latest version has zero fetches." These require SQL the typed tools cannot express.
+
+A safe escape hatch would expose `prisma.$queryRaw` (or a wrapped equivalent) to the model behind a tool named `run_sql` or `query_db`. The hard requirements: (1) read-only — wrap each statement in `BEGIN READ ONLY; ... ROLLBACK;` or use a DB role with SELECT-only grants; (2) parameterized — the model passes named params, not SQL string-interpolation, so prompt-injection cannot pivot to writes; (3) row-cap — the same 200-row hard cap that the typed tools enforce; (4) time-cap — `statement_timeout` set on the connection so a runaway scan can't tie up the pool.
+
+Until #80 lands, admin asks that fall outside the five typed tools require operator-side psql or the `docs/operations.md` runbook queries. Stream B's assistant is forthright about its read-only nature and the five-tool surface, so the user-facing failure mode is "I can't answer that with my current tools, here's how to query manually."
+
+**Severity:** medium — Stream B is useful without #80, but the long tail of "I wish I could just ask" questions points at this gap. **Trigger:** when admin users (Edward / Zach / others post-onboarding) repeatedly hit questions the typed tools can't answer. **Suggested resolution:** add a sixth tool `query_db` with the four safety requirements above. Document the read-only Postgres role provisioning in `docs/operations.md`. Pair with prompt-injection tests in `agent.test.ts` that confirm a model emitting `DROP TABLE` cannot bypass the BEGIN READ ONLY wrapper.
+
+### 81. Phase 5 Stream C — "propose" mode for the admin assistant
+
+Stream B is read-only by D14.1. Stream C will add a "propose mutation" mode where the assistant can describe a state change in structured JSON, surface it to the admin, and wait for explicit click-confirmation before any write happens. The structured payload would carry `{actionType, targetType, targetId, beforeState, afterState}` — the exact shape `admin_actions` rows use — so the eventual mutation handler can take the proposal as input and emit the row.
+
+This unlocks workflows like "Edward forgot to demote Bob to SUBSCRIBER; ask the assistant 'demote bob@example.com to SUBSCRIBER,' the assistant looks up Bob, drafts the demote, the admin clicks Confirm." Without #81, the admin has to navigate to `/dashboard/admin/users`, find Bob, click Change role, and confirm — three surfaces' worth of friction.
+
+The key safety property: **the assistant proposes; the admin confirms.** No tool the model invokes ever writes to the rest of the schema. The confirmation click goes through the existing `/api/admin/users/[id]/role` handler with its full gate-check + audit-log path (D12.9).
+
+**Severity:** low — Stream B is a complete useful product on its own; #81 is the next-feature, not a defect. **Trigger:** when admins find themselves doing repeated lookup-then-mutate flows that the assistant could batch. **Suggested resolution:** new tool `propose_mutation` that emits a structured payload. Add a `PendingMutationCard` client component that renders the proposal + a Confirm button. The Confirm handler calls the existing mutation API. New conversation messages with `role='proposal'` would persist the payload; on confirm, the conversation thread records the actual `admin_actions` row id.
+
+### 82. Phase 5 Stream D — direct mutation execution from the assistant
+
+The natural endpoint of #81 once the propose-flow is proven safe: the assistant invokes mutation tools DIRECTLY (no confirmation step) for low-consequence operations, while reserving the propose-step for high-consequence ones. Asymmetric friction matches the existing pattern from Stream E's role-mutation modal (D12.10) — simple OK for benign actions, type-the-email confirmation for destructive ones.
+
+Defining the boundary between "low" and "high" consequence is the hard part. A reasonable starting point: same as D12.10's `isDestructive` rule (any demote = high; any ADMIN promotion = high; SUBSCRIBER→PUBLISHER = low). Low-consequence assistant mutations would still write `admin_actions` rows (the actor is the assistant-on-behalf-of-admin; we'd need a new `action_source` discriminator on the row to distinguish admin-clicked-via-UI from admin-prompted-the-assistant).
+
+**Severity:** low — Stream B + #81 already cover the common admin workflows. **Trigger:** when #81 has shipped, been used long enough to verify safety, and operators are asking "why do I have to click Confirm every time?" **Suggested resolution:** add the boundary check to a shared `lib/admin/assistant/consequences.ts` module. Extend `admin_actions` with an `action_source` column. Document the policy in `docs/operations.md`.
+
+### 83. Consolidate Bedrock SDK usage — one SDK across buyer-side + assistant
+
+bkstr now has two Bedrock client modules: `src/lib/bedrock.ts` (the AWS-SDK `BedrockRuntimeClient` the buyer-side `/api/agent/fetch` uses) and `src/lib/admin/assistant/bedrock-client.ts` (the new `@anthropic-ai/bedrock-sdk` instance for the admin assistant). They coexist intentionally — the buyer-side path is load-bearing production traffic and migrating it on the same PR as Stream B would conflate two changes — but the long-term plan is to converge on the higher-level Anthropic SDK because tool-use is much cleaner with the typed API.
+
+The buyer-side `/api/agent/fetch` doesn't currently use tool_use; the migration is `bedrockClient.send(new InvokeModelWithResponseStreamCommand({...}))` → `bedrock.messages.stream({...})`. The SSE event-stream shape stays the same; the JSON parsing in the route's `for await` loop collapses to native SDK events. Net code reduction ~50 LOC.
+
+**Severity:** low — no functional issue today; the dual-SDK story is a maintainability/code-clarity concern. **Trigger:** when the next Bedrock-touching feature lands (either side) and the team has to remember which SDK to use. **Suggested resolution:** one deliberate refactor PR that migrates `/api/agent/fetch` to the Anthropic SDK. Drop `@aws-sdk/client-bedrock-runtime` from package.json (still need `@aws-sdk/client-s3` for content storage). Re-run the full fetch-route test suite against the migrated handler.
+
+### 84. Bedrock IAM grant + admin assistant model upgrade to Opus 4.7
+
+Surfaced during Phase 5 Stream B Gate 1 IAM smoke test (2026-05-11). The EC2 instance-profile role `bkstr-ec2-role` is approved for Sonnet 4.5 (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) but NOT Opus 4.7 (`us.anthropic.claude-opus-4-7-...`) — the test returned 403 AccessDeniedException for Opus 4.7. Operator picked path (c): ship Stream B with Sonnet 4.5 as the default, treat Opus 4.7 as a follow-up.
+
+Two pieces of work to close #84: (1) the AWS-side IAM grant — add the Opus 4.7 model ID to the `bedrock:InvokeModel*` resource list on `bkstr-bedrock-access` (and any related inference-profile policies). The operator who provisioned Sonnet 4.5 access knows the resource ARN format. (2) The bkstr-side env staging — once IAM is granted, set `ASSISTANT_MODEL_ID=us.anthropic.claude-opus-4-7-...` in `/etc/bkstr/assistant.env` and `sudo systemctl restart bkstr-web` (or `pm2 reload bkstr-web --update-env`). Code already reads from env; no code change required.
+
+Re-run the Gate-1-shape smoke test against the new model ID from EC2 BEFORE flipping the env var on the running box. Sonnet 4.5 stays approved as the fallback; if Opus 4.7 returns errors in production, revert by removing the env var line and reloading.
+
+**Severity:** low — Sonnet 4.5 is functional and gets the assistant shipped today. **Trigger:** any of: operators want the better assistant model; cost analysis shows Opus is preferable for the admin-assistant volume profile; a specific Opus-4.7-only feature (e.g. adaptive thinking) becomes valuable. **Suggested resolution:** the two-step above. Consider also adding a `docs/operations.md` runbook "Switching the admin assistant model" that documents the test-from-EC2-first pattern.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

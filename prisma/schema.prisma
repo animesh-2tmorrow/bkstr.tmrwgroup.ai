@@ -178,6 +178,12 @@ model User {
   // owning side preserves history — a User with audit rows cannot be hard-
   // deleted without an explicit operator migration.
   adminActions   AdminAction[] @relation("AdminActionActor")
+  // Phase 5 Stream B (D14.3) — inverse of AssistantConversation.owner. An
+  // ADMIN's admin-assistant conversations. ON DELETE RESTRICT on the owning
+  // side preserves history; a User with assistant conversations cannot be
+  // hard-deleted without an explicit operator migration (matches AdminAction
+  // precedent at D12.7).
+  assistantConversations AssistantConversation[] @relation("AssistantConversationOwner")
 
   @@index([lastSigninAt(sort: Desc)])
   @@map("users")
@@ -459,4 +465,55 @@ model AdminAction {
   @@index([targetType, targetId, createdAt(sort: Desc)])
   @@index([actionType, createdAt(sort: Desc)])
   @@map("admin_actions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin AI Assistant (Phase 5 Stream B, D14.3)
+//
+// Conversations + messages for the read-only admin assistant at
+// /dashboard/admin/assistant. Persisted multi-turn history; messages
+// table holds user, assistant, tool_use, tool_result entries with
+// structured content. JSONB content lets each row type carry whatever
+// shape the role implies (string for text, name+input for tool_use,
+// output for tool_result) without per-role columns. Stream B mutates
+// neither admin_actions nor any other table; the assistant is read-only
+// per D14.1 — these tables hold conversation history, not state changes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AssistantConversation {
+  id          String    @id @default(uuid()) @db.Uuid
+  ownerUserId String    @map("owner_user_id") @db.Uuid
+  title       String?   @db.VarChar(255)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz(6)
+
+  owner    User               @relation("AssistantConversationOwner", fields: [ownerUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  messages AssistantMessage[]
+
+  @@index([ownerUserId, archivedAt, updatedAt(sort: Desc)])
+  @@map("assistant_conversations")
+}
+
+model AssistantMessage {
+  id             String   @id @default(uuid()) @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  // 'user' | 'assistant' | 'tool_use' | 'tool_result'. Free-form VARCHAR(32)
+  // (no Postgres enum) per the webhook_events.source / admin_actions.target_type
+  // precedent — future Streams (C: propose-mode, D: execute-mode) may add
+  // additional row types without a schema migration.
+  role         String   @db.VarChar(32)
+  // JSONB so each role type carries its own structured payload without
+  // per-role columns. user/assistant text rows store {text: "..."}; tool_use
+  // stores {toolUseId, name, input}; tool_result stores {toolUseId, output}.
+  content      Json     @db.JsonB
+  modelId      String?  @map("model_id") @db.VarChar(128)
+  inputTokens  Int?     @map("input_tokens")
+  outputTokens Int?     @map("output_tokens")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversation AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("assistant_messages")
 }

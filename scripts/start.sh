@@ -28,6 +28,16 @@ if [ -f /etc/bkstr/roles.env ]; then
 else
   echo "[start.sh] WARN: /etc/bkstr/roles.env not present — role auto-promotion disabled; existing roles preserved."
 fi
+# Phase 5 Stream B (D14.2) — admin assistant model id. Optional; absence
+# defaults to Sonnet 4.5 (see src/lib/admin/assistant/bedrock-client.ts).
+# Operator stages /etc/bkstr/assistant.env to override (e.g. to Opus 4.7
+# once follow-up #84 lands).
+if [ -f /etc/bkstr/assistant.env ]; then
+  source /etc/bkstr/assistant.env
+  echo "[start.sh] Assistant env sourced from /etc/bkstr/assistant.env (keys: $(grep -oE '^[A-Z_]+=' /etc/bkstr/assistant.env | tr -d '=' | tr '\n' ' '))"
+else
+  echo "[start.sh] WARN: /etc/bkstr/assistant.env not present — admin assistant defaults to Sonnet 4.5 (see follow-up #84 for Opus 4.7 upgrade)."
+fi
 # Phase 3 D9.4: per-service env files; add new ones above this comment
 if [ -f /etc/bkstr/aws.env ]; then
   source /etc/bkstr/aws.env

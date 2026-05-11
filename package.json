@@ -12,6 +12,7 @@
     "migrate-content-to-s3": "tsx scripts/migrate-content-to-s3.ts"
   },
   "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "0.29.1",
     "@aws-sdk/client-bedrock-runtime": "3.1045.0",
     "@aws-sdk/client-s3": "3.1045.0",
     "@next-auth/prisma-adapter": "^1.0.7",
