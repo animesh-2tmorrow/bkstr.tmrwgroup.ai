@@ -533,6 +533,14 @@ Two viable directions:
 
 **Severity:** low; the choice is a workflow preference, not a correctness issue. **Suggested resolution:** decide before the next multi-stream phase (Phase 4+). If anyone else is added as a committer the answer becomes "PR records, full stop." For the single-operator-now era either path is fine; the harm is the inconsistency of having tried both ad-hoc.
 
+### 65. D9.6 SEED backfill operates on `subscribers` table, not `users.role='SUBSCRIBER'`
+
+Surfaced during the Stream 3 live Checkout walkthrough. `animesh@2tmorrow.com` is `users.role='ADMIN'` per the Phase 2 OAuth allowlist promotion (commit 7faca65), but ALSO has an attached `subscribers` row (company "Animesh Kumar", `sub_id=588615d8…`) carried over from earlier development seeding. The Stream 1 SEED backfill in `20260510150000_phase_3_access_grants/migration.sql` does a `CROSS JOIN subscribers × books`, which means it operates on the `subscribers` table membership, not the `users.role` enum. Result: the ADMIN user received 5 SEED grants alongside the 2 role=SUBSCRIBER accounts, totalling 15 — which matches D9.6's "15 grants" count but for a slightly different reason than D9.6's prose implies ("3 subscribers × 5 books" where "subscribers" was interpreted as "users with subscriber role" in conversation).
+
+Mechanically harmless — the 15-row count is correct and D9.6's stated purpose ("grandfather every pre-Phase-3 user who could read books before") is faithfully implemented since pre-Phase-3 access was gated on subscribers-table membership, not role. The wrinkle is **semantic ambiguity** between "subscribers (table)" and "subscribers (role)" plus the live confirmation that ADMIN+SUBSCRIBER dual-enrolment is allowed by schema.
+
+**Severity:** low; no functional bug, but worth confirming the intent before the next role-related schema pass. **Suggested resolution:** either (a) document in the schema or D9.6 note that "subscribers" in the backfill means the table and dual-enrolment is intentional, or (b) tighten the backfill scope to `WHERE users.role = 'SUBSCRIBER'` if ADMIN-as-subscriber is meant to be a dev-only convenience that production should not carry. Decision can wait for Stream 1 patch 2 (ENFORCE_BOOK_ACCESS) since that's the natural touchpoint for re-examining the role-vs-table semantics across the access path.
+
 ---
 
-*Last updated: 2026-05-10. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
+*Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
