@@ -541,6 +541,21 @@ Mechanically harmless — the 15-row count is correct and D9.6's stated purpose 
 
 **Severity:** low; no functional bug, but worth confirming the intent before the next role-related schema pass. **Suggested resolution:** either (a) document in the schema or D9.6 note that "subscribers" in the backfill means the table and dual-enrolment is intentional, or (b) tighten the backfill scope to `WHERE users.role = 'SUBSCRIBER'` if ADMIN-as-subscriber is meant to be a dev-only convenience that production should not carry. Decision can wait for Stream 1 patch 2 (ENFORCE_BOOK_ACCESS) since that's the natural touchpoint for re-examining the role-vs-table semantics across the access path.
 
+### 66. Buyer-facing content access in `/dashboard` (View + Download surfaces)
+
+For any book with an active grant (any source), expose two consumption surfaces on the dashboard row:
+
+- **View** button → renders the book's markdown content inline in the browser (read-only, no editor chrome).
+- **Download .md** button → serves the raw markdown file as `<slug>.md` attachment via `Content-Disposition: attachment`.
+
+Both surfaces must log to `fetch_logs` with a new `source` value (e.g. `dashboard_view` / `dashboard_download`) to preserve consumption telemetry alongside the existing `agent_fetch` source. The dashboard metrics view already aggregates by source so the new values surface naturally there.
+
+Rate-limit downloads (e.g. 10/day/book/subscriber) to prevent trivial bulk exfil while keeping convenience for legitimate re-downloads. Views are cheaper to serve and don't need the same cap — though a coarser per-session limit may still be worth it.
+
+This closes the buyer friction surfaced post-Stream-3: a subscriber pays for content via Stripe Checkout, lands on `/dashboard/purchase/success`, and currently has no way to actually use what they bought without issuing an API key and `curl`-ing the agent fetch endpoint. The web surface is the natural human-facing consumption path.
+
+**Severity:** medium; functional gap that contradicts the "paid for content → can use it" UX assumption. Not a correctness bug (the content is reachable; the path is just developer-only). **Suggested resolution:** Phase 3.5 mini-stream or fold into Phase 4 depending on Edward's priority call. Implementation shape: two new app routes (`GET /api/books/[id]/view`, `GET /api/books/[id]/download`) that share the same access-grant check + `loadBookContent` call as the agent fetch route, differing only in `Content-Type` (`text/html` rendering for view vs `text/markdown; charset=utf-8` + attachment header for download) and the `fetch_logs.source` value written. Reuses the dual-storage seam from D9.2 — no new content path. UI is two icon buttons in the books-table `Access granted` cell.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
