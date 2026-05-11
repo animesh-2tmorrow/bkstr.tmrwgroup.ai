@@ -155,6 +155,12 @@ model User {
   // and Stream B's new-book creation. ON DELETE SET NULL preserves the books
   // independent of the publisher's User row.
   publishedBooks Book[]        @relation("BookPublisher")
+  // Phase 4.5 Stream G (D12.7) — inverse of AdminAction.actor. Durable audit
+  // trail of every ADMIN mutation this user performed (role changes, book
+  // ownership reassignment, access_grants revoke). ON DELETE RESTRICT on the
+  // owning side preserves history — a User with audit rows cannot be hard-
+  // deleted without an explicit operator migration.
+  adminActions   AdminAction[] @relation("AdminActionActor")
 
   @@map("users")
 }
@@ -390,4 +396,49 @@ model WebhookEvent {
 
   @@index([source, receivedAt(sort: Desc)])
   @@map("webhook_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin Actions (Phase 4.5 Stream G, D12.7)
+// Durable audit trail of ADMIN mutations: user role changes (Stream E),
+// book ownership reassignment + access_grants revoke (Stream F). Write
+// surface only in Phase 4.5; read surface (/dashboard/admin/audit) deferred
+// per D12.12 — operators query this table via psql until the read surface
+// ships.
+//
+// Schema choices (D12.7):
+//   - VARCHAR(64) / VARCHAR(32) discriminator strings (NOT Postgres enums)
+//     per the webhook_events.source precedent (D9.3) — future action types
+//     and target types ship without schema migrations.
+//   - JSONB for before/after state captures CHANGING FIELDS ONLY (D12.14),
+//     not full row snapshots. Forensically adequate; storage-efficient.
+//   - actor_user_id FK with ON DELETE RESTRICT — preserves history;
+//     deleting a User that still has audit rows is blocked at the DB layer.
+//   - No FK on target_id — target is polymorphic across users/books/
+//     access_grants. App-side discipline via the target_type discriminator.
+//   - Three composite indexes pre-aligned with the eventual read surface's
+//     three filter dimensions (actor, target, action type).
+//
+// actionType convention (D12.5): dot-delimited `<scope>.<verb>[_<qualifier>]`.
+//   user.role_promote_admin, user.role_promote_publisher,
+//   user.role_demote_subscriber, user.role_demote_publisher,
+//   book.reassign_publisher, grant.revoke.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AdminAction {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String   @map("actor_user_id") @db.Uuid
+  actionType  String   @map("action_type") @db.VarChar(64)
+  targetType  String   @map("target_type") @db.VarChar(32)
+  targetId    String   @map("target_id") @db.Uuid
+  beforeState Json?    @map("before_state") @db.JsonB
+  afterState  Json?    @map("after_state") @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User @relation("AdminActionActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([targetType, targetId, createdAt(sort: Desc)])
+  @@index([actionType, createdAt(sort: Desc)])
+  @@map("admin_actions")
 }

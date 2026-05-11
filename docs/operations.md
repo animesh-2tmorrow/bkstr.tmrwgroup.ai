@@ -430,7 +430,7 @@ psql "$DATABASE_URL" -c "UPDATE users SET role = 'PUBLISHER' WHERE email = '<the
 
 ### Recovering from a misplaced demotion
 
-If `UPDATE users SET role='SUBSCRIBER'` was run against the wrong user, recovery is symmetric: `UPDATE users SET role='ADMIN' WHERE email='…'`. The role column carries no history; if you need an audit trail, the `webhook_events` table is unrelated and won't help here (this is a future hardening surface — operator-action audit log).
+If `UPDATE users SET role='SUBSCRIBER'` was run against the wrong user, recovery is symmetric: `UPDATE users SET role='ADMIN' WHERE email='…'`. The role column carries no history; for an audit trail of role mutations performed via `/dashboard/admin/users` (Stream E) or the supporting API, query `admin_actions` — see "Querying admin_actions via psql" near the bottom of this document. Note that the audit table only captures mutations that flow through the Phase 4.5 admin UI / API surfaces; raw SQL `UPDATE users SET role=…` runs OUTSIDE that path and therefore writes NO `admin_actions` row. The `webhook_events` table is unrelated and won't help.
 
 If the only ADMIN was accidentally demoted: provided their email is still in `ADMIN_EMAILS` in `/etc/bkstr/roles.env`, they'll be re-promoted automatically on their next signin (D11.11 rule 1, env presence promotes). If their email isn't in the file, re-add it, reload pm2, ask them to sign in. If the file itself is missing, restore it (the contents are operator-stable across deploys; the canonical values are recorded in this runbook and in the deploy decision log).
 
@@ -819,5 +819,114 @@ Caveats:
 - The `created_at` precision in `fetch_logs` is `timestamptz(6)` (microsecond) but `Date.prototype.toISOString()` emits millisecond precision; the equality match is exact at ms but the DB row may carry trailing-zero microseconds. If exact-equality misses, widen to `>= <ts> AND < <ts> + INTERVAL '1 millisecond'`.
 - If `fetch_logs` retention sweeps land later (`#19`), the forensics window narrows to the retained period. Pull the row sooner rather than later.
 - The watermark is regenerated on every download — re-downloading a book produces a fresh `issued` stamp, which is how multiple downloads disambiguate.
+
+---
+
+## Querying admin_actions via psql
+
+Phase 4.5 Stream G ships the `admin_actions` table (per `docs/phase-4.5-decisions.md` D12.7) as a durable audit trail of every ADMIN mutation that flows through the Phase 4.5 admin UI / API surfaces: user role changes (Stream E's `/dashboard/admin/users` + `POST /api/admin/users/[id]/role`), book ownership reassignment (Stream F's `POST /api/admin/books/[id]/reassign`), and access-grant revoke (Stream F's `POST /api/admin/grants/[id]/revoke`). The write surface lands in Streams E + F via the `writeAuditEntry(tx, …)` helper at `src/lib/admin/audit.ts` (D12.4 / D12.8); the read surface (`/dashboard/admin/audit`) is **deferred** per D12.12 — operators query the table directly via psql until it ships.
+
+**What is and isn't captured:**
+
+- Captured: mutations performed via the admin UI / API. Stream E's role changes, Stream F's book reassigns + grant revokes. Each row has an `actor_user_id` (the ADMIN who clicked), an `action_type` (D12.5 dot-delimited string), a `target_type` + `target_id`, and JSONB `before_state` / `after_state` showing the changed fields (D12.14 — changing fields only, not full row snapshots).
+- NOT captured: raw SQL UPDATEs run from psql, env-driven role syncs at signin (D11.11 rule 1 promotions), Stripe-webhook-driven grant insertions, or any background process. Only deliberate operator clicks through the admin UI flow through `writeAuditEntry` and write to this table.
+- The three composite indexes (per D12.7) are pre-aligned with the queries below — filtering on `actor_user_id`, `(target_type, target_id)`, or `action_type` with `created_at DESC` ordering hits an index cleanly.
+
+### Most recent admin actions
+
+```sql
+SELECT created_at, actor_user_id, action_type, target_type, target_id,
+       before_state, after_state
+  FROM admin_actions
+ ORDER BY created_at DESC
+ LIMIT 20;
+```
+
+### All admin actions in the last 24 hours
+
+```sql
+SELECT actor_user_id, action_type, target_type, target_id, created_at
+  FROM admin_actions
+ WHERE created_at >= NOW() - INTERVAL '1 day'
+ ORDER BY created_at DESC;
+```
+
+### All role mutations against a specific user (target-history lookup)
+
+Substitute the target user's UUID:
+
+```sql
+SELECT created_at, actor_user_id, action_type,
+       before_state->>'role' AS old_role,
+       after_state->>'role'  AS new_role
+  FROM admin_actions
+ WHERE target_type = 'user'
+   AND target_id = '<user-uuid>'
+ ORDER BY created_at DESC;
+```
+
+Resolves the canonical "who did what to Edward and when" question after a role flap.
+
+### All actions performed by a specific ADMIN (actor-history lookup)
+
+Substitute the actor's UUID:
+
+```sql
+SELECT created_at, action_type, target_type, target_id,
+       before_state, after_state
+  FROM admin_actions
+ WHERE actor_user_id = '<admin-uuid>'
+ ORDER BY created_at DESC
+ LIMIT 100;
+```
+
+Resolves "what has Animesh been doing this week" / accountability questions.
+
+### Decode JSONB state for role transitions
+
+The `before_state` / `after_state` columns are JSONB; the `->>` operator extracts a string-typed field, `->` returns a JSONB sub-document. Common pivot:
+
+```sql
+-- Every promotion / demotion in the last week with old → new role visible
+SELECT created_at,
+       actor_user_id,
+       target_id,
+       action_type,
+       before_state->>'role' AS old_role,
+       after_state->>'role'  AS new_role
+  FROM admin_actions
+ WHERE action_type LIKE 'user.role%'
+   AND created_at >= NOW() - INTERVAL '7 days'
+ ORDER BY created_at DESC;
+```
+
+For book reassignments, the analogous decode (per D12.14):
+
+```sql
+SELECT created_at,
+       actor_user_id,
+       target_id AS book_id,
+       before_state->>'publisher_user_id' AS old_publisher_user_id,
+       after_state->>'publisher_user_id'  AS new_publisher_user_id
+  FROM admin_actions
+ WHERE action_type = 'book.reassign_publisher'
+ ORDER BY created_at DESC;
+```
+
+For grant revokes:
+
+```sql
+SELECT created_at,
+       actor_user_id,
+       target_id AS grant_id,
+       after_state->>'revoked_at' AS revoked_at_iso
+  FROM admin_actions
+ WHERE action_type = 'grant.revoke'
+ ORDER BY created_at DESC;
+```
+
+### Resolving the placeholder above
+
+The "Recovering from a misplaced demotion" section earlier in this document (around line 433) used to note that no audit trail existed — that gap is now closed by `admin_actions` for mutations performed via the Phase 4.5 admin UI. For raw-SQL UPDATEs done outside the UI (e.g. break-glass recovery via psql), the audit trail still does not exist by construction — running `UPDATE users SET role=…` bypasses the `writeAuditEntry` helper entirely. Capture any such operator-direct SQL in a dated runbook note rather than relying on `admin_actions` to reflect it.
 
 ---
