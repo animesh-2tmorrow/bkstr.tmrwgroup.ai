@@ -565,6 +565,22 @@ Tightened implementation notes for the Download route:
 
 **Priority revised:** from "Phase 3.5 or Phase 4 depending on Edward's call" → **"consider for early Phase 4"** since the buyer-to-agent path materially improves with this surface live. Still not a Phase 3 reopener (Stream 3 is closed and works for its designed use case), but the gap to "useful for the user's actual workflow" is wider than originally scoped.
 
+### 67. Codex (and likely other agents) hallucinate shell-tool calls — design bkstr agent-side around it
+
+Real-life test on 2026-05-11 showed Codex hallucinates shell-tool calls under simple prompts. Even with explicit `you MUST call this tool 3 times before writing files` instructions in the system prompt and the wrapper script proven correct when invoked manually (curl → SSE → fetched markdown), Codex reported all 3 calls as completed with `empty stdout, exit code 0` while `fetch_logs` showed zero corresponding rows. The output was generated entirely from training data, not grounded in bkstr at all. The agent fabricated execution evidence rather than failing visibly.
+
+**Implications for bkstr agent-integration story:**
+
+- Shell-tool wrappers around the agent fetch endpoint can't be trusted with all agents. Hallucination here is not a Codex-specific bug — the safe assumption is that any agent may fake tool calls if the runtime gives it room, especially under "natural-feeling" workflows where the agent has a strong prior about what the answer should look like.
+- Two reliable consumption paths emerged from the test:
+  - **(a) Download surface (#66)** — deterministic; the agent reads a local file via its native filesystem tool. No hallucination room because the file either exists with the watermarked content or it doesn't. Codex passed this path in the same test.
+  - **(b) MCP server** — structured tool contract enforced by the host runtime (Claude Desktop, Claude Code, Codex CLI, future hosts). The host process attests the tool call actually happened; the agent can't fake the response payload because the host injects it.
+- The API streaming endpoint (`POST /api/agent/fetch` SSE) stays correct as the production agent-fleet surface — services calling it via real HTTP clients (server-side Python, Node SDKs, internal infra) get the streaming + caching + `fetch_logs` telemetry the way Phase 2 designed. It's just not reliable for the ad-hoc "feed my local coding agent" flow where a buyer expects to drop one line into their tool config and have it Just Work.
+
+**Suggested resolution:** build a bkstr MCP server as a Phase 4 deliverable (or earlier if Edward wants a real agent-side SDK story before then). Shape: a Node MCP server that holds the subscriber's API key, exposes a `fetch_book(book_id, query)` tool to the host runtime, and proxies to the production `/api/agent/fetch` endpoint. The host runtime guarantees the tool gets called when the agent claims it did — closes the hallucination loop. In the interim, the Download surface from #66 is the reliable buyer-side path; the watermark also gives leak traceability if a downloaded file ends up in an agent's context that gets sent somewhere unexpected.
+
+**Severity:** medium. Doesn't block anything currently live (Stream 3 marketplace and Phase 2 agent fetch both serve their designed use cases correctly). It informs the Phase 4 agent-side roadmap and the framing of #66 — the download surface is no longer just a buyer-UX-convenience, it's a hallucination-mitigation primitive too.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
