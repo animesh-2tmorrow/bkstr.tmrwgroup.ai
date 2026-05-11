@@ -803,6 +803,22 @@ Three tuning paths to consider when this becomes load-bearing:
 
 **Severity:** low — the assistant works correctly today, this is polish. **Trigger:** after a real month of admin usage when patterns of "I had to ask the follow-up question" emerge from conversation review. The work is best informed by reading actual production conversations from the `assistant_messages` table (query: `SELECT content FROM assistant_messages WHERE role = 'user' ORDER BY created_at DESC LIMIT 100`) and clustering the follow-up shapes. **Suggested resolution:** start with (b) as a single-line addition to the system prompt in `src/lib/admin/assistant/agent.ts`; iterate from there based on whether observed follow-up patterns drop. Path (c) is the heaviest lift and should only ship if (a)+(b) don't move the needle.
 
+### ~~86. SEED grant cleanup audit~~
+
+**#86 CLOSED with no action (2026-05-11)** — investigation triggered by the operator concern *"new users shouldn't have access to books without buying."* Read-only trace of `src/`, `scripts/`, `prisma/migrations/`, signin hooks, schema constraints, triggers, and current DB state. Findings:
+
+- **Zero SEED creation paths in code.** Comprehensive grep of `src/` and `scripts/` for `source: 'SEED'`, `accessGrant.create*`, and any seed-named function/constant returned only UI labels (admin grants page filter, revoke modal switch case), filter-dropdown definitions, and the Stream B assistant tool's `VALID_SOURCES` validation enum. No creation sites.
+- **Signin hooks (`events.createUser`, `events.signIn`) create zero access_grants.** First-signin side effects are limited to: NextAuth inserts (`users`, `accounts`, `sessions`), the createUser hook insert into `subscribers`, `lastSigninAt` UPDATE (D12.3), and `syncRoleFromEnv` role promotion (D11.11). No grant writes.
+- **The only SEED rows that ever existed came from a one-shot Phase 3 backfill migration** at `prisma/migrations/20260510150000_phase_3_access_grants/migration.sql:42-46` — an idempotent CROSS JOIN INSERT with `ON CONFLICT DO NOTHING`. No other code path replicates it.
+- **All 15 SEED grants in the DB are already revoked.** Operator bulk-revoke wave on 2026-05-11 13:38–13:46 UTC (13 rows via `/dashboard/admin/grants` UI) plus 2 prior smoke-test revokes (1 from Stream A walkthrough at 03:29:43, 1 from Phase 4.5 Stream F `grant.revoke` test at 10:27:54). D10.2 checkout-block logic already treats them as inactive.
+- **No schema-level SEED forcing.** `access_grants.source` is NOT NULL with no column default; every insert must specify source explicitly. Zero triggers, zero CHECK constraints, zero RLS policies, zero user-defined functions referencing `access_grants`.
+
+**Decision:** leave the 15 revoked-SEED rows in place as audit history. Rationale: the rows are functionally inert (D10.2 ignores revoked grants), and the timeline tells a useful story of the platform transition from internal-alpha bootstrap to production-ready. The Phase 4.5 Stream F smoke test revoke (Hermes Dogfood / animeshk604 at 10:27:54 UTC) is part of this set — preserves the verification chain for the audit-log + revoke-flow correctness work.
+
+**No action needed; no code change required; no schema migration required.** The system is now production-shaped: new users have zero access until they purchase via Stripe (writes PURCHASE) or are assigned books as publisher (writes PUBLISHER_OWN). The access-creation perimeter is pinned to exactly two entry points — captured as decision **D14.6** in `docs/decisions.md`.
+
+Investigation artifact value: the trace is reusable. If "phantom grants" ever surface in the future (a row appears without provenance), the answer is "re-run this audit, it produced zero creation paths in production code as of 2026-05-11 — anything new is genuinely new." Compare-with-this-baseline diagnostic.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

@@ -41,3 +41,22 @@ Running decisions log. New entries append here. For historical decisions from Ph
 **Reasoning:** Five tools cover the load-bearing admin questions (who's on the platform, what books exist, who has access to what, what changed recently, what fetches happened recently) without exposing arbitrary query power. The 200-row cap is the load-bearing safety floor — even if the model emits `limit=10000`, the result-set pulled into the LLM context is bounded. A SQL escape hatch is genuinely useful for the long-tail of admin questions Streams B+C can't answer, but exposing it safely requires parameterized-query semantics + read-only-statement enforcement at the DB layer — too much surface area for Stream B's scope. JSON Schema (not zod) because Anthropic's tools API takes JSON Schema directly, AND zod is not in package.json (no dep added).
 
 **Cross-references:** follow-up #80 (SQL escape-hatch tool), Stream A's filterByRole tool registry pattern.
+
+### D14.6 SEED grant lifecycle and production-readiness perimeter
+
+**Choice:** do not introduce code paths that auto-create `SEED`-source `access_grants` rows. `SEED` remains a valid `GrantSource` enum value for audit and historical-state queries, but new SEED rows are operator-only (manual SQL, runbook-gated per `docs/operations.md:278-288`). The 15 existing SEED rows from the Phase 3 backfill migration (`20260510150000_phase_3_access_grants/migration.sql:42-46`) remain in place with `revoked_at` populated as audit history of the internal-alpha-to-production transition.
+
+**New users acquire access exclusively via two paths:**
+- `PURCHASE` — Stripe Checkout success → `payment_intent.succeeded` webhook → `accessGrant.upsert` at `src/app/api/webhooks/stripe/route.ts:105`.
+- `PUBLISHER_OWN` — publisher new-book form (`src/app/api/books/new/route.ts:310`) or admin reassignment (`src/app/api/admin/books/[id]/reassign/route.ts:172`).
+
+This pins the system's access-creation perimeter at exactly two well-audited entry points.
+
+**Reasoning:** every grant in production should have a clear provenance — either a paid purchase or an explicit publisher assignment. Implicit/seed grants undermine the audit trail and obscure the actual access-acquisition story. The Phase 3 SEED backfill served a one-time grandfathering purpose (preserving pre-Phase-3 implicit access when the `ENFORCE_BOOK_ACCESS` gate was about to land); that purpose is complete and the rows are all revoked. Leaving the existing rows as revoked audit history preserves the verification chain (Phase 4.5 Stream F's `grant.revoke` smoke test is one of the 15) while ensuring no new rows accumulate. The closing of the SEED creation perimeter means the only way SEED can re-appear is via deliberate operator SQL — an explicit, audited action with a runbook-documented rationale, not an accidental code path.
+
+**Operational implications:**
+- **No code change required to enforce this decision** — the trace at follow-up #86 confirmed zero creation paths exist today.
+- **`MANUAL`-source grants remain the operator path** for one-off comps / refunds / support escalations, per `docs/operations.md:285`. SEED is reserved for grandfathering-style bulk backfills (none planned).
+- **Future audits** can compare against the #86 baseline trace. If a `SEED` row appears with a `granted_at` after 2026-05-11, that's an unaudited new code path that needs investigation.
+
+**Cross-references:** D9.6 (original SEED-backfill rationale), D10.2 (checkout-block respects all active grants including SEED), `docs/operations.md:276-289` (SEED operator runbook), follow-up #86 (the trace that grounded this decision).
