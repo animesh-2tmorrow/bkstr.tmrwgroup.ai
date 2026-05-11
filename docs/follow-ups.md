@@ -625,6 +625,17 @@ Two viable directions:
 
 **Severity:** low; cosmetic UX. **Suggested resolution:** wait for live-traffic feedback. If buyers consistently land on Active Books trying to buy, formalize the distinction or add a redirect. If operators stop using Active Books in favor of Library, consider deprecating the agent-telemetry columns or folding them into Library as an optional row-expand. Either path is fast and reversible.
 
+### 71. Seed `book.description` for the 5 existing seed books
+
+Surfaced during Stream C live test (2026-05-11). `book.description` was added to the schema in Phase 4 Stream A (`prisma/schema.prisma:84`) as nullable TEXT. Stream B's `/dashboard/books/new` form populates it for new books, but the 5 pre-existing seed books (CI Diagnostics, Docker Patterns, GIF Grep, Hermes Dogfood, Node Connect) carry `description = NULL`. `/dashboard/library` renders these as `"—"` per the LibraryTable's NULL fallback — functionally clean but visually thin, since buyers landing on the Library see a row with title + price + publisher but no prose to disambiguate "what is this book about."
+
+Two viable paths:
+
+1. **ADMIN backfill via SQL.** Operator writes a one-line prose description per book — anything 1-2 sentences that captures the book's domain — and runs `UPDATE books SET description = '<text>' WHERE slug = '<slug>'`. Fast, controlled, deterministic. Suitable for the 5-book seed corpus.
+2. **Defer to Edward/Zach as part of ownership reassignment.** When Edward signs in and the reassignment SQL from `docs/operations.md` "ADMIN-as-seed-owner" runs to move publisher_user_id from ADMIN to Edward, Edward also writes descriptions through a Stream B "edit existing book" surface (which doesn't exist yet — would be a Phase 4.5 mini-stream). More authentic publisher-authored prose, but blocked on Stream B getting an edit-existing-book flow.
+
+**Severity:** low; cosmetic, no functional impact on Buy / View / Download / agent fetch. **Suggested resolution:** path 1 if Phase 4 GA wants the Library polished now; path 2 if buyer feedback can wait until publisher edit-existing flow ships. Tie this entry to the ADMIN-as-seed-owner section in `docs/operations.md` — both are seed-corpus transitional state pending Edward/Zach.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
