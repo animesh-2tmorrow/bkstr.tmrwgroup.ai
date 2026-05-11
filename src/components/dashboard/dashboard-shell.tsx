@@ -18,7 +18,11 @@ export type DashboardNavKey =
   | "billing"
   | "admin-users"
   | "admin-books"
-  | "admin-grants";
+  | "admin-grants"
+  // Phase 5 Stream A (D13.1) — in-product docs surface, visible to all
+  // signed-in users (no role flag below). Placed last so it renders as the
+  // bottom of the visible nav across SUBSCRIBER / PUBLISHER / ADMIN.
+  | "docs";
 
 type Props = {
   active: DashboardNavKey;
@@ -63,6 +67,10 @@ const NAV_ITEMS: ReadonlyArray<{
   { key: "admin-users", href: "/dashboard/admin/users", label: "Admin · Users", adminOnly: true },
   { key: "admin-books", href: "/dashboard/admin/books", label: "Admin · Books", adminOnly: true },
   { key: "admin-grants", href: "/dashboard/admin/grants", label: "Admin · Grants", adminOnly: true },
+  // Phase 5 Stream A (D13.1) — Docs is visible to all signed-in users (no
+  // role flag). Last entry so it renders at the bottom of the real nav for
+  // every role; per-section role filtering happens inside the page (D13.2).
+  { key: "docs", href: "/dashboard/docs", label: "Docs" },
 ];
 
 export function DashboardShell({ active, companyName, userEmail, initial, role, children }: Props) {

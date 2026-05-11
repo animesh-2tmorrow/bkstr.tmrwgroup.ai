@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "import-book": "tsx scripts/import-book.ts",
     "migrate-content-to-s3": "tsx scripts/migrate-content-to-s3.ts"
   },
@@ -22,6 +24,8 @@
     "prisma": "^7.8.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "stripe": "22.1.1",
     "tsx": "4.21.0"
   },
@@ -33,6 +37,7 @@
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.14",
     "tailwindcss": "^3.4.19",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "4.1.5"
   }
 }

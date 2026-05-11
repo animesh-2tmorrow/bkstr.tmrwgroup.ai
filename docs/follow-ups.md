@@ -723,6 +723,16 @@ Either path benefits from a related publisher-side change: **the new-book form (
 
 **Severity:** low UX. Doesn't block anything; matters for marketplace polish once real publisher content lands and buyers start scanning catalog rows quickly. **Suggested resolution:** the form character-count warning ships immediately as a small Phase 4.5-tail patch (it's a 15-line addition with no schema or API surface). The full-text affordance pairs with **#69** (Library pagination) and **#70** (Active vs Library overlap) into a "Library UX polish" mini-stream — all three are cosmetic-but-cumulative improvements to the same surface, and shipping them together keeps the design coherent.
 
+### 77. Fill `/dashboard/docs` with real content for all three role tiers
+
+Phase 5 Stream A landed the rendering surface with role-filtered markdown at `src/content/docs/index.md`. The placeholder content covers all four visibility tiers (common, subscriber, publisher, admin) but each is a one-paragraph stub. This follow-up fills them with real onboarding-grade prose.
+
+Source material: the publisher onboarding doc (when written), the handover doc, the admin section walkthrough, and the existing `docs/operations.md` runbooks (which can be summarized + linked from the docs surface rather than duplicated).
+
+**Severity:** medium (surface is useless to buyers/publishers without real content; ADMIN can still operate from the runbooks in the repo, but the in-product Docs page is the front door for Edward/Zach + future external users).
+
+**Suggested resolution:** one writing pass against the four tiers. Match the buyer-voice that the seed-book descriptions established (#71); avoid the agent-skill-file directive voice (#75). Cross-reference operational runbooks in `docs/operations.md` rather than duplicating them.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
