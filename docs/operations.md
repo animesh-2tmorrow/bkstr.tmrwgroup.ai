@@ -436,9 +436,57 @@ If the only ADMIN was accidentally demoted: provided their email is still in `AD
 
 ---
 
-## Phase 4.5 — Edward / Zach publisher backfill
+## ADMIN-as-seed-owner — temporary publisher attribution for the 5 seed books (2026-05-11)
 
-Phase 4 Stream A's migration `20260511120100_phase_4_schema_part_2_backfill` carries a conditional `DO $$ … $$` block that assigns `book.publisher_user_id` to Edward and creates a `PUBLISHER_OWN`-source `access_grants` row per book. The block runs at migration-deploy time. If Edward (`edward@tmrwgroup.ai`) has not yet signed in when the migration deploys, the DO block hits an `IF edward_id IS NULL THEN RAISE NOTICE … RETURN` branch and books stay unattributed. The operator then re-runs the same SQL manually once Edward signs in. This runbook entry is the operator path for that re-run.
+**Current live state:** all 5 existing seed books are attributed to `animesh@2tmorrow.com` (user_id `588615d8-c2e7-4808-9e9b-997ba09e6cbd`, role=ADMIN) via `book.publisher_user_id`, with matching `PUBLISHER_OWN`-source `access_grants` rows on ADMIN's subscriber row (`sub_id=588615d8…`). This was an explicit operator action on 2026-05-11, triggered when `/dashboard/library` showed empty because:
+
+1. The 5 seed books were `status='DRAFT'` (the schema default; `import-book.ts` never sets ACTIVE). Stream C's Library route filters `status='ACTIVE'`. **Fix:** `UPDATE books SET status='ACTIVE' WHERE status='DRAFT'`.
+2. Stream A's Part-2 backfill deferred (Edward had not signed in), so `publisher_user_id` was NULL on every row. The Library doesn't filter on that, but the ownership model expected non-NULL. **Fix:** the SQL block under "Reassign seed books later" below was run with ADMIN's user_id as the temporary owner.
+
+ADMIN-as-seed-owner is a deliberate temporary state until Edward + Zach sign in and the planned ownership model lands (Edward owns all 5 seed books per design Q1 / D11.10). The state is harmless: ADMIN-as-publisher just means the "Pricing" surface shows the 5 books to ADMIN, which is the same behavior they had before Phase 4 (ADMIN-sees-all).
+
+### Reassign seed books later
+
+When Edward signs in (creates a `users` row with `email='edward@tmrwgroup.ai'`), run this SQL to move ownership from ADMIN to Edward and re-issue the PUBLISHER_OWN grants. Soft-revoke ADMIN's old grants for audit-trail preservation rather than hard-delete.
+
+```sql
+BEGIN;
+
+-- Move book ownership
+UPDATE books
+   SET publisher_user_id = (SELECT id FROM users WHERE email = 'edward@tmrwgroup.ai')
+ WHERE publisher_user_id = '588615d8-c2e7-4808-9e9b-997ba09e6cbd';
+
+-- Soft-revoke ADMIN's stale PUBLISHER_OWN grants
+UPDATE access_grants
+   SET revoked_at = NOW()
+ WHERE source = 'PUBLISHER_OWN'
+   AND subscriber_id = (SELECT s.id FROM subscribers s JOIN users u ON u.id = s.user_id WHERE u.email = 'animesh@2tmorrow.com')
+   AND revoked_at IS NULL;
+
+-- Issue fresh PUBLISHER_OWN grants to Edward
+INSERT INTO access_grants (id, subscriber_id, book_id, source, granted_at)
+SELECT gen_random_uuid(),
+       (SELECT s.id FROM subscribers s JOIN users u ON u.id = s.user_id WHERE u.email = 'edward@tmrwgroup.ai'),
+       b.id,
+       'PUBLISHER_OWN'::"GrantSource",
+       NOW()
+  FROM books b
+ WHERE b.publisher_user_id = (SELECT id FROM users WHERE email = 'edward@tmrwgroup.ai')
+    ON CONFLICT (subscriber_id, book_id, source) DO NOTHING;
+
+COMMIT;
+```
+
+After running, ADMIN keeps role=ADMIN (independent of any grant changes) and loses the PUBLISHER_OWN grant rows (they're revoked, not deleted — searchable via `SELECT * FROM access_grants WHERE revoked_at IS NOT NULL`). Edward gets fresh PUBLISHER_OWN grants and shows up as the books' publisher in `/dashboard/pricing` and `/dashboard/library`.
+
+The same shape applies to Zach with `zach@tmrwgroup.ai` — but only for books explicitly intended to be Zach's (none of the 5 seed books per D11.10; Zach's books are first-class new-book creations via Stream B).
+
+---
+
+## Phase 4.5 — Edward / Zach publisher backfill (original migration path; partly superseded by ADMIN-as-seed-owner above)
+
+Phase 4 Stream A's migration `20260511120100_phase_4_schema_part_2_backfill` carries a conditional `DO $$ … $$` block that assigns `book.publisher_user_id` to Edward and creates a `PUBLISHER_OWN`-source `access_grants` row per book. The block runs at migration-deploy time. If Edward (`edward@tmrwgroup.ai`) has not yet signed in when the migration deploys, the DO block hits an `IF edward_id IS NULL THEN RAISE NOTICE … RETURN` branch and books stay unattributed. **However:** on 2026-05-11 the operator opted to attribute books to ADMIN as a temporary state (see "ADMIN-as-seed-owner" section above) rather than wait for Edward. The migration's DO block is therefore no longer the canonical path forward — once Edward signs in, run the "Reassign seed books later" SQL from the ADMIN-as-seed-owner section instead, which handles the existing ADMIN-as-owner state correctly. The block below remains accurate as a runbook for the no-ADMIN-as-seed-owner scenario, but does not apply to the live bkstr DB as of 2026-05-11.
 
 Zach is intentionally NOT in the automated backfill (per D11.10 — Edward owns all 5 existing seed books). When Zach's email lands, his books are first-class new-book creations via Stream B's `/dashboard/books/new` form. If a future operator decision reassigns existing books to Zach, hand-edit a fresh SQL patch — do not extend the migration's DO block (the migration is immutable history once deployed).
 

@@ -601,6 +601,30 @@ Sequencing: this is Phase 4.5 work (after Stream A + Stream B both land and at l
 
 **Update (Phase 4 Stream A, 2026-05-11):** the migration has shipped — `20260511120000_phase_4_schema_part_1` adds the nullable column + FK + index; `20260511120100_phase_4_schema_part_2_backfill` runs a conditional `DO $$ … $$` block that assigns publisher_user_id IF Edward exists in `users` ELSE defers with `RAISE NOTICE`. Today (deploy day) Edward has not signed in → the DO block hits the defer branch and books stay unattributed. The operator re-runs the same DO block manually via psql once Edward signs in (runbook: `docs/operations.md` "Phase 4.5 — Edward / Zach publisher backfill"). Per [D11.10](./phase-4-decisions.md#d1110--bookdescription-and-bookpublisher_user_id-both-ship-nullable-pair-tighten-later-per-68), the related `book.description` column also ships nullable and pair-tightens here once every book carries prose. Update this entry's title to "Tighten `book.publisher_user_id` AND `book.description` to NOT NULL …" when scheduling the Phase 4.5 work.
 
+**Update (Phase 4 Stream C live test, 2026-05-11):** operator backfilled `publisher_user_id` to ADMIN (`animesh@2tmorrow.com`, `588615d8-…`) as a temporary seed-corpus owner to unblock `/dashboard/library` rendering. The 5 seed books now carry non-NULL publisher_user_id AND 5 PUBLISHER_OWN grants on ADMIN's subscriber row. NOT NULL tightening is now technically possible but should still wait for Edward + Zach reassignment per the original D11.10 intent (ADMIN-as-seed-owner is documented as temporary in `docs/operations.md` "ADMIN-as-seed-owner" section). When Edward signs in and the reassignment SQL runs, this follow-up's prerequisite shifts from "Edward + Zach exist" to "all books have their intended owner" — once Edward owns the 5 seed books (and Zach owns whatever subset is later decided), tighten to NOT NULL.
+
+### 69. Library pagination when book count crosses ~50
+
+Surfaced during Stream C implementation. `getBooksForLibrary` in `src/lib/dashboard/queries.ts` returns the full set of `status='ACTIVE'` books with no `take` or cursor — fine for the current 5-book corpus and the projected ~25-book Phase 4 GA shape, but the table render becomes visibly slow somewhere around 50–100 rows and turns into a real performance issue past ~500.
+
+**Severity:** low; not a problem today. **Suggested resolution:** add cursor-based pagination (Prisma `cursor` + `take`) plus a "load more" or infinite-scroll component on `/dashboard/library`. Coordinate with #66's Active/Browse/All filter — pagination state needs to compose with the URL `?filter=` searchparam. Defer until the book corpus crosses ~50 rows or buyer-side scroll feel degrades.
+
+### 70. Decide on `/dashboard` (Active Books) vs `/dashboard/library` overlap
+
+Surfaced during Stream C live test (2026-05-11). The two views now overlap:
+
+- **`/dashboard` (Active Books)** — operator/agent-focused. Columns: Total fetches, 30d fetches, Active agents, Last fetched, Access state. The historical "what's happening with my agent fleet" view. Predates Phase 4.
+- **`/dashboard/library`** — buyer-focused. Columns: title, description, publisher name, price, Access state (Granted with View+Download / Buy / Not for sale). Filterable Active/Browse/All. Net-new in Phase 4 Stream C.
+
+Both pull from `books` and both show the Access column. The fetch-telemetry columns are unique to Active Books; the description + publisher + price columns are unique to Library. A user (any role) sees both nav entries side-by-side and has to learn which surface answers their current question — which is mild cognitive friction but defensible: ADMIN operating their fleet wants the telemetry view; SUBSCRIBER deciding what to buy wants the Library view; PUBLISHER managing their authored books wants either depending on what they're checking.
+
+Two viable directions:
+
+1. **Consolidate.** Merge into one route with a toggle (telemetry vs catalog view) or tabs. Cleaner nav, but the mental model conflates two distinct workflows and the toggle becomes a new affordance to learn.
+2. **Formalize the distinction.** Add subtitle/copy to each page header that names the use case ("Your agent fleet's books" vs "Browse and buy bkstr's catalog"). Cheap; no nav restructure.
+
+**Severity:** low; cosmetic UX. **Suggested resolution:** wait for live-traffic feedback. If buyers consistently land on Active Books trying to buy, formalize the distinction or add a redirect. If operators stop using Active Books in favor of Library, consider deprecating the agent-telemetry columns or folding them into Library as an optional row-expand. Either path is fast and reversible.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
