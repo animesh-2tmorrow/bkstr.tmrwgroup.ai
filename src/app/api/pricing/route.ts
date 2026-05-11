@@ -2,12 +2,18 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
+import { Role } from "@/generated/prisma/client";
 
-// Phase 3 Stream 3 — pricing sync.
-// ADMIN-only (per design OQ-3 / D9.1). Body: { book_id, unit_amount_cents }.
+// Phase 3 Stream 3 — pricing sync. Phase 4 Stream B broadens the role gate
+// from ADMIN-only to PUBLISHER+ADMIN, and adds a server-side ownership check
+// so a PUBLISHER cannot re-price a book they don't own (the lab-repo
+// activeWorkspaceId trust-gap parallel — a client-supplied book_id MUST be
+// re-validated server-side against the book's publisher_user_id).
+//
+// Body: { book_id, unit_amount_cents }.
 // Flow (the "B3" sync per design):
-//   1. Validate input + ADMIN role.
-//   2. Look up the Book; bail if not found.
+//   1. Validate input + role.
+//   2. Look up the Book; bail if not found. Re-check ownership when role=PUBLISHER.
 //   3. Find or create the Stripe Product. We don't store stripe_product_id
 //      on Book (CC-3 / D9.7); instead we search by metadata.book_id at sync
 //      time. If no Product exists, create one with metadata.book_id=<id>.
@@ -28,8 +34,10 @@ export async function POST(request: Request) {
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "ADMIN role required" }, { status: 403 });
+  // Phase 4 Stream B — PUBLISHER + ADMIN may operate the pricing surface.
+  // SUBSCRIBER is denied. ADMIN bypasses the per-book ownership check below.
+  if (session.user.role !== Role.ADMIN && session.user.role !== Role.PUBLISHER) {
+    return NextResponse.json({ error: "PUBLISHER or ADMIN role required" }, { status: 403 });
   }
 
   let body: unknown;
@@ -58,10 +66,22 @@ export async function POST(request: Request) {
 
   const book = await prisma.book.findUnique({
     where: { id: bookId },
-    select: { id: true, title: true },
+    select: { id: true, title: true, publisherUserId: true },
   });
   if (!book) {
     return NextResponse.json({ error: "Book not found" }, { status: 404 });
+  }
+
+  // Phase 4 Stream B — server-side ownership check. ADMIN bypasses; PUBLISHER
+  // must own the book. Scenario F — PUBLISHER attempts to set price on a
+  // book they don't own (e.g. someone else's seed book) → 403 here.
+  // Critical: do NOT trust the client; book.publisherUserId is the source of
+  // truth, session.user.id is the caller identity.
+  if (
+    session.user.role === Role.PUBLISHER &&
+    book.publisherUserId !== session.user.id
+  ) {
+    return NextResponse.json({ error: "Not your book" }, { status: 403 });
   }
 
   // Step 3 — find or create Stripe Product via metadata.book_id search.

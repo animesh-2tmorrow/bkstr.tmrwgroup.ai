@@ -3,17 +3,33 @@
 import { useState } from "react";
 import { formatUsdCents } from "@/lib/format/currency";
 
+// Phase 4 Stream B — BookRow gains optional `description` + `publisherUserId`
+// fields forward-friendly for Stream C's Library view, which will display the
+// description alongside Publisher metadata. The form itself only reads
+// id/title/slug/domain/unitAmountCents/stripePriceId/updatedAt — the extra
+// fields are passed through unread.
 type BookRow = {
   id: string;
   title: string;
   slug: string;
   domain: string;
+  description?: string | null;
+  publisherUserId?: string | null;
   unitAmountCents: number | null;
   stripePriceId: string | null;
   updatedAt: string | null;
 };
 
-export function PricingForm({ books }: { books: BookRow[] }) {
+export function PricingForm({
+  books,
+  isPublisher = false,
+}: {
+  books: BookRow[];
+  // Phase 4 Stream B — when true, the empty-state copy nudges the publisher
+  // toward /dashboard/books/new (the create surface introduced by Stream B).
+  // ADMIN gets the legacy import-book wording.
+  isPublisher?: boolean;
+}) {
   const [selectedBookId, setSelectedBookId] = useState<string>(books[0]?.id ?? "");
   const [priceDollars, setPriceDollars] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
@@ -78,7 +94,11 @@ export function PricingForm({ books }: { books: BookRow[] }) {
             disabled={books.length === 0 || submitting}
           >
             {books.length === 0 ? (
-              <option value="">No books yet — import one first</option>
+              <option value="">
+                {isPublisher
+                  ? "No books yet — create one at /dashboard/books/new"
+                  : "No books yet — import one first"}
+              </option>
             ) : (
               books.map((b) => (
                 <option key={b.id} value={b.id}>
@@ -146,7 +166,9 @@ export function PricingForm({ books }: { books: BookRow[] }) {
             {books.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
-                  No books yet. Import one with `npm run import-book` first.
+                  {isPublisher
+                    ? "No books yet. Create one at /dashboard/books/new."
+                    : "No books yet. Import one with `npm run import-book` first."}
                 </td>
               </tr>
             )}

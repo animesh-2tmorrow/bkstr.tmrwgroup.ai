@@ -7,6 +7,7 @@ export type DashboardNavKey =
   | "api-keys"
   | "fetch-logs"
   | "pricing"
+  | "new-book"
   | "billing";
 
 type Props = {
@@ -15,26 +16,37 @@ type Props = {
   userEmail: string;
   initial: string;
   // Phase 3 Stream 3 — role is optional; pages that don't fetch it (older
-  // pre-Stream-3 surfaces) still render. ADMIN gets the Pricing link.
+  // pre-Stream-3 surfaces) still render. Phase 4 Stream B — Pricing + New
+  // Book are visible to both PUBLISHER and ADMIN (previously ADMIN-only).
   role?: string;
   children: ReactNode;
 };
 
+// Phase 4 Stream B — `publisherOrAdmin: true` gates a nav item to the union of
+// PUBLISHER and ADMIN. The previous `adminOnly` flag for Pricing collapsed to
+// this broader gate as part of the publisher-UI rollout. Server-side route
+// guards inside /dashboard/pricing and /dashboard/books/new remain the
+// load-bearing authz check; this filter is UI-affordance only.
 const NAV_ITEMS: ReadonlyArray<{
   key: DashboardNavKey;
   href: string;
   label: string;
-  adminOnly?: boolean;
+  publisherOrAdmin?: boolean;
 }> = [
   { key: "books", href: "/dashboard", label: "Active Books" },
   { key: "api-keys", href: "/dashboard/api-keys", label: "API Keys" },
   { key: "fetch-logs", href: "/dashboard/fetch-logs", label: "Fetch Logs" },
-  { key: "pricing", href: "/dashboard/pricing", label: "Pricing", adminOnly: true },
+  { key: "pricing", href: "/dashboard/pricing", label: "Pricing", publisherOrAdmin: true },
+  { key: "new-book", href: "/dashboard/books/new", label: "New Book", publisherOrAdmin: true },
   { key: "billing", href: "/dashboard/billing", label: "Billing" },
 ];
 
 export function DashboardShell({ active, companyName, userEmail, initial, role, children }: Props) {
-  const visibleItems = NAV_ITEMS.filter((item) => !item.adminOnly || role === "ADMIN");
+  // Phase 4 Stream B — PUBLISHER + ADMIN see authoring nav (Pricing, New Book);
+  // SUBSCRIBER does not.
+  const visibleItems = NAV_ITEMS.filter(
+    (item) => !item.publisherOrAdmin || role === "ADMIN" || role === "PUBLISHER",
+  );
   return (
     <div className="min-h-screen flex">
       <aside className="w-64 bg-[#FAF6EC] border-r border-[#E5DCC8] flex flex-col">

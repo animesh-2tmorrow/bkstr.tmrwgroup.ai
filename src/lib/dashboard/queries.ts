@@ -1,4 +1,4 @@
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma, Role } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 
 export type BookWithMetrics = {
@@ -208,4 +208,62 @@ export async function getBookTitle(bookId: string): Promise<string | null> {
     select: { title: true },
   });
   return book?.title ?? null;
+}
+
+// Phase 4 Stream B — pricing surface row shape. The query shape forward-
+// includes `description` and `publisherUserId` so Stream C's Library view
+// can reuse the same select projection without a second pass. Existing
+// fields (id/title/slug/domain/unitAmountCents/stripePriceId/updatedAt)
+// mirror the legacy pricing page shape so the form component stays stable.
+export type PricingBookRow = {
+  id: string;
+  title: string;
+  slug: string;
+  domain: string;
+  description: string | null;
+  publisherUserId: string | null;
+  unitAmountCents: number | null;
+  stripePriceId: string | null;
+  updatedAt: string | null;
+};
+
+// Phase 4 Stream B — publisher-scoped pricing list (D11.10 / Q B-Q6 ownership
+// check). When the caller is a PUBLISHER, only books where
+// `publisher_user_id = caller.id` are returned. ADMIN sees every book in the
+// system. Defense-in-depth: this filter is also re-applied at the
+// /api/pricing POST handler so a tampered client cannot operate on a book it
+// doesn't own.
+export async function getPricingBooks(user: { id: string; role: Role }): Promise<PricingBookRow[]> {
+  const where: Prisma.BookWhereInput =
+    user.role === Role.ADMIN ? {} : { publisherUserId: user.id };
+
+  const books = await prisma.book.findMany({
+    where,
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      domain: true,
+      description: true,
+      publisherUserId: true,
+      prices: {
+        where: { currency: "USD" },
+        select: { unitAmountCents: true, stripePriceId: true, updatedAt: true },
+        take: 1,
+      },
+    },
+    orderBy: { title: "asc" },
+  });
+
+  return books.map((b) => ({
+    id: b.id,
+    title: b.title,
+    slug: b.slug,
+    domain: b.domain,
+    description: b.description,
+    publisherUserId: b.publisherUserId,
+    unitAmountCents: b.prices[0]?.unitAmountCents ?? null,
+    stripePriceId: b.prices[0]?.stripePriceId ?? null,
+    updatedAt: b.prices[0]?.updatedAt?.toISOString() ?? null,
+  }));
 }

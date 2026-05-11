@@ -588,3 +588,141 @@ UPDATE "access_grants" SET "revoked_at" = NOW()
 Run via psql in a single transaction (`BEGIN; … COMMIT;`) so a mid-step failure doesn't leave Zach's books partially assigned. Document the reassignment in a dated note appended to this runbook section.
 
 ---
+
+## Stream B — new book published with Stripe Product/Price success but local TX failure (CC-9 partial-failure recovery)
+
+Stream B's `POST /api/books/new` is Stripe-first per [D11.7](./phase-4-decisions.md#d117--stream-bs-new-book-post-stripe-first--manual-reconcile-logged-here-for-visibility) (and [CC-9](../../AI-Agents/phase-4-design.md) in the design doc). The handler creates a Stripe Product, then a Stripe Price, THEN opens a `prisma.$transaction` that inserts Book + BookVersion + BookPrice + AccessGrant. If the local transaction fails (constraint violation, transient DB issue, etc.) AFTER Stripe succeeded, the request returns 500 with the orphan Stripe IDs surfaced in the JSON body and a copy of this runbook reference. The publisher sees an in-form error message; the orphan Stripe Product + Price persist in Stripe but reference a `book_id` UUID that doesn't exist locally.
+
+### Symptoms
+
+- The publisher reports "Publishing failed" but they CAN sign in and the book is NOT in their /dashboard/library row set.
+- `pm2 logs bkstr-web` contains a line shaped: `[books/new] Local TX failed AFTER Stripe Product+Price created. ORPHAN Stripe IDs: product=prod_… price=price_…. metadata.book_slug=<slug>.`
+- The JSON response that came back to the form carries `orphanStripeProductId` and `orphanStripePriceId` fields.
+
+### Step 1 — Identify the orphan in Stripe
+
+The orphan Stripe Product carries `metadata.book_slug = <slug>` (the slug the publisher attempted to use). Either:
+
+- **From the pm2 log line:** read the `product=prod_…` and `price=price_…` values directly.
+- **From Stripe Dashboard search:** Dashboard → Products → search filter `metadata['book_slug']:'<slug>'`. The orphan will be the only Product with that slug AND no corresponding local Book row.
+- **From CLI:** `stripe products search --query "metadata['book_slug']:'<slug>'"`.
+
+Cross-check against the local DB to confirm the orphan is truly orphaned:
+
+```sql
+SELECT b.id, b.slug, bp.stripe_price_id
+  FROM books b
+  LEFT JOIN book_prices bp ON bp.book_id = b.id AND bp.currency = 'USD'
+ WHERE b.slug = '<slug>';
+```
+
+Expected: zero rows. If you see one row, the local TX actually succeeded — the orphan is NOT orphaned; do NOT delete. Investigate why the response surfaced an orphan claim (likely a transient error AFTER the TX committed; the row is fine to use as-is).
+
+### Step 2 — Decide: retry vs delete
+
+Two recovery paths, picked by the operator based on whether the publisher still wants this book at this slug:
+
+**Path A — Publisher retries the form (preferred).** The slug-collision pre-check in `POST /api/books/new` only consults the LOCAL DB, not Stripe. So a retry will hit step 5 (slug uniqueness), find no local row, and continue. The Stripe Product creation at step 7 creates a SECOND orphan with the same `metadata.book_slug` — Stripe permits this. Result: two Stripe Products with the same `book_slug` metadata, one orphan + one linked to the new local Book. Operator deletes the orphan via Step 3 below. Path A is the canonical recovery; the publisher does not need to know about the orphan.
+
+> NOTE: a future hardening pass could change step 7 to search Stripe by `metadata.book_slug` and reuse an orphan Product if one exists. Not done today — D11.7's "manual reconcile is fine at publisher-write volume" trade-off.
+
+**Path B — Publisher abandons the book.** Operator deletes the orphan Product via Step 3 below. The slug becomes free in Stripe (no `metadata.book_slug` constraint blocks reuse).
+
+### Step 3 — Delete the orphan Stripe Product
+
+Stripe Prices are NOT deletable (immutable per D9.7). Stripe Products are deletable only if no active Prices exist on them. So the operator must first archive the Price, then delete the Product.
+
+Dashboard path:
+
+1. Dashboard → Products → click the orphan Product.
+2. The Prices tab → archive the Price (Stripe permits archiving even with no charges).
+3. Back on the Product → Archive Product (or Delete if Stripe shows the option after the Price archive).
+
+CLI path:
+
+```bash
+stripe prices update <price_id> --active=false
+stripe products delete <product_id>
+```
+
+If Stripe rejects the Product delete with "active prices exist," that's the archive step missing — re-run the price update with `--active=false` and retry the product delete. Stripe permits hard-delete only on Products with zero active Prices.
+
+### Step 4 — When NOT to delete
+
+- **The local TX succeeded.** Step 1's SQL check found a row. Leave Stripe alone; the orphan claim was spurious.
+- **The Product has other Prices not tied to the failed attempt.** Unlikely with Stream B's flow (each create makes a fresh Product), but worth checking the Prices list — if there are multiple, only archive the one whose `metadata.book_slug` matches the failed slug AND whose `created` timestamp is close to the failure window.
+- **You're not sure.** Better to leave the orphan than to delete a Product a buyer's Checkout might still reference. Stripe orphan Products are invisible to buyers (nothing links to them) and have no operational cost beyond Dashboard noise.
+
+### Audit trail
+
+Append a dated note to this runbook section with the orphan IDs and the resolution path taken. Stream B's stakeholder review uses this trail to calibrate whether the "best-effort + manual reconcile" trade-off (D11.7) needs to escalate to a saga or outbox pattern.
+
+---
+
+## Stream B — publisher cannot see their books in /dashboard/pricing
+
+Stream B's `/dashboard/pricing` filters by `book.publisher_user_id = session.user.id` when the caller's role is PUBLISHER (see `getPricingBooks` in `src/lib/dashboard/queries.ts`). If a publisher reports "I don't see any of my books on the Pricing tab," the filter is the suspect. ADMIN sees every book; SUBSCRIBER is redirected before reaching the page.
+
+### Step 1 — Confirm role
+
+```bash
+psql "$DATABASE_URL" -c "SELECT id, email, role FROM users WHERE email = '<publisher-email>';"
+```
+
+Expected: one row, `role='PUBLISHER'`. If `role='SUBSCRIBER'`, the page redirects to `/dashboard` — the publisher reports it as "the link doesn't work." Fix: stage the email in `/etc/bkstr/roles.env` and ask the user to sign in again (D11.5 / D11.11 — see the Roles env file runbook above).
+
+### Step 2 — Confirm publisher_user_id on the missing book(s)
+
+```bash
+psql "$DATABASE_URL" -c "SELECT id, slug, title, publisher_user_id FROM books WHERE slug = '<slug>';"
+```
+
+Two failure modes:
+
+- **`publisher_user_id` is NULL.** The book has not been attributed to any publisher. Either Stream A's backfill didn't run for this book (rare; the migration's DO block scans every existing row) OR the book was created outside Stream B's `POST /api/books/new` (e.g. `npm run import-book`, which does NOT set `publisher_user_id`). Fix: assign manually.
+
+  ```bash
+  psql "$DATABASE_URL" -c "UPDATE books SET publisher_user_id = (SELECT id FROM users WHERE email = '<publisher-email>') WHERE slug = '<slug>';"
+  ```
+
+  After the UPDATE, also seed the matching `PUBLISHER_OWN` grant so the publisher can read their own book through the (eventual) `ENFORCE_BOOK_ACCESS` enforcement path:
+
+  ```bash
+  psql "$DATABASE_URL" <<'SQL'
+  INSERT INTO "access_grants" ("id", "subscriber_id", "book_id", "source", "granted_at")
+  SELECT gen_random_uuid(), s.id, b.id, 'PUBLISHER_OWN'::"GrantSource", CURRENT_TIMESTAMP
+    FROM "books" b
+    JOIN "subscribers" s ON s.user_id = b.publisher_user_id
+   WHERE b.slug = '<slug>'
+   ON CONFLICT ("subscriber_id", "book_id", "source") DO NOTHING;
+  SQL
+  ```
+
+- **`publisher_user_id` is non-NULL but belongs to a different user.** Mis-attribution. Either the book was created by a different publisher, or Stream A's backfill picked up the wrong owner. Fix: same `UPDATE books SET publisher_user_id = …` as above. Then revoke the prior owner's stale `PUBLISHER_OWN` grant (audit trail preserved per D9.6's soft-revoke convention; do not hard-delete):
+
+  ```bash
+  psql "$DATABASE_URL" <<'SQL'
+  UPDATE "access_grants"
+     SET "revoked_at" = NOW()
+   WHERE source = 'PUBLISHER_OWN'
+     AND book_id = (SELECT id FROM books WHERE slug = '<slug>')
+     AND subscriber_id = (SELECT s.id FROM subscribers s JOIN users u ON u.id = s.user_id WHERE u.email = '<prior-owner-email>');
+  SQL
+  ```
+
+  Then INSERT a fresh `PUBLISHER_OWN` grant for the new owner (same SQL as the NULL branch above).
+
+### Step 3 — Confirm the publisher's signed-in user.id matches
+
+```bash
+psql "$DATABASE_URL" -c "SELECT u.id, u.email FROM users u WHERE u.id = (SELECT publisher_user_id FROM books WHERE slug = '<slug>');"
+```
+
+If the email returned matches the publisher who reported "I can't see my book," the fix has landed. Ask the publisher to refresh `/dashboard/pricing`; the book should now appear in the list.
+
+### Step 4 — If the symptom persists
+
+- Did the publisher sign out + back in since the role was changed? Database-strategy sessions refetch the user row every request so this should not be required, but if `session.user.role` looks stale in the page render (verify by checking pm2 logs for the role hydration line), a sign-out + back in fixes it.
+- Is there a CDN / proxy cache between the publisher and pm2? `/dashboard/pricing` is `export const dynamic = "force-dynamic"` so should never be cached, but a misconfigured intermediary could. Ask the publisher to hard-refresh (Ctrl+Shift+R) before assuming the SQL fix didn't take.
+
+---
