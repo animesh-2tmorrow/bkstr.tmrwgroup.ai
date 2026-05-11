@@ -1,9 +1,15 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import type { BookWithMetrics, BookAccessState } from "@/lib/dashboard/queries";
-import { formatUsdCents } from "@/lib/format/currency";
+import { AccessCell } from "@/components/dashboard/access-cell";
+
+// Phase 4 Stream C (CC-12 / D11.12) — the Buy / Granted / Not-for-sale
+// rendering moved to <AccessCell /> so the Library table renders the same
+// states identically. The per-row "View fetches" link and the agent-fleet
+// columns stay here; Active Books is observability-of-fleet, not
+// consumption-of-content. The Library route turns on showActions to surface
+// View + Download links inline.
 
 function relativeTime(d: Date | null): string {
   if (!d) return "Never";
@@ -25,28 +31,6 @@ export function BooksTable({
   // a neutral fallback). Computed via getBookAccessStates.
   accessByBook?: Map<string, BookAccessState>;
 }) {
-  const [buyingBookId, setBuyingBookId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleBuy(bookId: string) {
-    setError(null);
-    setBuyingBookId(bookId);
-    try {
-      const res = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ book_id: bookId }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      if (!body.url) throw new Error("Checkout response missing url");
-      window.location.href = body.url;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start checkout");
-      setBuyingBookId(null);
-    }
-  }
-
   if (books.length === 0) {
     return (
       <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-8 text-center text-gray-500">
@@ -57,11 +41,6 @@ export function BooksTable({
 
   return (
     <div>
-      {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3 rounded-lg">
-          {error}
-        </div>
-      )}
       <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm overflow-hidden">
         <table className="w-full text-left text-sm">
           <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
@@ -97,25 +76,7 @@ export function BooksTable({
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    {access?.state === "granted" ? (
-                      <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 px-2 py-1 rounded text-xs font-bold">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                        Access granted
-                      </span>
-                    ) : access?.state === "for_sale" && access.unitAmountCents !== null ? (
-                      <button
-                        type="button"
-                        onClick={() => handleBuy(b.id)}
-                        disabled={buyingBookId === b.id}
-                        className="inline-flex items-center bg-black text-[#FAF6EC] px-3 py-1.5 rounded text-xs font-bold hover:bg-black shadow-sm disabled:opacity-50"
-                      >
-                        {buyingBookId === b.id
-                          ? "Loading…"
-                          : `Buy — ${formatUsdCents(access.unitAmountCents)}`}
-                      </button>
-                    ) : (
-                      <span className="text-xs text-gray-400 italic">Not for sale</span>
-                    )}
+                    <AccessCell bookId={b.id} access={access} />
                   </td>
                   <td className="px-6 py-4 text-right">
                     <Link

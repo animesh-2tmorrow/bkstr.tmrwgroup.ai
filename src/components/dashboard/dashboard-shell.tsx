@@ -4,6 +4,7 @@ import { SignOutLink } from "@/components/auth/sign-out-link";
 
 export type DashboardNavKey =
   | "books"
+  | "library"
   | "api-keys"
   | "fetch-logs"
   | "pricing"
@@ -34,6 +35,7 @@ const NAV_ITEMS: ReadonlyArray<{
   publisherOrAdmin?: boolean;
 }> = [
   { key: "books", href: "/dashboard", label: "Active Books" },
+  { key: "library", href: "/dashboard/library", label: "Library" },
   { key: "api-keys", href: "/dashboard/api-keys", label: "API Keys" },
   { key: "fetch-logs", href: "/dashboard/fetch-logs", label: "Fetch Logs" },
   { key: "pricing", href: "/dashboard/pricing", label: "Pricing", publisherOrAdmin: true },

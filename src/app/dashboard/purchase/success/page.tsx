@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { ApiInstructionsBlock } from "@/components/dashboard/api-instructions-block";
 
 export const metadata = {
   title: "Payment received | bkstr",
@@ -31,26 +32,30 @@ export default async function PurchaseSuccessPage({
 
   const subscriber = await prisma.subscriber.findFirst({
     where: { user: { email: session.user.email } },
-    select: { companyName: true },
+    select: { id: true, companyName: true },
   });
   const companyName = subscriber?.companyName ?? "Personal";
   const userEmail = session.user.email;
   const initial = (session.user.name?.[0] ?? userEmail[0] ?? "?").toUpperCase();
 
+  let bookId: string | null = null;
   let bookTitle: string | null = null;
+  let bookSlug: string | null = null;
   let amountTotalCents: number | null = null;
   let stripeError: string | null = null;
   if (sessionId) {
     try {
       const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId);
-      const bookId = checkoutSession.metadata?.book_id;
+      const metaBookId = checkoutSession.metadata?.book_id;
       amountTotalCents = checkoutSession.amount_total ?? null;
-      if (bookId) {
+      if (metaBookId) {
         const book = await prisma.book.findUnique({
-          where: { id: bookId },
-          select: { title: true },
+          where: { id: metaBookId },
+          select: { id: true, title: true, slug: true },
         });
+        bookId = book?.id ?? null;
         bookTitle = book?.title ?? null;
+        bookSlug = book?.slug ?? null;
       }
     } catch (err) {
       stripeError = err instanceof Error ? err.message : "Failed to retrieve session";
@@ -115,12 +120,23 @@ export default async function PurchaseSuccessPage({
           )}
           <p className="text-sm text-gray-600">
             Your access grant should be live within a few seconds.{" "}
-            <Link href="/dashboard" className="font-semibold underline hover:no-underline">
-              Refresh the dashboard
+            <Link href="/dashboard/library?filter=active" className="font-semibold underline hover:no-underline">
+              Open the Library
             </Link>{" "}
-            to see the &ldquo;Access granted&rdquo; pill on this book.
+            to see the &ldquo;Access granted&rdquo; pill and the View / Download
+            buttons on this book.
           </p>
         </div>
+
+        {subscriber && bookId && (
+          <div className="mt-6">
+            <ApiInstructionsBlock
+              subscriberId={subscriber.id}
+              bookId={bookId}
+              bookSlug={bookSlug ?? undefined}
+            />
+          </div>
+        )}
       </div>
     </DashboardShell>
   );

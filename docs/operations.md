@@ -726,3 +726,50 @@ If the email returned matches the publisher who reported "I can't see my book," 
 - Is there a CDN / proxy cache between the publisher and pm2? `/dashboard/pricing` is `export const dynamic = "force-dynamic"` so should never be cached, but a misconfigured intermediary could. Ask the publisher to hard-refresh (Ctrl+Shift+R) before assuming the SQL fix didn't take.
 
 ---
+
+## Stream C — Download rate-limit override
+
+The Download surface at `GET /api/books/[id]/download` rate-limits to 5/day/book/subscriber per CC-7 / D11.9 (fixed UTC day boundary). Count rows: `fetch_logs` where `source='dashboard_download'`, `subscriber_id = <S>`, the row's `book_version` belongs to book `<B>`, and `created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')`. Including 429 (`status='rate_limited'`) rows in the count is intentional — conservative-and-cheap; cf. the CC-7 note in `docs/phase-4-decisions.md`.
+
+If a legitimate user gets stuck under the cap (lost downloads to a flaky network, working through a re-issue, etc.), delete today's `dashboard_download` rows for the (subscriber, book) tuple to reset their quota without touching the agent-fetch history:
+
+```sql
+-- Substitute <S> and <B> with the subscriber + book UUIDs.
+DELETE FROM "fetch_logs"
+ WHERE source = 'dashboard_download'
+   AND subscriber_id = '<S>'
+   AND book_version_id IN (SELECT id FROM book_versions WHERE book_id = '<B>')
+   AND created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC');
+```
+
+Prefer DELETE over UPDATE-status — the rate-limit count is `SELECT COUNT(*) … WHERE source='dashboard_download'` regardless of `status`. The deleted rows lose their audit trace; if the override is granted under operator review, paste the deleted-row count + tuple into the dated note for this section. The user gets their next download immediately; the cap resets normally at 00:00 UTC tomorrow.
+
+---
+
+## Stream C — Download leak forensics
+
+The Download surface prepends an HTML-comment watermark to every served file (D11.4 cross-ref / #66 implementation notes):
+
+```
+<!-- bkstr: subscriber=<uuid> book=<uuid> issued=<iso8601> -->
+```
+
+Given a leaked .md file, the operator can re-key it to a specific download event by reading the three watermark fields and querying `fetch_logs`:
+
+```sql
+-- Substitute <S>, <B>, and the issued timestamp from the watermark line.
+SELECT id, subscriber_id, book_version_id, status, latency_ms, created_at
+  FROM fetch_logs
+ WHERE source = 'dashboard_download'
+   AND subscriber_id = '<S>'
+   AND book_version_id IN (SELECT id FROM book_versions WHERE book_id = '<B>')
+   AND created_at = '<issued-iso8601>';
+```
+
+Caveats:
+
+- The `created_at` precision in `fetch_logs` is `timestamptz(6)` (microsecond) but `Date.prototype.toISOString()` emits millisecond precision; the equality match is exact at ms but the DB row may carry trailing-zero microseconds. If exact-equality misses, widen to `>= <ts> AND < <ts> + INTERVAL '1 millisecond'`.
+- If `fetch_logs` retention sweeps land later (`#19`), the forensics window narrows to the retained period. Pull the row sooner rather than later.
+- The watermark is regenerated on every download — re-downloading a book produces a fresh `issued` stamp, which is how multiple downloads disambiguate.
+
+---

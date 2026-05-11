@@ -267,3 +267,56 @@ export async function getPricingBooks(user: { id: string; role: Role }): Promise
     updatedAt: b.prices[0]?.updatedAt?.toISOString() ?? null,
   }));
 }
+
+// Phase 4 Stream C — Library route data shape. Distinct from
+// getBooksWithMetrics() because the Library doesn't want fetch metrics
+// (Total fetches / 30d / Active agents) cluttering the row — it wants
+// description, publisher attribution, and price. Filter ACTIVE only so
+// DRAFT/ARCHIVED books don't surface to buyers (Q C-6).
+//
+// Publisher-name attribution prefers the per-user attribution
+// (book.publisherUser.name) when present (Phase 4 Stream A's
+// publisher_user_id is staged-NULL for the existing 5 seed books today;
+// see #68 + D11.10), falling back to the Publisher tenant name otherwise.
+// No pagination: 5 books today, ~25 after the next ~5 publishers onboard.
+// TODO(follow-up #69): add cursor-pagination when the row count approaches
+// ~50.
+export type LibraryBook = {
+  id: string;
+  title: string;
+  slug: string;
+  domain: string;
+  description: string | null;
+  publisherName: string;
+};
+
+export async function getBooksForLibrary(): Promise<LibraryBook[]> {
+  const rows = await prisma.book.findMany({
+    where: { status: "ACTIVE" },
+    orderBy: { title: "asc" },
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      domain: true,
+      description: true,
+      publisher: { select: { name: true } },
+      publisherUser: { select: { name: true } },
+    },
+  });
+  return rows.map((b) => ({
+    id: b.id,
+    title: b.title,
+    slug: b.slug,
+    domain: b.domain,
+    description: b.description,
+    // Per-user attribution wins when present; tenant Publisher name is the
+    // staged-NULL fallback. Edge case: publisherUser.name itself may be NULL
+    // on a Google account without a profile name — collapse to the tenant
+    // name in that case too.
+    publisherName:
+      (b.publisherUser?.name && b.publisherUser.name.trim().length > 0
+        ? b.publisherUser.name
+        : null) ?? b.publisher.name,
+  }));
+}
