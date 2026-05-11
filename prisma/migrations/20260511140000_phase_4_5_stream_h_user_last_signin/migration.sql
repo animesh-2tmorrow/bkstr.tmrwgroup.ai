@@ -1,0 +1,60 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Phase 4.5 Stream H — users.last_signin_at column
+--
+-- Per docs/phase-4.5-decisions.md D12.3 — adds a per-user "most recent
+-- signin timestamp" column. Written by src/lib/auth/index.ts's
+-- events.signIn + events.createUser hooks (one UPDATE per signin); read
+-- by Stream E's /dashboard/admin/users surface for the "Last signin"
+-- column + sort.
+--
+-- The column is NULLABLE. Existing user rows have no historical signin
+-- time at deploy day:
+--   - sessions table has no created_at (verified at
+--     prisma/migrations/20260508120000_add_nextauth_tables/migration.sql
+--     :36-43 — only id, session_token, user_id, expires columns exist;
+--     NextAuth's PrismaAdapter rotates expires on refresh and deletes
+--     the row at sign-out / expiry).
+--   - accounts.updated_at heuristic is unreliable (the PrismaAdapter
+--     does not bump it on signin; the Account row is written once at
+--     OAuth-link time and left alone — verified at
+--     prisma/migrations/20260508120000_add_nextauth_tables/migration.sql
+--     :18-33, no updated_at column).
+-- So no backfill is possible. Each user's first signin AFTER this
+-- migration populates the column. Stream E's UI renders NULL as "—"
+-- until populated.
+--
+-- The index is DESC because Stream E's admin users-list sorts most-
+-- recent-signin-first. Single-column index (not composite) — the
+-- read shape is a simple ORDER BY without a paired filter.
+--
+-- No FK, no enum, no backfill, no dependent data. Single ALTER TABLE
+-- + single CREATE INDEX.
+--
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ROLLBACK SQL (R1 mitigation per phase-4.5-design.md §9 — operator-
+-- applied if needed. The migration is fully transactional (Prisma's
+-- migrate deploy wraps each file in one TX per the rationale at
+-- prisma/migrations/20260511120000_phase_4_schema_part_1/migration.sql
+-- :16-19), so a mid-statement failure reverts everything atomically.
+-- This block exists for the case where the migration commits cleanly
+-- but a downstream issue forces a manual roll-back. Bring app DOWN
+-- first so no writer races a half-rolled-back schema. The companion
+-- auth-hook UPDATE lines in src/lib/auth/index.ts must be reverted in
+-- the same window — once the column is dropped, prisma.user.update({
+-- data: { lastSigninAt: ... } }) throws a Prisma "Unknown arg" error
+-- at request time.
+--
+--   DROP INDEX IF EXISTS "users_last_signin_at_idx";
+--   ALTER TABLE "users" DROP COLUMN IF EXISTS "last_signin_at";
+--
+-- Re-application after rollback is clean — no enum value adds, no
+-- backfill, no FK from / into the column. Standard path is operator-
+-- applied rollback (the two DROPs above) before re-running prisma
+-- migrate deploy.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- AlterTable: add the nullable timestamp column.
+ALTER TABLE "users" ADD COLUMN "last_signin_at" TIMESTAMPTZ(6);
+
+-- CreateIndex: DESC order for Stream E's "most-recent-signin-first" sort.
+CREATE INDEX "users_last_signin_at_idx" ON "users"("last_signin_at" DESC);

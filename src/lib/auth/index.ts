@@ -158,6 +158,19 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
         },
       });
+      // Phase 4.5 Stream H (D12.3) — stamp last_signin_at on first-signin.
+      // events.createUser fires BEFORE events.signIn for new users; this
+      // ensures the column is populated by the time the session callback
+      // hits. events.signIn will refresh it microseconds later (idempotent
+      // — last write wins with the slightly-later signIn timestamp). No
+      // audit-log write: signin is implicit-self-action, not an admin
+      // mutation per Stream G's writeAuditEntry contract (D12.4 / D12.7).
+      // Maps to scenarios B + C in this hook (any new user; env match
+      // promotes their role separately below).
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lastSigninAt: new Date() },
+      });
       // Phase 4 Stream D (D11.11) — apply env-driven role promotion on first
       // signin. NextAuth's adapter just inserted the user row with the schema
       // default (SUBSCRIBER per prisma/schema.prisma:131). If the email
@@ -168,8 +181,27 @@ export const authOptions: NextAuthOptions = {
       await syncRoleFromEnv(user.id, user.email, Role.SUBSCRIBER);
     },
     async signIn({ user, isNewUser }) {
+      // Phase 4.5 Stream H (D12.3) — stamp last_signin_at on every signin.
+      // Runs for BOTH new and returning users (the isNewUser guard below
+      // gates only the role re-sync, not the lastSigninAt write — for new
+      // users this UPDATE refreshes the timestamp createUser just wrote, to
+      // the slightly-later signIn moment; for returning users this is the
+      // sole write of the field for the session). The if (user.id) guard
+      // covers the Scenario D NextAuth-quirk where user.id is falsy (skip
+      // the UPDATE rather than crash; no harm — column stays at its
+      // previous value). No audit-log write per the createUser comment
+      // above (D12.4 / D12.7 contract: writeAuditEntry is for ADMIN
+      // mutations with a distinct actor; signin is implicit-self-action,
+      // not an admin action).
+      if (user.id) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { lastSigninAt: new Date() },
+        });
+      }
       // First-signin promotion is handled by createUser above (which fires
-      // BEFORE signIn for new users). Skip here to avoid a redundant DB read.
+      // BEFORE signIn for new users). Skip the role re-sync here to avoid a
+      // redundant DB read; the lastSigninAt UPDATE above still ran.
       if (isNewUser) return;
       if (!user.id || !user.email) return;
       // Phase 4 Stream D (D11.11) — re-sync role on every returning signin.

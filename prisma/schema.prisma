@@ -143,6 +143,23 @@ model User {
   name          String?
   image         String?
   role          Role      @default(SUBSCRIBER)
+  // Phase 4.5 Stream H (D12.3) — most-recent successful signin timestamp.
+  // Written by src/lib/auth/index.ts's events.signIn + events.createUser
+  // hooks on every signin (both new-user and returning-user paths).
+  //
+  // Nullable for the deploy-day initial state: existing user rows have no
+  // historical signin time to derive — the sessions table has no created_at
+  // column (verified at prisma/migrations/20260508120000_add_nextauth_tables
+  // /migration.sql:36-43 — sessions rows carry only id, session_token,
+  // user_id, expires) and the accounts.updated_at heuristic is unreliable
+  // (the PrismaAdapter does not bump it on signin). No backfill — existing
+  // 3 users are NULL until each one signs in after this column ships.
+  //
+  // Indexed (single-column DESC) so Stream E's `ORDER BY last_signin_at
+  // DESC NULLS LAST` admin users-list runs efficiently. Read consumer is
+  // Stream E's getAdminUsers() / /dashboard/admin/users surface; Stream E
+  // renders NULL as "—" until the column populates for each user.
+  lastSigninAt  DateTime? @map("last_signin_at") @db.Timestamptz(6)
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
@@ -162,6 +179,7 @@ model User {
   // deleted without an explicit operator migration.
   adminActions   AdminAction[] @relation("AdminActionActor")
 
+  @@index([lastSigninAt(sort: Desc)])
   @@map("users")
 }
 
