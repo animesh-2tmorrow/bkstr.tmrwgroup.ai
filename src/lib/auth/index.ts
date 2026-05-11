@@ -1,6 +1,7 @@
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import { getServerSession, type NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import { Role } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 
 if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
@@ -9,15 +10,94 @@ if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
 if (!process.env.NEXTAUTH_SECRET) {
   console.warn("[auth] NEXTAUTH_SECRET missing — sessions will not encrypt correctly.");
 }
-if (!process.env.ALLOWED_EMAIL_DOMAINS && !process.env.ALLOWED_EMAILS) {
-  console.warn("[auth] ALLOWED_EMAIL_DOMAINS and ALLOWED_EMAILS both missing — all Google sign-ins will be rejected (fail-closed) until at least one is set.");
+
+// Phase 4 Stream D (D11.5 / D11.6 / D11.11) — role-grant env vars replace the
+// Phase 2 fail-closed allowlist (D8.1–D8.4). The signin gate is gone (open
+// signup); roles are sourced from /etc/bkstr/roles.env via env-WARN-on-missing
+// (the same shape as oauth.env / stripe.env / aws.env per D9.4 / D10.3).
+//
+// Operator semantics: env presence promotes; env absence is a no-op. See the
+// monotonic-upward invariant block at syncRoleFromEnv below for why we never
+// demote from env state.
+if (!process.env.ADMIN_EMAILS) {
+  console.warn("[auth] ADMIN_EMAILS missing — no auto-promotion to ADMIN. Existing ADMINs unaffected.");
+}
+if (!process.env.PUBLISHER_EMAILS) {
+  console.warn("[auth] PUBLISHER_EMAILS missing — no auto-promotion to PUBLISHER. Existing PUBLISHERs unaffected.");
 }
 
+// parseList — comma-separated, trimmed, lowercased, empties dropped. Inherited
+// shape from the retired Phase 2 allowlist helper; now consumed only by
+// syncRoleFromEnv for ADMIN_EMAILS / PUBLISHER_EMAILS parsing.
 function parseList(raw: string | undefined): string[] {
   return (raw ?? "")
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
+}
+
+// Role ordering for the monotonic-upward max. Higher index = higher privilege.
+// Used only inside syncRoleFromEnv; not exported.
+const ROLE_RANK: Record<Role, number> = {
+  [Role.SUBSCRIBER]: 0,
+  [Role.PUBLISHER]: 1,
+  [Role.ADMIN]: 2,
+};
+
+/**
+ * syncRoleFromEnv — Phase 4 Stream D role-promotion hook (D11.11).
+ *
+ * HARD SAFETY INVARIANT — MONOTONIC-UPWARD PROMOTION:
+ *
+ *   1. Env presence PROMOTES: an email in ADMIN_EMAILS gets role=ADMIN;
+ *      an email in PUBLISHER_EMAILS (and NOT in ADMIN_EMAILS) gets PUBLISHER.
+ *   2. Env absence is a NO-OP: an unset or empty ADMIN_EMAILS does NOT demote
+ *      existing ADMINs; an unset or empty PUBLISHER_EMAILS does NOT demote
+ *      existing PUBLISHERs. The user keeps whatever role the DB row carries.
+ *   3. Email-not-in-env-but-env-set is a NO-OP: removing edward@… from
+ *      PUBLISHER_EMAILS does NOT demote Edward. Demotion is operator-explicit
+ *      only — `UPDATE users SET role='SUBSCRIBER' WHERE email='…'` via psql.
+ *   4. The check runs on EVERY signin (not just first signin). Operators who
+ *      add an email to PUBLISHER_EMAILS after the user has already signed in
+ *      get the promotion applied on the user's next visit.
+ *   5. Precedence: ADMIN_EMAILS wins over PUBLISHER_EMAILS if a single email
+ *      appears in both. ADMIN is strictly higher than PUBLISHER.
+ *   6. The effective new role is max(currentRole, envDerivedRole) by ROLE_RANK.
+ *      Never lowers.
+ *
+ * This is a LOAD-BEARING safety property protecting against operator-error
+ * regressions (e.g. typo in roles.env, file deleted during a deploy, env var
+ * unset on a fresh box). Future contributors MUST NOT weaken it without a
+ * matching D-numbered decision entry. See docs/phase-4-decisions.md D11.11
+ * and docs/operations.md "Roles env file" runbook.
+ */
+async function syncRoleFromEnv(userId: string, email: string, currentRole: Role): Promise<void> {
+  const normalized = email.toLowerCase().trim();
+  if (!normalized) return;
+
+  const adminEmails = parseList(process.env.ADMIN_EMAILS);
+  const publisherEmails = parseList(process.env.PUBLISHER_EMAILS);
+
+  // Env-derived role. ADMIN takes precedence over PUBLISHER (rule 5).
+  // Email-not-in-any-env-list resolves to null (rule 3 — no-op, NOT demote).
+  let envDerived: Role | null = null;
+  if (adminEmails.includes(normalized)) {
+    envDerived = Role.ADMIN;
+  } else if (publisherEmails.includes(normalized)) {
+    envDerived = Role.PUBLISHER;
+  }
+
+  // No env match → no-op. Existing role preserved (rule 3).
+  if (envDerived === null) return;
+
+  // Monotonic-upward (rule 6): only UPDATE if env-derived role is strictly higher.
+  if (ROLE_RANK[envDerived] <= ROLE_RANK[currentRole]) return;
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { role: envDerived },
+  });
+  console.info(`[auth] role promoted: ${normalized} ${currentRole} → ${envDerived}`);
 }
 
 export const authOptions: NextAuthOptions = {
@@ -33,23 +113,21 @@ export const authOptions: NextAuthOptions = {
     signIn: "/login",
   },
   callbacks: {
+    // Phase 4 Stream D (D11.5 / D11.11) — open signup. The Phase 2 OAuth
+    // domain/email allowlist gate (D8.1–D8.4) is removed. Any Google
+    // identity that completes OAuth is allowed in; role assignment is handled
+    // separately by syncRoleFromEnv via events.signIn / events.createUser.
+    //
+    // The email-presence sanity check is retained: NextAuth's contract is
+    // that a falsy email here indicates a malformed provider response, NOT a
+    // policy decision. Returning false aborts the flow before any DB write.
     async signIn({ user }) {
       const email = (user?.email ?? "").toLowerCase().trim();
       if (!email) {
         console.warn("[auth] signIn rejected: no email on user");
         return false;
       }
-      const allowedDomains = parseList(process.env.ALLOWED_EMAIL_DOMAINS);
-      const allowedEmails = parseList(process.env.ALLOWED_EMAILS);
-      if (allowedDomains.length === 0 && allowedEmails.length === 0) {
-        console.warn(`[auth] signIn rejected (allowlist empty, fail-closed): ${email}`);
-        return false;
-      }
-      if (allowedEmails.includes(email)) return true;
-      const domain = email.split("@")[1] ?? "";
-      if (allowedDomains.includes(domain)) return true;
-      console.warn(`[auth] signIn rejected (domain not allowed): ${email}`);
-      return false;
+      return true;
     },
     async session({ session, user }) {
       if (session.user && user) {
@@ -80,6 +158,36 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
         },
       });
+      // Phase 4 Stream D (D11.11) — apply env-driven role promotion on first
+      // signin. NextAuth's adapter just inserted the user row with the schema
+      // default (SUBSCRIBER per prisma/schema.prisma:131). If the email
+      // matches ADMIN_EMAILS / PUBLISHER_EMAILS, promote now so the very
+      // first session callback hydrates the correct role.
+      // Scenario B (Edward, first signin): default SUBSCRIBER → env match → PUBLISHER.
+      // Scenario C (fresh stranger): default SUBSCRIBER → no match → no-op.
+      await syncRoleFromEnv(user.id, user.email, Role.SUBSCRIBER);
+    },
+    async signIn({ user, isNewUser }) {
+      // First-signin promotion is handled by createUser above (which fires
+      // BEFORE signIn for new users). Skip here to avoid a redundant DB read.
+      if (isNewUser) return;
+      if (!user.id || !user.email) return;
+      // Phase 4 Stream D (D11.11) — re-sync role on every returning signin.
+      // Handles the "operator adds Edward to PUBLISHER_EMAILS AFTER Edward
+      // already has a SUBSCRIBER row" case — Edward gets PUBLISHER on his
+      // next visit without requiring manual SQL.
+      // The DB read here is the source of truth for currentRole; we do NOT
+      // trust the NextAuth user object's role field (it may be stale across
+      // adapter implementations). Scenarios mapped here:
+      //   Scenario A (animesh, returning): DB ADMIN → env ADMIN → max=ADMIN → no UPDATE.
+      //   Scenario D (edward post-removal): DB PUBLISHER → no env match → no-op (rule 3).
+      //   Scenario E (roles.env missing entirely): both env vars unset → envDerived=null → no-op.
+      const dbUser = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { role: true },
+      });
+      if (!dbUser) return;
+      await syncRoleFromEnv(user.id, user.email, dbUser.role);
     },
   },
 };

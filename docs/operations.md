@@ -343,3 +343,95 @@ Pricing is operator-managed via the dashboard at `/dashboard/pricing` (ADMIN-onl
 Old Price objects stay alive in Stripe — they're the audit trail per D9.7. Do not delete them via the Stripe Dashboard unless you're certain no historical Checkout Session, refund report, or analytics dashboard references them.
 
 For one-off pricing changes outside the dashboard (CSV import, scripted bulk update), the SQL path is `INSERT … ON CONFLICT (book_id, currency) DO UPDATE SET unit_amount_cents = …, stripe_price_id = …, updated_at = NOW();` — but the operator is responsible for separately creating the matching Stripe Price object so `stripe_price_id` points somewhere real. Easier and less error-prone to use the UI.
+
+---
+
+## Roles env file (`/etc/bkstr/roles.env`)
+
+Phase 4 Stream D replaces the Phase 2 OAuth allowlist (D8.1–D8.4) with an env-driven role-promotion model. Signup is open — any Google identity that completes OAuth gets a `users` row with the schema default `role = SUBSCRIBER`. Identities listed in `/etc/bkstr/roles.env` are auto-promoted to `ADMIN` or `PUBLISHER` on signin. See [D11.5](./phase-4-decisions.md#d115--pre-stage-etcbkstrrolesenv-before-stream-d-deploys), [D11.6](./phase-4-decisions.md#d116--role-grant-env-lives-in-its-own-file-etcbkstrrolesenv-not-folded-into-oauthenv), and [D11.11](./phase-4-decisions.md#d1111--monotonic-upward-role-promotion-env-absence-is-a-no-op-demotion-only-via-explicit-admin-sql) for the decision rationale.
+
+### File location, mode, owner
+
+- **Path:** `/etc/bkstr/roles.env`
+- **Mode:** `600`
+- **Owner:** `root:root`
+- **Sourced by:** `scripts/start.sh` at app start, via the per-service `[ -f /etc/bkstr/roles.env ] && source …` block above the D10.3 marker. Absence is tolerated and logged: `[start.sh] WARN: /etc/bkstr/roles.env not present — role auto-promotion disabled; existing roles preserved.`
+
+### Format
+
+`KEY=value`, one per line, no quotes, no `export` prefix, no shell expansion. Empty trailing lines fine. Two keys are read by the app today:
+
+```
+ADMIN_EMAILS=animesh@2tmorrow.com
+PUBLISHER_EMAILS=edward@tmrwgroup.ai,zach@tmrwgroup.ai
+```
+
+Both values are comma-separated, trimmed, lowercased by the app's `parseList` helper. Spacing around commas is tolerated. Capitalization in the file is tolerated (`Edward@TmrwGroup.AI` matches `edward@tmrwgroup.ai`).
+
+### Adding an email (promote a user to ADMIN or PUBLISHER)
+
+1. Open an SSM session to the EC2 box:
+   ```bash
+   aws ssm start-session --target i-0e25e88f90738b9dc
+   ```
+2. Edit the file:
+   ```bash
+   sudo nano /etc/bkstr/roles.env
+   ```
+   Add the new email to the appropriate comma-separated list. Preserve the `600 root:root` mode (sudo nano keeps it).
+3. Reload pm2 so the running process picks up the new env vars:
+   ```bash
+   sudo -u ubuntu -E pm2 reload bkstr-web --update-env
+   ```
+   The `--update-env` flag is critical — without it, pm2 reuses the env captured at the original `pm2 start` invocation and the new env vars never reach the Node process. (Mechanics match the [Stripe webhook setup runbook](#stripe-webhook-setup-runbook) above; same `pm2 reload --update-env` rationale.)
+4. **Verify the env reached the app:**
+   ```bash
+   pm2 logs bkstr-web --nostream | grep "Roles env sourced"
+   ```
+   Expect: `[start.sh] Roles env sourced from /etc/bkstr/roles.env (keys: ADMIN_EMAILS PUBLISHER_EMAILS )`.
+5. **Verify the promotion fires:** ask the target user to sign in (or sign out + back in if they have an existing session). On the signin event, `events.signIn` in `src/lib/auth/index.ts` calls `syncRoleFromEnv`, reads the env, and `UPDATE users SET role = …` for the matching email. Database-strategy sessions refetch the user row every request, so the promoted role takes effect on the next page load without requiring sign-out.
+6. Confirm via SQL:
+   ```sql
+   SELECT email, role FROM users WHERE email IN ('<the-email>');
+   ```
+
+### Removing an email (intent: revoke ADMIN or PUBLISHER)
+
+**Important:** removing an email from `/etc/bkstr/roles.env` does **NOT** demote the user. D11.11's monotonic-upward invariant is intentional — env absence is a no-op, never a demotion. Demotion is an explicit, two-step operator action:
+
+1. Remove the email from the relevant list in `/etc/bkstr/roles.env` (same edit + reload sequence as the "Adding" path above). This prevents the user from being **re-promoted** on a future signin.
+2. **AND** explicitly demote them in the DB:
+   ```bash
+   psql "$DATABASE_URL" -c "UPDATE users SET role = 'SUBSCRIBER' WHERE email = '<the-email>';"
+   ```
+   (If your `DATABASE_URL` carries `?schema=public`, strip that for raw psql per [follow-up #47](./follow-ups.md#47-docsoperationsmd-should-document-env-source-prerequisite--prisma-vs-psql-url-format).)
+
+If you only do step 1 (remove from env), nothing changes for the user — the role-sync hook sees no env match → no-op → the existing DB role is preserved. If you only do step 2 (SQL demote) without removing from env, the user is re-promoted on their very next signin. Both steps are required.
+
+### Why no demotion-via-env-removal? (D11.11 invariant)
+
+The symmetric design (env presence promotes, env removal demotes) was considered and rejected. The three failure modes that informed the decision:
+
+1. **ADMIN auto-demotion catastrophe.** A missing or empty `/etc/bkstr/roles.env` (fresh box, deleted file, typo in `start.sh`) under symmetric semantics would demote every ADMIN to SUBSCRIBER on their next signin, locking the operator out of pricing / moderation surfaces. The asymmetric design (env-presence-promotes, env-absence-is-no-op) makes this failure mode impossible by construction.
+2. **Silent publisher-attribution drift.** Removing a publisher's email under symmetric semantics flips their role but leaves their `book.publisher_user_id` attributions unchanged. The PUBLISHER now can't manage books they're still attributed to. Forcing the demotion to be explicit forces the operator to consider the attribution implications.
+3. **`pm2 reload` race.** A brief window during a reload where env vars are unset (between processes) could trigger a wave of demotions if a signin lands in that window. The asymmetric design eliminates the race.
+
+See [D11.11](./phase-4-decisions.md#d1111--monotonic-upward-role-promotion-env-absence-is-a-no-op-demotion-only-via-explicit-admin-sql) for full reasoning.
+
+### What if I want to bulk-promote a list of publishers?
+
+Edit `/etc/bkstr/roles.env`, append the new emails to `PUBLISHER_EMAILS`, reload pm2 (same sequence as "Adding"). All users in the new list will be promoted on their next individual signins — there is no bulk-resync command, by design (per-signin is the only re-sync trigger). If a publisher needs to be promoted *before* their next signin (e.g. they're already logged in and you don't want to wait), have them sign out + back in, or run the SQL UPDATE directly:
+
+```bash
+psql "$DATABASE_URL" -c "UPDATE users SET role = 'PUBLISHER' WHERE email = '<the-email>' AND role = 'SUBSCRIBER';"
+```
+
+(The `AND role = 'SUBSCRIBER'` guard preserves the monotonic-upward semantic — an existing ADMIN won't be downgraded by a fat-fingered manual UPDATE.)
+
+### Recovering from a misplaced demotion
+
+If `UPDATE users SET role='SUBSCRIBER'` was run against the wrong user, recovery is symmetric: `UPDATE users SET role='ADMIN' WHERE email='…'`. The role column carries no history; if you need an audit trail, the `webhook_events` table is unrelated and won't help here (this is a future hardening surface — operator-action audit log).
+
+If the only ADMIN was accidentally demoted: provided their email is still in `ADMIN_EMAILS` in `/etc/bkstr/roles.env`, they'll be re-promoted automatically on their next signin (D11.11 rule 1, env presence promotes). If their email isn't in the file, re-add it, reload pm2, ask them to sign in. If the file itself is missing, restore it (the contents are operator-stable across deploys; the canonical values are recorded in this runbook and in the deploy decision log).
+
+---

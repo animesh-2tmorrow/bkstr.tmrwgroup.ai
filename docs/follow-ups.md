@@ -472,7 +472,9 @@ The behavior question — should the agent endpoint use non-2xx status codes for
 
 **Severity:** low-to-medium — security invariant unaffected (D7.19 holds), but the route's runtime behavior diverges from its source code, which is a class of bug that quietly compounds. **Suggested resolution:** investigate before deciding. Step 1: capture full HTTP response headers from a fresh bogus-MODEL_ID curl (the test branch still exists at `origin/test/step-5-test-11-bogus-model`). Step 2: if runtime returns 200 despite source saying 502, fix the bug. Step 3: if after fix we want 200-everywhere as the new design, deliberate update to D5.7 + route code + documentation.
 
-### 56. Friendlier rejection UI for OAuth signin allowlist
+### 56. ~~Friendlier rejection UI for OAuth signin allowlist~~ **RESOLVED 2026-05-11**
+
+> Resolved by Phase 4 Stream D (open signup). The OAuth allowlist (D8.1–D8.4) is removed; there is no longer an `AccessDenied` path for the signin callback to route to. Any Google identity completing OAuth is allowed in with `role = SUBSCRIBER` by default; ADMIN / PUBLISHER promotion is env-driven (D11.5 / D11.6 / D11.11). Genuine OAuth-level failures (Google denying the user, consent screen errors) are surfaced by Google's own error page upstream of the redirect — out of bkstr's scope.
 
 The signin allowlist patch (D8.1–D8.4) returns `false` from `callbacks.signIn` for unallowed identities. NextAuth routes the rejected user to its default error page (`/api/auth/error?error=AccessDenied`) — accurate but bare. For internal-alpha gating this is acceptable; for any external-facing surface (or when Animesh shows the system to a stakeholder who happens to sign in with the wrong identity), a branded "this email isn't on the allowlist; contact <admin>" page would communicate the intent better.
 
@@ -484,7 +486,9 @@ The `animeshk604@gmail.com` subscriber row is from Animesh's Phase-1-era persona
 
 **Severity:** low (the gmail identity works fine today; deprecation is a clean-up choice not a security gap). **Suggested resolution:** Phase 3 decision. If deprecating: remove `animeshk604@gmail.com` from `ALLOWED_EMAILS` in `/etc/bkstr/oauth.env`, optionally soft-delete or hard-delete the existing User+Subscriber rows (cascade reaches accounts/sessions/api-keys). If keeping: tighten the per-email allowlist concept by defining a stable rule for which legacy identities are kept and why.
 
-### 58. DB-managed allowlist table (replaces env-var allowlist) once external onboarding is designed
+### 58. ~~DB-managed allowlist table (replaces env-var allowlist) once external onboarding is designed~~ **RESOLVED 2026-05-11** (obsolete — signup is open)
+
+> Resolved by Phase 4 Stream D (open signup). The allowlist concept retires entirely; there is no longer an allowlist to migrate from env vars to a DB table. The env-var pattern survives in a strictly narrower form: `ADMIN_EMAILS` / `PUBLISHER_EMAILS` in `/etc/bkstr/roles.env` are *role-grant* lists, not signup-gate lists, with monotonic-upward semantics (D11.11). If a future "private launch" surface ever needs gating back on, this entry reopens as the design starting point, but for Phase 4+ the open-signup posture is the lock.
 
 Today's allowlist (D8.3) uses two env vars in `/etc/bkstr/oauth.env`. That works for a small operator-managed list but doesn't scale to "the publisher admin can add stakeholders to the allowlist via the dashboard." A DB-managed table (e.g. `allowed_identities (email TEXT PRIMARY KEY, domain TEXT, granted_by UUID, granted_at TIMESTAMP, revoked_at TIMESTAMP)`) lets the allowlist live alongside subscribers and be edited via the dashboard.
 
@@ -496,7 +500,9 @@ GCP Console marks the consent screen as "External" (per #40's resolution context
 
 **Severity:** low at internal-alpha; medium pre-pilot. **Suggested resolution:** Phase 3 ops sweep. Configure consent-screen branding in GCP Console (~30 min). Decide whether to submit for Google verification (~3-7 day approval; required if expanding to non-Workspace external users at meaningful scale). For Workspace-only audience the verification submission may be unnecessary depending on the consent-screen scope choice.
 
-### 60. PII in pm2 logs — rejected emails logged in plaintext on signIn rejection
+### 60. ~~PII in pm2 logs — rejected emails logged in plaintext on signIn rejection~~ **PIVOTED 2026-05-11** (allowlist gone; role-promotion logs are the new surface)
+
+> Pivoted by Phase 4 Stream D. The original surface (allowlist rejection logs with plaintext email) is gone with the allowlist itself — there are no longer `[auth] signIn rejected (domain not allowed): …` log lines because there is no rejection path. The PII tension survives in a smaller, narrower form: `syncRoleFromEnv` in `src/lib/auth/index.ts` emits `[auth] role promoted: <email> SUBSCRIBER → PUBLISHER` on each promotion. Same plaintext-email-in-pm2-logs concern, materially smaller surface (only fires on the operator-curated subset in `/etc/bkstr/roles.env`, not on every rejection from the open internet). Re-file or close at operator discretion when production-grade log hygiene becomes a priority. The hash-and-log / redact-and-log resolutions below still apply if reopened.
 
 The signIn allowlist patch (D8.1–D8.4) emits `console.warn` on every rejection with the rejected email in plaintext (e.g. `[auth] signIn rejected (domain not allowed): someone@example.com`). At alpha-gate scale this is the right operational visibility — operators reading `pm2 logs bkstr-web` need to see which identities are bouncing off the gate to know whether the allowlist is too tight or whether legitimate users are being misrouted. At production-grade scale, plaintext emails in process logs become a data-handling concern: log shipping to a third-party aggregator, log retention policy, GDPR-style "right to erasure" requests against logs, etc.
 

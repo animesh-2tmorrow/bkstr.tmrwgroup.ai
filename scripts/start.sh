@@ -22,6 +22,12 @@ cd /var/www/bkstr
 # secrets not staged" failure mode is caught at deploy time, not at first use.
 set -a
 source /var/www/bkstr/.env
+if [ -f /etc/bkstr/roles.env ]; then
+  source /etc/bkstr/roles.env
+  echo "[start.sh] Roles env sourced from /etc/bkstr/roles.env (keys: $(grep -oE '^[A-Z_]+=' /etc/bkstr/roles.env | tr -d '=' | tr '\n' ' '))"
+else
+  echo "[start.sh] WARN: /etc/bkstr/roles.env not present — role auto-promotion disabled; existing roles preserved."
+fi
 # Phase 3 D9.4: per-service env files; add new ones above this comment
 if [ -f /etc/bkstr/aws.env ]; then
   source /etc/bkstr/aws.env
