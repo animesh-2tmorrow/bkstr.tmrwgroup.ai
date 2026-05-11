@@ -688,6 +688,41 @@ The status enum already includes `DRAFT` and `ACTIVE` (and `ARCHIVED`, which Pha
 
 **Severity:** medium. Reasonable expectation for any publisher who has used a CMS before — submit ≠ publish. Not blocking the reveal — the onboarding post should explicitly state "submission is immediately live; preview by signing into a second browser as a different user." **Suggested resolution:** Phase 5 or Phase 4.5-tail; ships cleanly alongside #73 since the edit-route and the publish-route share a lot of UI scaffolding (both are book-detail surfaces). Bundle into one mini-stream.
 
+### 75. Seed corpus is agent-skill files repurposed as books — rebrand or hide once real content lands
+
+Surfaced during the #71 description-backfill review (2026-05-11). The 5 seed books currently in production (`ci-diagnostics`, `docker-patterns`, `gif-grep`, `hermes-dogfood`, `node-connect`) are all **agent-skill files**, originally written for an internal Claude-skill or Cursor-rules-style consumer with directive-voice frontmatter ("Use when…", "Goal:…", "Iron law:…"). They're functional content — agents fetching them via `/api/agent/fetch` get useful instructions — but the *voice* is not buyer-facing book voice.
+
+Two specific quality concerns surfaced in the seed corpus:
+
+1. **Docker Patterns is entirely in Turkish.** The English `title='Docker Patterns'` masks that the H1, all H2 headings, every paragraph, and the original frontmatter `description` are Turkish. The #71 backfill description explicitly flags this ("A Turkish-language operational guide to…") so buyers see the language upfront in the Library, but the discoverability/searchability suffers — a buyer searching "docker" + reading the description still gets a Turkish book.
+2. **Hermes Dogfood is repo-internal tooling.** The frontmatter explicitly states: *"Repo-internal — does not apply to projects that consume vitest-agent as a dependency."* The #71 backfill description preserves this caveat ("Specific to the vitest-agent repo; not a general resource"), but the book is essentially private context that doesn't transfer to anyone who isn't a vitest-agent contributor. It being for sale in a public-buyer-flow marketplace is conceptually odd.
+
+The other 3 books (`ci-diagnostics`, `gif-grep`, `node-connect`) are agent-voice but not Turkish or repo-internal — they're transferable skill files that read as buyer-comprehensible playbooks. They survive the rebrand bar.
+
+Once Edward + Zach (or any external publisher) populate the catalog with genuine marketplace-shaped content, the seed corpus sitting alongside it will feel incoherent: real buyer-targeted books next to agent-skill files written for an internal audience. Three options when this becomes load-bearing:
+
+- **(a) Demote seed books to a separate surface.** A `/dashboard/internal-tools` route, or a `published_at` column with a `NULL → demo content` distinction. The buyer-facing Library filters them out; ADMIN can still see them for testing.
+- **(b) Keep but tag.** Add a `book.tag` or `book.category` column with values like `"demo"`, `"internal-tool"`, `"published"`. The Library renders a chip on each row so buyers know what they're buying.
+- **(c) Quietly delete (via `book.status='ARCHIVED'`).** Schema already supports this; Library's `status='ACTIVE'` filter excludes ARCHIVED rows automatically. Lowest-cost path if no one ever wants the seed books to be buyer-visible again. Audit-preserving — the rows still exist, just invisible.
+
+**Severity:** low; today the seed corpus is the entire catalog so coherence isn't a problem yet. **Trigger:** when the real-publisher catalog reaches ≥5 books, OR when bkstr starts looking like a real marketplace to anyone outside the operator team. **Suggested resolution:** option (c) is the cheapest and most reversible — operator UPDATEs the 5 (or 2 — Docker Patterns + Hermes Dogfood) seed books to `status='ARCHIVED'`, they vanish from Library, and existing PUBLISHER_OWN / SEED / PURCHASE grants on them are preserved as audit history. No schema change needed. If buyers complain about losing access (the 1 PURCHASE on Docker Patterns), they retain access via the grant — `requireBookAccess` doesn't filter on status. The Library just stops surfacing them.
+
+### 76. Library description truncation in table view — no full-text affordance
+
+Surfaced during the #71 description-render verification (2026-05-11). The Library Browse/All table truncates the `description` column at ~155–180 chars with a CSS line-clamp `…`, and there's no row-expand or hover-to-reveal affordance — buyers scanning the catalog only see the first sentence-and-a-bit. Two of the #71 backfilled descriptions illustrate the cost:
+
+- `hermes-dogfood` is 290 chars; the truncation hides the load-bearing "Specific to the vitest-agent repo; not a general resource" clause that's at the end. A buyer skimming sees only the runbook-shaped first sentence and may think they're buying a transferable resource.
+- `node-connect` is 209 chars; the truncation hides "fast heuristics for QR/setup-code, route, and auth issues" — the part that tells a buyer with the specific failure mode they're searching for that this book covers their case.
+
+Two paths to fix, mutually compatible:
+
+- **(a) Front-load discipline (soft guideline, retroactive).** Document in `docs/operations.md` (or a new `docs/publisher-conventions.md`) that book descriptions should front-load the most buyer-relevant info in the first ~150 chars. Apply retroactively by rewriting the 2 affected #71 descriptions. Cheap; doesn't fix the underlying UI gap but covers most buyers.
+- **(b) Full-text affordance in the UI (~half day of work).** Add a row-expand on click, or a hover-tooltip, or a "Read more" link that opens a modal. The Library table component (`src/components/dashboard/library-table.tsx`) is where this lives. Pairs cleanly with #66's View button — could even just route to the View surface, which renders the full markdown content. (The description column is metadata; the View button is the actual content. Once #66 is fully shipped — it is — clicking "View" is the cheapest existing path to "read the full pitch." Maybe the Library description box just gets a "View →" affordance per row and that's enough.)
+
+Either path benefits from a related publisher-side change: **the new-book form (`src/components/dashboard/new-book-form.tsx`) should show a live character count + a soft warning when description exceeds ~150 chars.** Publishers see what gets truncated in the Library before they hit Publish. Trivial change (~15 lines); useful regardless of (a) vs (b).
+
+**Severity:** low UX. Doesn't block anything; matters for marketplace polish once real publisher content lands and buyers start scanning catalog rows quickly. **Suggested resolution:** the form character-count warning ships immediately as a small Phase 4.5-tail patch (it's a 15-line addition with no schema or API surface). The full-text affordance pairs with **#69** (Library pagination) and **#70** (Active vs Library overlap) into a "Library UX polish" mini-stream — all three are cosmetic-but-cumulative improvements to the same surface, and shipping them together keeps the design coherent.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
