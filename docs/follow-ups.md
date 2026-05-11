@@ -581,6 +581,16 @@ Real-life test on 2026-05-11 showed Codex hallucinates shell-tool calls under si
 
 **Severity:** medium. Doesn't block anything currently live (Stream 3 marketplace and Phase 2 agent fetch both serve their designed use cases correctly). It informs the Phase 4 agent-side roadmap and the framing of #66 — the download surface is no longer just a buyer-UX-convenience, it's a hallucination-mitigation primitive too.
 
+### 68. Tighten `book.publisher_user_id` to NOT NULL after Phase 4 backfill completes
+
+Phase 4 Stream A adds `book.publisher_user_id` as a nullable FK to `users.id` and backfills all 5 existing seed books to Edward's user_id. The column lands nullable in the initial migration to dodge a chicken-and-egg: at migration time, Edward + Zach have not yet signed in (verified 2026-05-11: only `animesh@2tmorrow.com`, `animeshk604@gmail.com`, and `clawbot@tmrwgroup.ai` exist in `users`), so the FK can't reference rows that don't exist. The migration therefore ships nullable and the backfill UPDATE waits until Edward's first signin lands his user row.
+
+Once **every** book row has a non-null `publisher_user_id` — verified by `SELECT COUNT(*) FROM books WHERE publisher_user_id IS NULL;` returning 0 — tighten the column to NOT NULL via a follow-on migration. This restores the invariant that every published book has a known publisher, makes the join in `getBooksWithMetrics` cleaner (no null-handling branches), and locks out a class of "book exists without owner" bugs that would otherwise be reachable.
+
+Sequencing: this is Phase 4.5 work (after Stream A + Stream B both land and at least one operator-driven new-book upload via Stream B has been smoke-tested), not in Phase 4 itself. The tightening migration is one-line (`ALTER TABLE books ALTER COLUMN publisher_user_id SET NOT NULL`); the only operational concern is that any in-flight Stream B "new-book" requests during the migration must already have written a non-null value (which the form gate per Phase 4 design Q15+CC enforces).
+
+**Severity:** low; the nullable-FK state is correct-but-temporarily-loose. **Suggested resolution:** Phase 4.5 patch alongside the first wave of operator-driven publishing post-Phase-4 GA. Confirm via SQL that no nulls exist immediately before applying the ALTER.
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
