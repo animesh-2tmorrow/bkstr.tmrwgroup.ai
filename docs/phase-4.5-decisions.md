@@ -85,6 +85,12 @@ The interactive form is documented in the helper's JSDoc as the required call sh
 
 **Trade-off — audit-write-fails-blocks-mutation (R2):** If the audit INSERT itself fails (Postgres infra issue: out-of-disk, lock timeout, unique-constraint nonsense), the parent mutation rolls back too. Mitigations: schema-level NOT NULL on every required column per D12.7 (id, actor_user_id, action_type, target_type, target_id, created_at — no NULL-mismatch errors possible from helper-side inputs); no FK on `target_id` (polymorphic, so target-row deletion-mid-TX can't trigger an FK error); the actor FK has a valid target by construction (caller is the logged-in ADMIN; their User row exists). The remaining failure mode (Postgres infra) takes down the parent mutation too, which is the acceptable behavior — rather than silently losing the audit trail, the operator gets a 500 and the mutation didn't happen.
 
+**Clarification (added 2026-05-11 post-smoke-verification) — `admin_actions` records state transitions, NOT operator intent:** A handler that detects a no-op (e.g. Stream F's reassign-publisher target equals current publisher; a hypothetical revoke-already-revoked retry) short-circuits BEFORE invoking `writeAuditEntry` and returns `{ status: "unchanged" }` with HTTP 200. **No audit row is written for no-op clicks.** This was validated by the Phase 4.5 Test 1 smoke run: a self-reassign of Docker Patterns from animesh to animesh hit the short-circuit at `src/app/api/admin/books/[id]/reassign/route.ts` (the `if (book.publisherUserId === targetPublisherUserId)` branch inside the TX callback) and correctly produced zero `admin_actions` rows.
+
+The contract is: **one row in `admin_actions` ⇒ one observable state change in the system.** Counting `admin_actions` rows gives a true count of mutations; the table is the forensic record of what changed, not the operator's click history. If future requirements ever need forensics-of-intent (e.g. detecting suspicious operator click patterns on sensitive grants — "operator opened the revoke modal on 50 different SEED grants in 10 minutes without confirming any"), the right shape is a **separate** `admin_attempts` table or a request-level access log, NOT a relaxation of the `admin_actions` short-circuit semantics. Polluting `admin_actions` with no-op rows would break the "row count = change count" invariant that future read surfaces will rely on.
+
+The asymmetric implication for tests: a test plan that exercises a no-op-style mutation (e.g. self-reassign with no change of publisher) **should expect zero new audit rows**, not one. Updated D12.4 verification: every audit row must correspond to a DB write that visibly altered the target row.
+
 **Cross-references:** [D10.1](./phase-3-decisions.md#d101--webhook-idempotency-two-phase-received--processed-status-pattern) (`withIdempotency` — the contrasting OUTSIDE-TX shape and its rationale); D12.7 (the schema's NOT NULL discipline that makes the audit INSERT robust); D12.8 (helper module location); design doc §9 R2 (audit-fails-blocks-mutation failure analysis).
 
 ---
@@ -377,3 +383,29 @@ Examples:
 ---
 
 *Last updated: 2026-05-11. Stream G — audit log foundation. Streams H, E, F will add their own D12.x entries (D12.15+ may grow with stream-specific implementation decisions beyond Stream G's pre-log) in their own commits.*
+
+---
+
+## Phase 4.5 close-out (2026-05-11)
+
+Phase 4.5 is **code-side complete and smoke-verified.**
+
+**Shipped:**
+- Stream G — `admin_actions` table + `writeAuditEntry` helper (`37fd513`)
+- Stream H — `users.last_signin_at` column + auth-hook write (`409d9f2`)
+- Stream E — `/dashboard/admin/users` + role promote/demote with asymmetric modal + 5 self-protection gates (`591f0ac`)
+- Stream F — `/dashboard/admin/books` + reassign + `/dashboard/admin/grants` + soft-revoke (`40fb642`)
+- Hygiene: #72 prisma-client-import follow-up + #73/#74 publisher edit + DRAFT staging follow-ups (`3c852ca`, `7bc6653`)
+
+**Smoke verification (2026-05-11 ~10:21–10:30 UTC):**
+- **Stream F grant.revoke path — fully exercised end-to-end.** UI → handler → transactional UPDATE + `writeAuditEntry` → `admin_actions` row `c52c61d9-5cd4-42cc-bc3b-a700a0952005` with `before_state = {revoked_at: null}` → `after_state = {revoked_at: "2026-05-11T10:27:54.901Z"}`. SEED grant `af0dfbbc…` (Hermes Dogfood on `animeshk604@gmail.com`) soft-revoked correctly. Atomic, no log noise, no Prisma warnings, no unhandled rejections in the pm2 log capture window.
+- **Stream F book.reassign_publisher path — short-circuit verified, full path deferred.** Self-reassign of Docker Patterns from animesh to animesh hit the `if (book.publisherUserId === targetPublisherUserId)` short-circuit and correctly produced zero audit rows. The "row count = change count" invariant is preserved (see D12.4 clarification above). The full state-transition path will get its first real exercise post-Edward/Zach signin when their books are reassigned away from animesh via `/dashboard/admin/books`. This is acceptable — the short-circuit branch was tested; the mutation branch shares the same `writeAuditEntry` call shape as Stream F's grant.revoke (which IS verified end-to-end).
+- **Stream E role mutation — not exercised in this smoke window.** Will get its first real exercise post-Edward/Zach signin when they're promoted PUBLISHER. The handler shares the same `prisma.$transaction(async (tx) => …)` shape as Stream F's revoke (verified), so confidence is high.
+
+**Open at close-out:**
+- Edward + Zach onboarding post (next-step; pre-reveal).
+- The reassign + role-mutation full-path tests run themselves automatically as part of the Edward/Zach onboarding flow — first sign-in, role-promote-via-env, then book-reassignment-via-UI generates the audit trail.
+
+**Decision logs across the project at Phase 4.5 close:** D9.1–D9.7 (Phase 3 scope), D10.1–D10.4 (Phase 3 cross-cutting), D11.1–D11.13 (Phase 4 cross-cutting), **D12.1–D12.14 (Phase 4.5 cross-cutting)**. D12.4 carries the post-smoke clarification on state-transition-vs-intent semantics.
+
+**Follow-ups state:** through **#74**. Outstanding actionable items prioritized for Phase 5 candidate streams: #67 (MCP server), #68 (`publisher_user_id` NOT NULL tightening post-reassignment), #73 + #74 (publisher edit + DRAFT staging — pair into one mini-stream).
