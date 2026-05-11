@@ -625,7 +625,9 @@ Two viable directions:
 
 **Severity:** low; cosmetic UX. **Suggested resolution:** wait for live-traffic feedback. If buyers consistently land on Active Books trying to buy, formalize the distinction or add a redirect. If operators stop using Active Books in favor of Library, consider deprecating the agent-telemetry columns or folding them into Library as an optional row-expand. Either path is fast and reversible.
 
-### 71. Seed `book.description` for the 5 existing seed books
+### ~~71. Seed `book.description` for the 5 existing seed books~~
+
+**#71 RESOLVED (2026-05-11)** — 5 seed books backfilled with buyer-voice descriptions via direct SQL UPDATE inside one transaction. Docker Patterns flagged as Turkish content; Hermes Dogfood flagged as repo-internal. Re-runnable safely via the `AND description IS NULL` guard.
 
 Surfaced during Stream C live test (2026-05-11). `book.description` was added to the schema in Phase 4 Stream A (`prisma/schema.prisma:84`) as nullable TEXT. Stream B's `/dashboard/books/new` form populates it for new books, but the 5 pre-existing seed books (CI Diagnostics, Docker Patterns, GIF Grep, Hermes Dogfood, Node Connect) carry `description = NULL`. `/dashboard/library` renders these as `"—"` per the LibraryTable's NULL fallback — functionally clean but visually thin, since buyers landing on the Library see a row with title + price + publisher but no prose to disambiguate "what is this book about."
 
