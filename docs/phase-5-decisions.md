@@ -1,6 +1,8 @@
 # bkstr.tmrwgroup.ai — Phase 5 decisions (D13.x slot)
 
-Phase 5 opens with the in-product docs surface at `/dashboard/docs`. Decisions logged here are Phase-5-scoped; D9-D12 remain closed in their respective phase docs. Future Phase 5 streams append D13.3+ as they ship.
+> **DECISIONS-DOC CONVENTION CHANGE (2026-05-11):** Going forward (D14.x onwards), new decisions append to a single running `docs/decisions.md` file rather than per-phase files. Phase-specific files (`phase-3-decisions.md` through `phase-5-decisions.md`) remain as historical artifacts and are not consolidated. **This file (`phase-5-decisions.md`) is the last per-phase decisions doc.** Future D13.3+ entries (if Phase 5 adds more cross-cutting decisions) also land in `docs/decisions.md` — the per-phase split ends here, not at the next D-prefix bump.
+
+Phase 5 opens with the in-product docs surface at `/dashboard/docs`. Decisions logged here are Phase-5-scoped; D9-D12 remain closed in their respective phase docs.
 
 ## D13.1 — Route + nav: `/dashboard/docs`, visible to all signed-in users
 

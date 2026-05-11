@@ -733,6 +733,16 @@ Source material: the publisher onboarding doc (when written), the handover doc, 
 
 **Suggested resolution:** one writing pass against the four tiers. Match the buyer-voice that the seed-book descriptions established (#71); avoid the agent-skill-file directive voice (#75). Cross-reference operational runbooks in `docs/operations.md` rather than duplicating them.
 
+### 79. Add `npm test` step to CodeBuild buildspec before `npm run build`
+
+Surfaced during Phase 5 Stream A verification (2026-05-11). The new vitest test suite (`src/lib/docs/filter-by-role.test.ts`, 8 cases, ~900ms) runs locally pre-push but is **not gated in CI**. The CodeBuild buildspec runs `npm run build` after install but has no `npm test` step, so a test regression could theoretically land on main and reach production. The prod EC2 image strips devDeps (`vitest` not present) so we can't run tests post-deploy as a recovery check either.
+
+Adding a single `npm test` invocation between `npm install` and `npm run build` in the buildspec catches test failures before the build artifact is built. Test latency cost is negligible (~1 second for the current suite); the failure-prevention value is real once more tests land.
+
+**Severity:** low — tests pass today and the developer running pre-push checks is the de-facto gate. **Trigger:** when a test regression sneaks through, OR proactively as routine CI hardening before either external committers join or the test suite grows enough that "ran locally" becomes unreliable. **Suggested resolution:** one-line addition to `buildspec.yml` (or wherever CodeBuild's `build` phase is defined — confirm path at implementation time). Pair with a `npm install --include=dev` if the buildspec's install step uses `--omit=dev` (would need to verify; the deploy step strips devDeps separately).
+
+(Note: #78 is intentionally an unused slot — numbering jumped from #77 to #79 at operator request.)
+
 ---
 
 *Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
