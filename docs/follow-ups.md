@@ -963,6 +963,16 @@ Stream H.1 fixed the cell text body in `fetch-logs-table.tsx` (`relativeTime()` 
 
 **Severity:** low. **Trigger:** post-deploy audit re-check; if React #418 still fires on the fetch-logs surface, drop the tooltip or rewrite it ISO. **Suggested resolution:** replace with `title={r.createdAt.toISOString()}` (slightly less human-friendly but deterministic). If the tooltip is load-bearing UX, file a separate decision about which surface uses locale (the page text says no; the tooltip might be OK — the audit will tell us).
 
+### 105. Storefront badge labels — move to `books.domain` seed column long-term
+
+Stream H.2 introduces a slug → display-label mapping in `src/app/storefront/page.tsx` (`BADGE_BY_DOMAIN`): `ci-diagnostics` → "DevOps", `developer-marketing` → "Engineering Leadership", etc. The mapping is in component code rather than data because (a) the seed catalog is small (6 books) and the mapping is short; (b) updating the `books.domain` column directly would be a one-way migration with no rollback shortcut; (c) the in-code mapping was the smaller-diff option for shipping the visual match quickly.
+
+Long-term, two reasons the mapping should move to the column:
+- New books added through `/dashboard/books/new` carry whatever `domain` value the publisher types. If a publisher types `ci-diagnostics`, the badge renders "DevOps"; if they type `cidx-diagnostics` (typo), the badge falls back to humanized slug. The mapping is hidden discovery — publishers can't see which keywords produce which categories without reading the source.
+- The pricing-form table also shows domain values (currently raw slugs). If we ever want consistent labels across publisher-facing surfaces, the column has to hold the user-facing string, not the slug.
+
+**Severity:** low. **Trigger:** when (a) the catalog grows past ~15 books and the in-code mapping becomes unwieldy, or (b) a publisher reports confusion about which `domain` strings produce nice badges. **Suggested resolution:** add a non-destructive seed UPDATE to set `books.domain` to the higher-level category string (`UPDATE books SET domain = 'DevOps' WHERE slug = 'ci-diagnostics'`); drop the BADGE_BY_DOMAIN mapping; keep `domainColour()` + `humanDomain()` as styling helpers; add a select-box on `/dashboard/books/new` to pick from the canonical category list.
+
 ---
 
 *Last updated: 2026-05-12. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

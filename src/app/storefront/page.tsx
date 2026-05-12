@@ -5,20 +5,26 @@ import Link from "next/link";
 import Image from "next/image";
 import { useSession } from "next-auth/react";
 
-// Phase 5 Stream H.1 — polished storefront refining the Stream H first-pass.
-// Refinements over Stream H:
-//   - aspect-[4/3] cover tiles match the recommended 3:4 portrait ratio
-//     in new-book-form.tsx (publishers upload 600×800, storefront renders
-//     proportionally).
-//   - humanDomain() helper renders `developer-marketing` as "Developer
-//     Marketing" + uppercases known acronyms (CI / CD / API / AWS / TDD /
-//     QA / UI / UX / AI / ML) so badges read naturally.
-//   - Login redirect now carries `callbackUrl=/storefront` so the user
-//     returns to where they were after Google OAuth (vs landing on the
-//     dashboard and having to re-navigate).
-//   - "Already Owned" CTA gets a checkmark icon for visual reassurance.
-//   - Footer linkifies /about so the marketing landing (relocated from /)
-//     stays discoverable.
+// Phase 5 Stream H.2 (D15.10) — storefront redesign matching Manus's
+// reference screenshot. Card layout switches from VERTICAL (cover-top,
+// content-below) to HORIZONTAL (cover-left, content-right) so each book
+// shows like a physical shelf card: portrait cover beside its metadata.
+//
+// Other refinements from Manus's design vs Stream H.1's first cut:
+//   - Cover aspect changes from 4:3 landscape to 3:4 portrait (the S3
+//     PNGs are already portrait-rendered book mockups; this lets them
+//     display at their natural proportions).
+//   - Per-category domain badges with pastel backgrounds (slug →
+//     {label, colors} mapping; falls back to humanDomain() for any
+//     unknown slug). Long-term — see follow-up #105 — the seed
+//     books.domain column may move to the higher-level category labels
+//     directly so this mapping isn't load-bearing.
+//   - Header brand renders as one continuous bold italic line
+//     "bkstr.tmrwgroup.ai" instead of split styling.
+//   - CTA buttons use a dark navy (#1A2B4D) — matches the screenshot's
+//     "Sign up" + "Buy Now" buttons more faithfully than gray-900.
+//   - Grid breakpoints widen: 1 col mobile → 2 cols at md (768px) →
+//     3 cols at xl (1280px) so horizontal cards never feel cramped.
 
 interface BookWithPrice {
   id: string;
@@ -32,9 +38,9 @@ interface BookWithPrice {
   grantSource: string | null;
 }
 
-// Deterministic pastel background colour from a domain string — used by the
-// fallback tile when no cover image is uploaded. Hash → palette index, so
-// the same domain string always picks the same tile colour.
+// Deterministic pastel background for the fallback tile when a book has
+// no cover image. Hash → palette index; same domain always picks the same
+// colour so the tile is stable across renders.
 function domainColour(domain: string): string {
   const palette = [
     "#D4E4F7", "#D4F0E4", "#F7E4D4", "#EAD4F7",
@@ -47,8 +53,8 @@ function domainColour(domain: string): string {
   return palette[Math.abs(hash) % palette.length];
 }
 
-// Convert a slug/domain string to a human-readable label.
-// e.g. "ci-diagnostics" → "CI Diagnostics", "developer-marketing" → "Developer Marketing"
+// Humanize a slug-like domain string for fallback rendering.
+// e.g. "ci-diagnostics" → "CI Diagnostics".
 function humanDomain(domain: string): string {
   return domain
     .split(/[-_]/)
@@ -61,19 +67,45 @@ function humanDomain(domain: string): string {
     .join(" ");
 }
 
+// Slug → display badge mapping. The seed books.domain column stores
+// granular slugs (`ci-diagnostics`, `developer-marketing`, etc.); the
+// display surface groups them into higher-level categories (DevOps,
+// Engineering Leadership, etc.) per Manus's design. Per-category Tailwind
+// pastel pairs picked so each badge is legible on white card backgrounds.
+// Fallback: humanDomain() label on a neutral gray pill.
+//
+// Follow-up #105 tracks the option of moving these labels into the
+// books.domain column itself, retiring this mapping.
+const BADGE_BY_DOMAIN: Record<string, { label: string; bg: string; text: string }> = {
+  "ci-diagnostics":      { label: "DevOps",                  bg: "bg-blue-50",     text: "text-blue-700" },
+  "docker-patterns":     { label: "DevOps",                  bg: "bg-blue-50",     text: "text-blue-700" },
+  "developer-marketing": { label: "Engineering Leadership",  bg: "bg-orange-50",   text: "text-orange-700" },
+  "gifgrep":             { label: "Developer Tools",         bg: "bg-emerald-50",  text: "text-emerald-700" },
+  "dogfood":             { label: "Product Management",      bg: "bg-pink-50",     text: "text-pink-700" },
+  "node-connect":        { label: "Backend Development",     bg: "bg-indigo-50",   text: "text-indigo-700" },
+};
+
+function domainBadge(domain: string): { label: string; bg: string; text: string } {
+  return BADGE_BY_DOMAIN[domain] ?? {
+    label: humanDomain(domain),
+    bg: "bg-gray-50",
+    text: "text-gray-700",
+  };
+}
+
 function CoverImage({ book }: { book: BookWithPrice }) {
   const [imgError, setImgError] = useState(false);
 
   if (book.coverImageUrl && !imgError) {
     return (
-      <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden mb-5">
+      <div className="relative w-full aspect-[3/4] rounded-lg overflow-hidden">
         <Image
           src={book.coverImageUrl}
           alt={`${book.title} cover`}
           fill
           className="object-cover"
           onError={() => setImgError(true)}
-          sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+          sizes="160px"
         />
       </div>
     );
@@ -84,7 +116,7 @@ function CoverImage({ book }: { book: BookWithPrice }) {
   const bg = domainColour(book.domain);
   return (
     <div
-      className="w-full aspect-[4/3] rounded-xl mb-5 flex items-center justify-center"
+      className="w-full aspect-[3/4] rounded-lg flex items-center justify-center"
       style={{ backgroundColor: bg }}
     >
       <span className="text-5xl font-bold text-gray-500 opacity-50 select-none tracking-tighter">
@@ -152,15 +184,9 @@ export default function StorefrontPage() {
     <div className="min-h-screen flex flex-col bg-[#FAF6EC]">
       {/* ── Header ── */}
       <header className="px-8 py-5 flex justify-between items-center bg-[#FAF6EC]/90 backdrop-blur-sm sticky top-0 z-10 border-b border-[#E5DCC8]">
-        <Link href="/storefront" className="flex items-center gap-2 no-underline">
+        <Link href="/storefront" className="no-underline">
           <span className="text-2xl font-bold tracking-tighter serif italic text-gray-900">
-            bkstr
-          </span>
-          <span
-            className="text-gray-400 font-normal text-base"
-            style={{ fontFamily: "'Inter', sans-serif" }}
-          >
-            .tmrwgroup.ai
+            bkstr.tmrwgroup.ai
           </span>
         </Link>
 
@@ -186,7 +212,7 @@ export default function StorefrontPage() {
               </Link>
               <Link
                 href="/signup"
-                className="bg-gray-900 text-[#FAF6EC] px-5 py-2 rounded-md text-sm font-semibold hover:bg-black transition-colors"
+                className="bg-[#1A2B4D] text-[#FAF6EC] px-5 py-2 rounded-md text-sm font-semibold hover:bg-[#0F1B33] transition-colors"
               >
                 Sign up
               </Link>
@@ -224,70 +250,90 @@ export default function StorefrontPage() {
               <p className="text-gray-400 text-sm">No books available at this time.</p>
             </div>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {books.map((book) => (
-                <article
-                  key={book.id}
-                  className="bg-white border border-[#E5DCC8] rounded-2xl p-6 flex flex-col hover:shadow-md transition-shadow duration-200"
-                >
-                  {/* Cover Image or Placeholder Tile */}
-                  <CoverImage book={book} />
-
-                  {/* Domain Badge — human-readable */}
-                  <div className="mb-3">
-                    <span className="inline-block bg-[#EFE8D8] text-gray-600 text-[11px] font-semibold px-2.5 py-1 rounded-md tracking-wide">
-                      {humanDomain(book.domain)}
-                    </span>
-                  </div>
-
-                  {/* Title */}
-                  <h2 className="text-base font-bold text-gray-900 mb-2 leading-snug">
-                    {book.title}
-                  </h2>
-
-                  {/* Description */}
-                  <p className="text-sm text-gray-500 mb-5 flex-grow line-clamp-3 leading-relaxed">
-                    {book.description ?? "No description yet."}
-                  </p>
-
-                  {/* Price */}
-                  <div className="mb-4">
-                    <span className="text-2xl font-bold text-gray-900">
-                      {formatPrice(book.unitAmountCents)}
-                    </span>
-                    {book.unitAmountCents && (
-                      <span className="text-xs text-gray-400 ml-2">One-time purchase</span>
-                    )}
-                  </div>
-
-                  {/* CTA */}
-                  {book.state === "granted" ? (
-                    <div className="flex items-center justify-center gap-2 bg-[#EFE8D8] text-gray-600 px-4 py-3 rounded-xl text-sm font-semibold">
-                      <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Already Owned
+            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-8">
+              {books.map((book) => {
+                const badge = domainBadge(book.domain);
+                return (
+                  <article
+                    key={book.id}
+                    className="bg-white border border-[#E5DCC8] rounded-2xl p-5 flex gap-5 hover:shadow-md transition-shadow duration-200 h-full"
+                  >
+                    {/* Left: cover (3:4 portrait, fixed width) */}
+                    <div className="w-36 flex-shrink-0">
+                      <CoverImage book={book} />
                     </div>
-                  ) : book.state === "for_sale" ? (
-                    <button
-                      onClick={() => handleBuyNow(book.id)}
-                      disabled={purchasingBookId === book.id}
-                      className="w-full bg-gray-900 text-[#FAF6EC] px-4 py-3 rounded-xl font-bold hover:bg-black transition-colors disabled:opacity-50 text-sm tracking-wide"
-                    >
-                      {purchasingBookId === book.id
-                        ? "Processing…"
-                        : `Buy Now — ${formatPrice(book.unitAmountCents)}`}
-                    </button>
-                  ) : (
-                    <button
-                      disabled
-                      className="w-full bg-[#EFE8D8] text-gray-400 px-4 py-3 rounded-xl font-bold cursor-not-allowed text-sm"
-                    >
-                      Not Available
-                    </button>
-                  )}
-                </article>
-              ))}
+
+                    {/* Right: content */}
+                    <div className="flex-1 flex flex-col min-w-0">
+                      {/* Domain badge — per-category color */}
+                      <div className="mb-2">
+                        <span
+                          className={`inline-block ${badge.bg} ${badge.text} text-[11px] font-semibold px-2.5 py-1 rounded-full tracking-wide`}
+                        >
+                          {badge.label}
+                        </span>
+                      </div>
+
+                      {/* Title */}
+                      <h2 className="text-lg font-bold text-gray-900 mb-2 leading-snug">
+                        {book.title}
+                      </h2>
+
+                      {/* Description */}
+                      <p className="text-sm text-gray-500 mb-4 flex-grow line-clamp-3 leading-relaxed">
+                        {book.description ?? "No description yet."}
+                      </p>
+
+                      {/* Price */}
+                      <div className="mb-3">
+                        <span className="text-2xl font-bold text-gray-900">
+                          {formatPrice(book.unitAmountCents)}
+                        </span>
+                        {book.unitAmountCents && (
+                          <span className="text-xs text-gray-400 ml-2">One-time purchase</span>
+                        )}
+                      </div>
+
+                      {/* CTA */}
+                      {book.state === "granted" ? (
+                        <div className="flex items-center justify-center gap-2 bg-[#EFE8D8] text-gray-600 px-4 py-2.5 rounded-lg text-sm font-semibold">
+                          <svg
+                            className="w-4 h-4 text-green-600"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2.5}
+                              d="M5 13l4 4L19 7"
+                            />
+                          </svg>
+                          Already Owned
+                        </div>
+                      ) : book.state === "for_sale" ? (
+                        <button
+                          onClick={() => handleBuyNow(book.id)}
+                          disabled={purchasingBookId === book.id}
+                          className="w-full bg-[#1A2B4D] text-[#FAF6EC] px-4 py-2.5 rounded-lg font-bold hover:bg-[#0F1B33] transition-colors disabled:opacity-50 text-sm tracking-wide"
+                        >
+                          {purchasingBookId === book.id
+                            ? "Processing…"
+                            : `Buy Now — ${formatPrice(book.unitAmountCents)}`}
+                        </button>
+                      ) : (
+                        <button
+                          disabled
+                          className="w-full bg-[#EFE8D8] text-gray-400 px-4 py-2.5 rounded-lg font-bold cursor-not-allowed text-sm"
+                        >
+                          Not Available
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>
