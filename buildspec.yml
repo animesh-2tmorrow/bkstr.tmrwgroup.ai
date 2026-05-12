@@ -7,9 +7,16 @@ phases:
   install:
     runtime-versions:
       nodejs: 20
+      python: 3.11
     commands:
       - echo "Installing dependencies (including devDependencies) with npm ci..."
       - npm ci --include=dev
+      - echo "Installing Semgrep for SAST scanning..."
+      - pip install semgrep==1.162.0
+  pre_build:
+    commands:
+      - echo "Running SAST baseline + dependency audit (Stream D / D14.8-D14.10)..."
+      - npm run security:scan
   build:
     commands:
       - echo "Generating Prisma client..."

@@ -200,6 +200,7 @@ describe("runAgent", () => {
   // those tokens stripped before the message reaches the SSE stream.
   it("strips AKIA tokens from yielded error messages", async () => {
     behavior.throwOnCreate = new Error(
+      // nosemgrep: detected-aws-access-key-id-value -- test fixture: deliberate fake AKIA pattern feeding the error-sanitization regression test per D14.4 (assistant agent loop sanitizes secrets out of error messages before persistence). Removing the literal removes the test's reason to exist.
       "AWS credentials missing AKIA1234567890ABCDEF — region us-east-1",
     );
 
@@ -214,6 +215,7 @@ describe("runAgent", () => {
     const errorEvent = events.find((e) => e.type === "error");
     expect(errorEvent).toBeDefined();
     const message = (errorEvent as { type: "error"; message: string }).message;
+    // nosemgrep: detected-aws-access-key-id-value -- test fixture: deliberate fake AKIA pattern feeding the error-sanitization regression test per D14.4 (assistant agent loop sanitizes secrets out of error messages before persistence). Removing the literal removes the test's reason to exist.
     expect(message).not.toContain("AKIA1234567890ABCDEF");
     expect(message).toContain("[REDACTED]");
   });

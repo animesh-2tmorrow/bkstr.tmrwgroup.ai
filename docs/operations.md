@@ -1177,4 +1177,80 @@ sudo -u ubuntu pm2 logs bkstr-web --lines 50 | grep -i assistant
 # Or after restart (cold path): the WARN message should NOT appear.
 ```
 
+## Security scanning (Phase 5 Stream D)
+
+The repo ships a two-tool SAST baseline — Semgrep for static code analysis and `npm audit` for dependency CVEs. Same script runs locally and in CI; same gating bar in both places. See D14.8 / D14.9 / D14.10 for tool choice, severity gating, and suppression discipline.
+
+### Local invocation
+
+```bash
+npm run security:scan
+```
+
+This expands to:
+
+```
+semgrep --config=auto --config=p/typescript --config=p/react --config=p/nextjs --config=p/owasp-top-ten --error src/ \
+  && npm audit --audit-level=high
+```
+
+Exit non-zero if any Semgrep ERROR finding OR any npm audit high/critical. Moderates and Semgrep WARNINGs are reported in stdout but do not fail the run — operator reviews them out-of-band (see "Known-deferred npm audit moderates" + "Quarterly task" below).
+
+Prerequisite: `pip install semgrep==1.162.0` (exact-pin per D9.5). On a fresh dev box: `python -m pip install semgrep==1.162.0` then `npm run security:scan`.
+
+### CI invocation
+
+Lives in `buildspec.yml` `pre_build` phase. CodeBuild project `bkstr-build` runs the same `npm run security:scan` after `install` and BEFORE `build`. If the scan fails, the pipeline halts at the security stage — no deploy happens, no artifact gets uploaded, the failed phase is recorded for forensics. The `install` phase pulls `python: 3.11` runtime alongside `nodejs: 20` so the `pip install semgrep==1.162.0` line works.
+
+### Triage decision tree (FIX / SUPPRESS / IGNORE / DEFER)
+
+When `npm run security:scan` reports a finding, pick exactly one of these dispositions:
+
+- **FIX** — code change that remediates the finding. Default choice when the fix is small and safe. Examples: refactor a `console.error(`${template}`)` to positional args, replace a deprecated API, sanitize a user-supplied value before logging it.
+- **SUPPRESS** (inline `// nosemgrep: <rule-id> -- <specific rationale>`) — for one-off false positives where the code is correct but Semgrep can't tell. Rationale must be specific (cite the framework / API contract / test purpose that makes the rule fire incorrectly). Inline goes on the line ABOVE the offending literal, or as a trailing same-line comment.
+- **IGNORE** (`.semgrepignore` pattern) — for path-level false-positive families (e.g. an entire test-fixture directory that contains synthetic secrets). Same rationale-specificity rule applies: comment line in `.semgrepignore` explaining what the path is and why the rule doesn't apply. Stream D ships zero `.semgrepignore` entries; all suppressions are inline.
+- **DEFER** — file as a follow-up in `docs/follow-ups.md`. Allowed only when the fix is non-trivial, risk is acceptable for current scope, AND the deferral has a written rationale + trigger condition (e.g. "fix when we adopt zod" / "fix once staging env exists").
+
+### Suppression discipline
+
+Rationales must be self-contained — readable without grepping the decisions doc. Cite the relevant D-number AND give a one-sentence why. The two suppressions Stream D ships look like:
+
+```ts
+// nosemgrep: detected-aws-access-key-id-value -- test fixture: deliberate fake AKIA pattern feeding the error-sanitization regression test per D14.4 (assistant agent loop sanitizes secrets out of error messages before persistence). Removing the literal removes the test's reason to exist.
+```
+
+Both at `src/lib/admin/assistant/agent.test.ts` (the AKIA-pattern test fixtures for the error-sanitization test). Anyone reading those comments six months from now understands the suppression without needing to open `decisions.md`.
+
+Blanket suppression of entire rule categories is forbidden. If a rule fires 15 times for the same reason, that's a single `.semgrepignore` pattern with one comment, not 15 inline suppressions. It is never "ignore this whole rule everywhere because we don't like it."
+
+### Known-deferred npm audit moderates (5 vulns, all dev-only transitives)
+
+As of 2026-05-12, `npm audit --audit-level=moderate` reports 5 moderates. All are dev-only transitive dependencies; production attack surface is unaffected; npm's suggested fixes are semver-majorly destructive (downgrade Prisma 7→6, Next 15→9). Disposition: IGNORE-via-gating (the CI `--audit-level=high` doesn't fail on them). The five:
+
+- **`@hono/node-server <1.19.13`** ([GHSA-92pp-h63x-v22m](https://github.com/advisories/GHSA-92pp-h63x-v22m)) — middleware-bypass via repeated slashes in serveStatic. Not in production runtime (Prisma local dev only).
+- **`@prisma/dev *`** — transitive of `@hono/node-server` above.
+- **`next 9.3.4-canary.0 – 16.3.0-canary.5`** — via postcss (build-time only).
+- **`postcss <8.5.10`** ([GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93)) — XSS via unescaped `</style>` in CSS stringify. Requires untrusted CSS input which the app's surface doesn't expose.
+- **`prisma >=6.20.0-dev.1`** — chained transitive of the @prisma/dev → @hono/node-server chain.
+
+npm's suggested fixes (`npm audit fix --force`) propose downgrading Prisma 7→6 and Next 15→9 — both unacceptable. Not applied.
+
+### Quarterly task (next due: 2026-08-11)
+
+Re-run `npm audit --audit-level=moderate` manually. If any moderates have escalated to high/critical, OR if patched versions are now available WITHOUT destructive downgrades, fix them in a follow-up commit. The CI gating only catches NEW highs/criticals — manual review catches moderates that escalate over time. Update this section's "as of YYYY-MM-DD" date when you complete the review.
+
+### How to bump Semgrep version
+
+Edit `buildspec.yml` `install` phase `pip install semgrep==X.Y.Z`. Edit nothing else — the rule packs are stable across Semgrep minor versions and the local-dev side picks up the new version on the next `pip install`. After the bump, run `npm run security:scan` locally and confirm the baseline is still clean before the CI run.
+
+### Mid-flight critical CVE handling
+
+If `npm audit` reports a new critical/high after a routine `npm install` (e.g. transitive bumped under us), the CI gate will fail the next build. Operator workflow:
+
+1. Apply the npm-suggested fix if it's safe (`npm audit fix` without `--force`), OR
+2. Bump the direct dep to a non-vulnerable version, OR
+3. If neither (a) nor (b) is possible: file an emergency follow-up in `docs/follow-ups.md` AND temporarily lower the audit-level to `critical` in `package.json` (keeping `--audit-level=high` in CI but documenting the temporary regression).
+
+Never globally disable the `security:scan` gate in `buildspec.yml`. The whole point of the gate is "the pipeline halts if a security regression slips in" — bypassing it defeats the purpose.
+
 ---
