@@ -220,7 +220,7 @@ export default function StorefrontPage() {
       <main className="flex-grow px-6 pb-14 max-w-screen-2xl mx-auto w-full">
         {/* Hero — single-line serif heading, one-sentence subtitle */}
         <section className="text-center max-w-4xl mx-auto mt-8 mb-14">
-          <h1 className="font-serif text-5xl md:text-6xl lg:text-7xl font-bold leading-tight tracking-tight mb-5 text-gray-900">
+          <h1 className="font-serif text-4xl sm:text-5xl md:text-6xl font-bold leading-tight tracking-tight mb-5 text-gray-900">
             Compressed Knowledge for AI Agents
           </h1>
           <p className="text-lg text-gray-500 leading-relaxed">
@@ -255,8 +255,12 @@ export default function StorefrontPage() {
                     {/* TOP: horizontal flex — cover-left full-bleed, content-right padded.
                         Stream H.5: removed padding from the top container + removed cover
                         column's internal aspect wrapper so the image flushes to the card's
-                        left and top edges (clipped by parent overflow-hidden). */}
-                    <div className="flex flex-grow">
+                        left and top edges (clipped by parent overflow-hidden).
+                        Stream H.7: `items-start` keeps cover at its natural 3:4 aspect
+                        instead of stretching to match content height — creates the
+                        white-space gap below the cover before the bottom CTA, matching
+                        the reference screenshot. */}
+                    <div className="flex flex-grow items-start">
                       {/* Cover column: ~40% of card width, 3:4 portrait, full-bleed.
                           relative + aspect-[3/4] so `<Image fill>` knows the column geometry. */}
                       <div className="relative w-2/5 flex-shrink-0 aspect-[3/4] bg-gray-50">
