@@ -259,8 +259,11 @@ export default function StorefrontPage() {
                         Stream H.7: `items-start` keeps cover at its natural 3:4 aspect
                         instead of stretching to match content height — creates the
                         white-space gap below the cover before the bottom CTA, matching
-                        the reference screenshot. */}
-                    <div className="flex flex-grow items-start">
+                        the reference screenshot.
+                        Stream H.8: `pb-6` on the top flex container adds 24px below the
+                        tallest column (cover or content) before the bottom CTA — gives
+                        visible breathing room matching the reference. */}
+                    <div className="flex flex-grow items-start pb-6">
                       {/* Cover column: ~40% of card width, 3:4 portrait, full-bleed.
                           relative + aspect-[3/4] so `<Image fill>` knows the column geometry. */}
                       <div className="relative w-2/5 flex-shrink-0 aspect-[3/4] bg-gray-50">
