@@ -973,6 +973,12 @@ Long-term, two reasons the mapping should move to the column:
 
 **Severity:** low. **Trigger:** when (a) the catalog grows past ~15 books and the in-code mapping becomes unwieldy, or (b) a publisher reports confusion about which `domain` strings produce nice badges. **Suggested resolution:** add a non-destructive seed UPDATE to set `books.domain` to the higher-level category string (`UPDATE books SET domain = 'DevOps' WHERE slug = 'ci-diagnostics'`); drop the BADGE_BY_DOMAIN mapping; keep `domainColour()` + `humanDomain()` as styling helpers; add a select-box on `/dashboard/books/new` to pick from the canonical category list.
 
+### 106. Design discipline — rendered screenshot beats written spec when they disagree
+
+Stream H.3 shipped vertical cards because Manus's locked-spec doc answered "card layout is vertical (stacked)" in response to Claude's Q1. Manus's own reference screenshot — which the user kept resending — actually showed horizontal cards. Stream H.4 corrects this. The lesson: when a design owner provides both (a) a written spec and (b) a rendered screenshot, and they disagree, treat the **screenshot as ground truth**. Designers misremember or mis-describe their own work; the rendered image is the artifact the user expects to match.
+
+**Severity:** process. **Trigger:** future stream that integrates external-vendor design drops. **Suggested resolution:** add a one-line discipline note in `docs/decisions.md` near the top: *"When integrating external design drops, the screenshot wins over the spec. If they disagree, the spec is treated as a tiebreaker note for ambiguous details, not a primary source of truth for layout decisions."* Reference this follow-up.
+
 ---
 
 *Last updated: 2026-05-12. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

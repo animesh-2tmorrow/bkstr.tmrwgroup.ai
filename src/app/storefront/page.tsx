@@ -5,41 +5,34 @@ import Link from "next/link";
 import Image from "next/image";
 import { useSession } from "next-auth/react";
 
-// Phase 5 Stream H.3 (D15.11) — pixel-match to Manus's reference screenshot.
-// Final layout spec confirmed by Manus (see decisions.md D15.11):
+// Phase 5 Stream H.4 (D15.12) — restore horizontal card layout to match
+// the actual reference screenshot (Manus's Q1 answer was wrong; the
+// screenshot itself shows horizontal cards, not vertical).
 //
-//   ┌─────────────────────────┐
-//   │                         │
-//   │   Book Cover Image      │  full card width, 3:4 portrait
-//   │   (object-cover fill)   │
-//   │                         │
-//   ├─────────────────────────┤
-//   │  Badge (per-domain pill)│  p-6 content section
-//   │  Title (font-serif bold,│  upright, NOT italic
-//   │         not italic)     │
-//   │  Description (3 lines)  │
-//   │  $5.00                  │  price stacked, label below
-//   │  One-time purchase      │
-//   ├─────────────────────────┤
-//   │   Buy Now — $5.00       │  full-width CTA at bottom edge
-//   └─────────────────────────┘  (overflow-hidden parent clips corners)
+// Final layout — H.2 horizontal structure + H.3 styling tokens:
 //
-// Corrections vs Stream H.2 (which Manus's own analysis doc + reference
-// screenshot disagreed with):
-//   - H.2 shipped horizontal cards (cover-left + content-right). Wrong.
-//     The screenshot shows VERTICAL stacking: cover-on-top, content below.
-//   - Card border-radius `rounded-lg` (12px), not `rounded-2xl` (16px).
-//   - Title uses upright bold serif. Only the "bkstr.tmrwgroup.ai"
-//     wordmark in the header is italic.
-//   - Navy is `#0D1B2A` (hover `#051B2A`), not `#1A2B4D`.
-//   - Domain badge colors: GIF Grep → purple (was emerald), Hermes
-//     Dogfood → indigo (was pink), Node Connect → cyan (was indigo).
-//     DevOps blue + Engineering Leadership orange were already correct.
-//   - Hero subtitle: just the first sentence — the second sentence is
-//     dropped to match the screenshot.
-//   - Header is not sticky; no backdrop-blur; no border-bottom.
-//   - Loading spinner uses muted gray (not the placeholder neon-green
-//     that was in Manus's notes).
+//   ┌──────────────────────────────────────────────┐
+//   │  ┌──────┐  Badge                             │
+//   │  │      │  Title (font-serif bold upright)   │
+//   │  │ Cvr  │  Description (3 lines)             │
+//   │  │ 3:4  │                                    │
+//   │  │      │  $5.00                             │
+//   │  │      │  One-time purchase                 │
+//   │  └──────┘                                    │
+//   ├──────────────────────────────────────────────┤
+//   │           Buy Now — $5.00 (navy)             │
+//   └──────────────────────────────────────────────┘
+//
+// All other style tokens unchanged from H.3:
+//   - Navy CTA #0D1B2A / hover #051B2A
+//   - Per-category badge colors (Manus's locked spec)
+//   - Card rounded-lg, border #E5DCC8, overflow-hidden
+//   - Title font-serif font-bold UPRIGHT (italic only on wordmark)
+//   - Hero: single-line serif heading, one-sentence subtitle
+//   - Header: non-sticky, flush against page background
+//   - Loading spinner muted gray
+//   - Already Owned: full-width bottom pill #F5F1E8 + #10B981 check
+//   - Not Available: full-width bottom pill gray + lock SVG
 
 interface BookWithPrice {
   id: string;
@@ -53,9 +46,6 @@ interface BookWithPrice {
   grantSource: string | null;
 }
 
-// Deterministic pastel background for the fallback tile when a book has
-// no cover image. Hash → palette index; same domain always picks the
-// same colour so the tile is stable across renders.
 function domainColour(domain: string): string {
   const palette = [
     "#D4E4F7", "#D4F0E4", "#F7E4D4", "#EAD4F7",
@@ -68,8 +58,6 @@ function domainColour(domain: string): string {
   return palette[Math.abs(hash) % palette.length];
 }
 
-// Humanize a slug-like domain for fallback rendering.
-// e.g. "ci-diagnostics" → "CI Diagnostics".
 function humanDomain(domain: string): string {
   return domain
     .split(/[-_]/)
@@ -82,10 +70,6 @@ function humanDomain(domain: string): string {
     .join(" ");
 }
 
-// Slug → display badge mapping (Manus's locked color spec). The seed
-// books.domain column holds granular slugs; the storefront groups them
-// into higher-level categories with per-category Tailwind pastels.
-// Follow-up #105 tracks the long-term DB-column cleanup.
 const BADGE_BY_DOMAIN: Record<string, { label: string; bg: string; text: string }> = {
   "ci-diagnostics":      { label: "DevOps",                  bg: "bg-blue-50",     text: "text-blue-700" },
   "docker-patterns":     { label: "DevOps",                  bg: "bg-blue-50",     text: "text-blue-700" },
@@ -108,28 +92,27 @@ function CoverImage({ book }: { book: BookWithPrice }) {
 
   if (book.coverImageUrl && !imgError) {
     return (
-      <div className="relative w-full aspect-[3/4]">
+      <div className="relative w-full aspect-[3/4] rounded overflow-hidden">
         <Image
           src={book.coverImageUrl}
           alt={`${book.title} cover`}
           fill
           className="object-cover"
           onError={() => setImgError(true)}
-          sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
+          sizes="160px"
         />
       </div>
     );
   }
 
-  // Fallback: domain-initial tile with pastel background
   const initial = book.domain.charAt(0).toUpperCase();
   const bg = domainColour(book.domain);
   return (
     <div
-      className="w-full aspect-[3/4] flex items-center justify-center"
+      className="w-full aspect-[3/4] rounded flex items-center justify-center"
       style={{ backgroundColor: bg }}
     >
-      <span className="text-7xl font-bold text-gray-500 opacity-50 select-none tracking-tighter">
+      <span className="text-5xl font-bold text-gray-500 opacity-50 select-none tracking-tighter">
         {initial}
       </span>
     </div>
@@ -192,7 +175,7 @@ export default function StorefrontPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF6EC]">
-      {/* ── Header — no sticky, no border, plain inline ── */}
+      {/* ── Header — non-sticky, no border ── */}
       <header className="px-8 py-6 flex justify-between items-center">
         <Link href="/storefront" className="no-underline">
           <span className="font-serif italic text-2xl font-bold text-gray-900 tracking-tight">
@@ -233,7 +216,7 @@ export default function StorefrontPage() {
 
       {/* ── Main ── */}
       <main className="flex-grow px-6 pb-14 max-w-7xl mx-auto w-full">
-        {/* Hero — serif heading on one line, single-sentence subtitle */}
+        {/* Hero — single-line serif heading, one-sentence subtitle */}
         <section className="text-center max-w-4xl mx-auto mt-8 mb-14">
           <h1 className="font-serif text-5xl md:text-6xl lg:text-7xl font-bold leading-tight tracking-tight mb-5 text-gray-900">
             Compressed Knowledge for AI Agents
@@ -259,7 +242,7 @@ export default function StorefrontPage() {
               <p className="text-gray-400 text-sm">No books available at this time.</p>
             </div>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {books.map((book) => {
                 const badge = domainBadge(book.domain);
                 return (
@@ -267,42 +250,47 @@ export default function StorefrontPage() {
                     key={book.id}
                     className="bg-white border border-[#E5DCC8] rounded-lg overflow-hidden hover:shadow-md transition-shadow duration-200 flex flex-col h-full"
                   >
-                    {/* Cover — full card width, 3:4 portrait */}
-                    <CoverImage book={book} />
-
-                    {/* Content section */}
-                    <div className="p-6 flex flex-col flex-grow">
-                      {/* Domain badge */}
-                      <div className="mb-3">
-                        <span
-                          className={`inline-block ${badge.bg} ${badge.text} text-xs font-medium px-3 py-1 rounded-full`}
-                        >
-                          {badge.label}
-                        </span>
+                    {/* TOP: horizontal flex — cover-left, content-right */}
+                    <div className="flex gap-4 p-5 flex-grow">
+                      {/* Cover */}
+                      <div className="w-32 lg:w-36 flex-shrink-0 self-start">
+                        <CoverImage book={book} />
                       </div>
 
-                      {/* Title — upright bold serif */}
-                      <h2 className="font-serif text-xl font-bold text-gray-900 mb-2 leading-tight">
-                        {book.title}
-                      </h2>
-
-                      {/* Description */}
-                      <p className="text-sm text-gray-500 mb-5 flex-grow line-clamp-3 leading-relaxed">
-                        {book.description ?? "No description yet."}
-                      </p>
-
-                      {/* Price — stacked */}
-                      <div>
-                        <div className="text-3xl font-bold text-gray-900 leading-none">
-                          {formatPrice(book.unitAmountCents)}
+                      {/* Content */}
+                      <div className="flex-1 flex flex-col min-w-0">
+                        {/* Badge */}
+                        <div className="mb-2">
+                          <span
+                            className={`inline-block ${badge.bg} ${badge.text} text-xs font-medium px-2.5 py-1 rounded-full`}
+                          >
+                            {badge.label}
+                          </span>
                         </div>
-                        {book.unitAmountCents && (
-                          <div className="text-sm text-gray-400 mt-1">One-time purchase</div>
-                        )}
+
+                        {/* Title — upright bold serif */}
+                        <h2 className="font-serif text-lg font-bold text-gray-900 mb-2 leading-snug">
+                          {book.title}
+                        </h2>
+
+                        {/* Description */}
+                        <p className="text-xs text-gray-500 mb-4 flex-grow line-clamp-3 leading-relaxed">
+                          {book.description ?? "No description yet."}
+                        </p>
+
+                        {/* Price — stacked at bottom of content column */}
+                        <div className="mt-auto">
+                          <div className="text-2xl font-bold text-gray-900 leading-none">
+                            {formatPrice(book.unitAmountCents)}
+                          </div>
+                          {book.unitAmountCents && (
+                            <div className="text-xs text-gray-400 mt-1">One-time purchase</div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    {/* Full-width CTA at card bottom */}
+                    {/* BOTTOM: full-width CTA, flush against card edges */}
                     {book.state === "granted" ? (
                       <div className="bg-[#F5F1E8] py-3 px-6 text-center text-sm font-bold text-gray-700 flex items-center justify-center gap-2">
                         <svg
