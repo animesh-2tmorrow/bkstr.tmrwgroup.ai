@@ -218,12 +218,14 @@ export default function StorefrontPage() {
 
       {/* ── Main ── */}
       <main className="flex-grow px-6 pb-14 max-w-screen-2xl mx-auto w-full">
-        {/* Hero — single-line serif heading, one-sentence subtitle */}
-        <section className="text-center max-w-4xl mx-auto mt-8 mb-14">
+        {/* Hero — single-line serif heading (Stream H.9: no max-w on section so
+            h1 has full width to render "Compressed Knowledge for AI Agents" on
+            one line at desktop). Subtitle keeps a max-w constraint for legibility. */}
+        <section className="text-center mt-8 mb-14">
           <h1 className="font-serif text-4xl sm:text-5xl md:text-6xl font-bold leading-tight tracking-tight mb-5 text-gray-900">
             Compressed Knowledge for AI Agents
           </h1>
-          <p className="text-lg text-gray-500 leading-relaxed">
+          <p className="text-lg text-gray-500 leading-relaxed max-w-2xl mx-auto">
             Purchase domain expertise packaged as high-density, machine-first books.
           </p>
         </section>
@@ -252,26 +254,24 @@ export default function StorefrontPage() {
                     key={book.id}
                     className="bg-white border border-[#E5DCC8] rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col h-full"
                   >
-                    {/* TOP: horizontal flex — cover-left full-bleed, content-right padded.
-                        Stream H.5: removed padding from the top container + removed cover
-                        column's internal aspect wrapper so the image flushes to the card's
-                        left and top edges (clipped by parent overflow-hidden).
-                        Stream H.7: `items-start` keeps cover at its natural 3:4 aspect
-                        instead of stretching to match content height — creates the
-                        white-space gap below the cover before the bottom CTA, matching
-                        the reference screenshot.
-                        Stream H.8: `pb-6` on the top flex container adds 24px below the
-                        tallest column (cover or content) before the bottom CTA — gives
-                        visible breathing room matching the reference. */}
-                    <div className="flex flex-grow items-start pb-6">
-                      {/* Cover column: ~40% of card width, 3:4 portrait, full-bleed.
-                          relative + aspect-[3/4] so `<Image fill>` knows the column geometry. */}
-                      <div className="relative w-2/5 flex-shrink-0 aspect-[3/4] bg-gray-50">
+                    {/* TOP: horizontal flex — cover-left + content-right, padded all around.
+                        Stream H.9 — reverts H.5's full-bleed cover. Manus's reference card
+                        shows ~24px of whitespace on all sides of the cover (top, left,
+                        bottom, right-into-gap). `p-6` on the top flex container gives that
+                        padding uniformly; `gap-5` separates cover and content; `items-start`
+                        keeps cover at natural aspect-[3/4] so there's whitespace below it
+                        before the bottom CTA. Bottom CTA is OUTSIDE this padded section so
+                        it still spans full card width edge-to-edge. */}
+                    <div className="flex flex-grow items-start p-6 gap-5">
+                      {/* Cover column: ~40% of inner content area, 3:4 portrait.
+                          rounded on the wrapper so the cover image has subtle rounded
+                          corners (image inside is clipped via overflow-hidden). */}
+                      <div className="relative w-2/5 flex-shrink-0 aspect-[3/4] bg-gray-50 overflow-hidden rounded">
                         <CoverImage book={book} />
                       </div>
 
-                      {/* Content column: padded */}
-                      <div className="flex-1 p-5 flex flex-col min-w-0">
+                      {/* Content column: no padding (parent provides via p-6) */}
+                      <div className="flex-1 flex flex-col min-w-0">
                         {/* Badge */}
                         <div className="mb-2">
                           <span
