@@ -90,18 +90,20 @@ function domainBadge(domain: string): { label: string; bg: string; text: string 
 function CoverImage({ book }: { book: BookWithPrice }) {
   const [imgError, setImgError] = useState(false);
 
+  // Stream H.5 — cover is full-bleed within its column (no rounded corners
+  // of its own; the card's `overflow-hidden rounded-lg` clips the top-left
+  // and bottom-left to match card edges). Sizing comes from the parent
+  // column's `aspect-[3/4]` so the image fills naturally.
   if (book.coverImageUrl && !imgError) {
     return (
-      <div className="relative w-full aspect-[3/4] rounded overflow-hidden">
-        <Image
-          src={book.coverImageUrl}
-          alt={`${book.title} cover`}
-          fill
-          className="object-cover"
-          onError={() => setImgError(true)}
-          sizes="160px"
-        />
-      </div>
+      <Image
+        src={book.coverImageUrl}
+        alt={`${book.title} cover`}
+        fill
+        className="object-cover"
+        onError={() => setImgError(true)}
+        sizes="(max-width: 768px) 40vw, (max-width: 1024px) 20vw, 160px"
+      />
     );
   }
 
@@ -109,7 +111,7 @@ function CoverImage({ book }: { book: BookWithPrice }) {
   const bg = domainColour(book.domain);
   return (
     <div
-      className="w-full aspect-[3/4] rounded flex items-center justify-center"
+      className="absolute inset-0 flex items-center justify-center"
       style={{ backgroundColor: bg }}
     >
       <span className="text-5xl font-bold text-gray-500 opacity-50 select-none tracking-tighter">
@@ -250,15 +252,19 @@ export default function StorefrontPage() {
                     key={book.id}
                     className="bg-white border border-[#E5DCC8] rounded-lg overflow-hidden hover:shadow-md transition-shadow duration-200 flex flex-col h-full"
                   >
-                    {/* TOP: horizontal flex — cover-left, content-right */}
-                    <div className="flex gap-4 p-5 flex-grow">
-                      {/* Cover */}
-                      <div className="w-32 lg:w-36 flex-shrink-0 self-start">
+                    {/* TOP: horizontal flex — cover-left full-bleed, content-right padded.
+                        Stream H.5: removed padding from the top container + removed cover
+                        column's internal aspect wrapper so the image flushes to the card's
+                        left and top edges (clipped by parent overflow-hidden). */}
+                    <div className="flex flex-grow">
+                      {/* Cover column: ~40% of card width, 3:4 portrait, full-bleed.
+                          relative + aspect-[3/4] so `<Image fill>` knows the column geometry. */}
+                      <div className="relative w-2/5 flex-shrink-0 aspect-[3/4] bg-gray-50">
                         <CoverImage book={book} />
                       </div>
 
-                      {/* Content */}
-                      <div className="flex-1 flex flex-col min-w-0">
+                      {/* Content column: padded */}
+                      <div className="flex-1 p-5 flex flex-col min-w-0">
                         {/* Badge */}
                         <div className="mb-2">
                           <span
@@ -268,13 +274,13 @@ export default function StorefrontPage() {
                           </span>
                         </div>
 
-                        {/* Title — upright bold serif */}
-                        <h2 className="font-serif text-lg font-bold text-gray-900 mb-2 leading-snug">
+                        {/* Title — upright bold serif, larger */}
+                        <h2 className="font-serif text-xl font-bold text-gray-900 mb-2 leading-snug">
                           {book.title}
                         </h2>
 
                         {/* Description */}
-                        <p className="text-xs text-gray-500 mb-4 flex-grow line-clamp-3 leading-relaxed">
+                        <p className="text-sm text-gray-500 mb-4 flex-grow line-clamp-3 leading-relaxed">
                           {book.description ?? "No description yet."}
                         </p>
 
