@@ -229,3 +229,23 @@ The archive button placement is **`/dashboard/pricing` only for v1** (Q2). Not A
 **Reasoning:** Stream H.1 shipped Manus's *code* (vertical layout) but the deployment didn't match Manus's *reference screenshot* (horizontal layout). That mismatch — code vs. design — surfaced during the v3 audit; the customer-facing UX was "the site is nothing like Manus rendered." Manus's follow-up analysis doc proposed iterative tweaks to the vertical layout (aspect-ratio fix, sticky header that was already sticky, etc.) but didn't address the structural horizontal-vs-vertical question. This stream chooses the structural change: when the rendered design diverges from the shipped code, take the design as ground truth (Edward already approved it) and rewrite the code to match. Per-category badge colors are an additive design refinement that wasn't in either prior code drop — visual signal density is real value for browsers comparing 5+ books on one page. The slug-to-category mapping lives in the component as a hardcoded `Record` (the alternative — updating `books.domain` column values — was deferred via follow-up #105 because it's a one-way migration with no rollback shortcut and the current seed-only catalog doesn't yet warrant it). Navy buttons are pure visual brand alignment with the reference; no functional impact.
 
 **Cross-references:** Stream H.1 (D15.6 / D15.9) — first-pass cover + Manus integration this stream supersedes the layout portion of; v3 audit (`bkstr-audit/AUDIT-v3.md`) — surfaced the layout mismatch with side-by-side comparison; follow-up #105 (books.domain column long-term cleanup).
+
+## Phase 5 Stream H.3 — pixel-match against Manus's locked spec (2026-05-12)
+
+### D15.11 Storefront layout is vertical (cover-top, content-stacked-below), not horizontal
+
+**Choice:** Stream H.2's horizontal card layout (cover-left, content-right) is reverted. The card layout is **vertical**: full-card-width 3:4 portrait cover on top, content section (badge / serif-bold-upright title / description / stacked price) below in a `p-6` padded block, full-width CTA button at the very bottom edge (clipped by parent `overflow-hidden`). Plus a series of style-token corrections Manus confirmed against their reference screenshot:
+
+- **Navy** is `#0D1B2A` with `#051B2A` hover (Stream H.2 used `#1A2B4D` — wrong).
+- **Title font** is upright bold serif (`font-serif font-bold`, NOT italic). Only the `bkstr.tmrwgroup.ai` wordmark in the header is italic.
+- **Card border-radius** is `rounded-lg` (12px), not `rounded-2xl` (16px).
+- **Domain badge colors** corrected: GIF Grep → `purple-50/700` (was emerald), Hermes Dogfood → `indigo-50/700` (was pink), Node Connect → `cyan-50/700` (was indigo). DevOps blue + Engineering Leadership orange were already right.
+- **Hero subtitle** drops the second sentence ("Equip your agents...") — Manus's screenshot has only the first.
+- **Header** loses sticky/backdrop/border-b — flush against the page background.
+- **Loading spinner** uses muted gray (`border-t-gray-500`), not the placeholder neon green `#00FF00` that was in Manus's notes.
+- **Already Owned** treatment: full-width bottom pill, bg `#F5F1E8`, checkmark stroke `#10B981`.
+- **Not Available** treatment: full-width bottom pill, `bg-gray-100 text-gray-500` with an inline lock SVG.
+
+**Reasoning:** Stream H.2 misread the screenshot — I saw the tall portrait book covers and inferred a horizontal split (cover-left / content-right) because the covers' aspect ratio looks like they could span the card edge. Manus's locked spec ("Card width 420px / Cover 420×560 / Content stacks BELOW cover") confirmed: the layout is **vertical**, the cover takes the full card width on top, and the content fills the area below. The full-width CTA at the card bottom is its own structural element, separate from the padded content section, so it clips cleanly to the card's rounded-lg corners via `overflow-hidden`. Three layout iterations on the same page is more than I'd like, but the bug history is informative: H.1 shipped vertical-but-wrong-aspect; H.2 over-corrected to horizontal; H.3 settles into vertical-with-correct-aspect. The discipline lesson: when ambiguous between code + screenshot + analysis doc, ask the design owner before shipping, not after. That's what the Gate 1 Q&A round produced for H.3.
+
+**Cross-references:** Stream H.2 (D15.10) — the layout direction this stream corrects; Manus's locked spec doc shared 2026-05-12; follow-up #105 (long-term `books.domain` cleanup remains open).

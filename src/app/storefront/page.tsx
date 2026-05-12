@@ -5,26 +5,41 @@ import Link from "next/link";
 import Image from "next/image";
 import { useSession } from "next-auth/react";
 
-// Phase 5 Stream H.2 (D15.10) — storefront redesign matching Manus's
-// reference screenshot. Card layout switches from VERTICAL (cover-top,
-// content-below) to HORIZONTAL (cover-left, content-right) so each book
-// shows like a physical shelf card: portrait cover beside its metadata.
+// Phase 5 Stream H.3 (D15.11) — pixel-match to Manus's reference screenshot.
+// Final layout spec confirmed by Manus (see decisions.md D15.11):
 //
-// Other refinements from Manus's design vs Stream H.1's first cut:
-//   - Cover aspect changes from 4:3 landscape to 3:4 portrait (the S3
-//     PNGs are already portrait-rendered book mockups; this lets them
-//     display at their natural proportions).
-//   - Per-category domain badges with pastel backgrounds (slug →
-//     {label, colors} mapping; falls back to humanDomain() for any
-//     unknown slug). Long-term — see follow-up #105 — the seed
-//     books.domain column may move to the higher-level category labels
-//     directly so this mapping isn't load-bearing.
-//   - Header brand renders as one continuous bold italic line
-//     "bkstr.tmrwgroup.ai" instead of split styling.
-//   - CTA buttons use a dark navy (#1A2B4D) — matches the screenshot's
-//     "Sign up" + "Buy Now" buttons more faithfully than gray-900.
-//   - Grid breakpoints widen: 1 col mobile → 2 cols at md (768px) →
-//     3 cols at xl (1280px) so horizontal cards never feel cramped.
+//   ┌─────────────────────────┐
+//   │                         │
+//   │   Book Cover Image      │  full card width, 3:4 portrait
+//   │   (object-cover fill)   │
+//   │                         │
+//   ├─────────────────────────┤
+//   │  Badge (per-domain pill)│  p-6 content section
+//   │  Title (font-serif bold,│  upright, NOT italic
+//   │         not italic)     │
+//   │  Description (3 lines)  │
+//   │  $5.00                  │  price stacked, label below
+//   │  One-time purchase      │
+//   ├─────────────────────────┤
+//   │   Buy Now — $5.00       │  full-width CTA at bottom edge
+//   └─────────────────────────┘  (overflow-hidden parent clips corners)
+//
+// Corrections vs Stream H.2 (which Manus's own analysis doc + reference
+// screenshot disagreed with):
+//   - H.2 shipped horizontal cards (cover-left + content-right). Wrong.
+//     The screenshot shows VERTICAL stacking: cover-on-top, content below.
+//   - Card border-radius `rounded-lg` (12px), not `rounded-2xl` (16px).
+//   - Title uses upright bold serif. Only the "bkstr.tmrwgroup.ai"
+//     wordmark in the header is italic.
+//   - Navy is `#0D1B2A` (hover `#051B2A`), not `#1A2B4D`.
+//   - Domain badge colors: GIF Grep → purple (was emerald), Hermes
+//     Dogfood → indigo (was pink), Node Connect → cyan (was indigo).
+//     DevOps blue + Engineering Leadership orange were already correct.
+//   - Hero subtitle: just the first sentence — the second sentence is
+//     dropped to match the screenshot.
+//   - Header is not sticky; no backdrop-blur; no border-bottom.
+//   - Loading spinner uses muted gray (not the placeholder neon-green
+//     that was in Manus's notes).
 
 interface BookWithPrice {
   id: string;
@@ -39,8 +54,8 @@ interface BookWithPrice {
 }
 
 // Deterministic pastel background for the fallback tile when a book has
-// no cover image. Hash → palette index; same domain always picks the same
-// colour so the tile is stable across renders.
+// no cover image. Hash → palette index; same domain always picks the
+// same colour so the tile is stable across renders.
 function domainColour(domain: string): string {
   const palette = [
     "#D4E4F7", "#D4F0E4", "#F7E4D4", "#EAD4F7",
@@ -53,7 +68,7 @@ function domainColour(domain: string): string {
   return palette[Math.abs(hash) % palette.length];
 }
 
-// Humanize a slug-like domain string for fallback rendering.
+// Humanize a slug-like domain for fallback rendering.
 // e.g. "ci-diagnostics" → "CI Diagnostics".
 function humanDomain(domain: string): string {
   return domain
@@ -67,22 +82,17 @@ function humanDomain(domain: string): string {
     .join(" ");
 }
 
-// Slug → display badge mapping. The seed books.domain column stores
-// granular slugs (`ci-diagnostics`, `developer-marketing`, etc.); the
-// display surface groups them into higher-level categories (DevOps,
-// Engineering Leadership, etc.) per Manus's design. Per-category Tailwind
-// pastel pairs picked so each badge is legible on white card backgrounds.
-// Fallback: humanDomain() label on a neutral gray pill.
-//
-// Follow-up #105 tracks the option of moving these labels into the
-// books.domain column itself, retiring this mapping.
+// Slug → display badge mapping (Manus's locked color spec). The seed
+// books.domain column holds granular slugs; the storefront groups them
+// into higher-level categories with per-category Tailwind pastels.
+// Follow-up #105 tracks the long-term DB-column cleanup.
 const BADGE_BY_DOMAIN: Record<string, { label: string; bg: string; text: string }> = {
   "ci-diagnostics":      { label: "DevOps",                  bg: "bg-blue-50",     text: "text-blue-700" },
   "docker-patterns":     { label: "DevOps",                  bg: "bg-blue-50",     text: "text-blue-700" },
   "developer-marketing": { label: "Engineering Leadership",  bg: "bg-orange-50",   text: "text-orange-700" },
-  "gifgrep":             { label: "Developer Tools",         bg: "bg-emerald-50",  text: "text-emerald-700" },
-  "dogfood":             { label: "Product Management",      bg: "bg-pink-50",     text: "text-pink-700" },
-  "node-connect":        { label: "Backend Development",     bg: "bg-indigo-50",   text: "text-indigo-700" },
+  "gifgrep":             { label: "Developer Tools",         bg: "bg-purple-50",   text: "text-purple-700" },
+  "dogfood":             { label: "Product Management",      bg: "bg-indigo-50",   text: "text-indigo-700" },
+  "node-connect":        { label: "Backend Development",     bg: "bg-cyan-50",     text: "text-cyan-700" },
 };
 
 function domainBadge(domain: string): { label: string; bg: string; text: string } {
@@ -98,14 +108,14 @@ function CoverImage({ book }: { book: BookWithPrice }) {
 
   if (book.coverImageUrl && !imgError) {
     return (
-      <div className="relative w-full aspect-[3/4] rounded-lg overflow-hidden">
+      <div className="relative w-full aspect-[3/4]">
         <Image
           src={book.coverImageUrl}
           alt={`${book.title} cover`}
           fill
           className="object-cover"
           onError={() => setImgError(true)}
-          sizes="160px"
+          sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
         />
       </div>
     );
@@ -116,10 +126,10 @@ function CoverImage({ book }: { book: BookWithPrice }) {
   const bg = domainColour(book.domain);
   return (
     <div
-      className="w-full aspect-[3/4] rounded-lg flex items-center justify-center"
+      className="w-full aspect-[3/4] flex items-center justify-center"
       style={{ backgroundColor: bg }}
     >
-      <span className="text-5xl font-bold text-gray-500 opacity-50 select-none tracking-tighter">
+      <span className="text-7xl font-bold text-gray-500 opacity-50 select-none tracking-tighter">
         {initial}
       </span>
     </div>
@@ -182,10 +192,10 @@ export default function StorefrontPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF6EC]">
-      {/* ── Header ── */}
-      <header className="px-8 py-5 flex justify-between items-center bg-[#FAF6EC]/90 backdrop-blur-sm sticky top-0 z-10 border-b border-[#E5DCC8]">
+      {/* ── Header — no sticky, no border, plain inline ── */}
+      <header className="px-8 py-6 flex justify-between items-center">
         <Link href="/storefront" className="no-underline">
-          <span className="text-2xl font-bold tracking-tighter serif italic text-gray-900">
+          <span className="font-serif italic text-2xl font-bold text-gray-900 tracking-tight">
             bkstr.tmrwgroup.ai
           </span>
         </Link>
@@ -212,7 +222,7 @@ export default function StorefrontPage() {
               </Link>
               <Link
                 href="/signup"
-                className="bg-[#1A2B4D] text-[#FAF6EC] px-5 py-2 rounded-md text-sm font-semibold hover:bg-[#0F1B33] transition-colors"
+                className="bg-[#0D1B2A] text-[#FAF6EC] px-5 py-2.5 rounded-md text-sm font-semibold hover:bg-[#051B2A] transition-colors"
               >
                 Sign up
               </Link>
@@ -222,15 +232,14 @@ export default function StorefrontPage() {
       </header>
 
       {/* ── Main ── */}
-      <main className="flex-grow px-6 py-14 max-w-6xl mx-auto w-full">
-        {/* Hero */}
-        <section className="text-center max-w-2xl mx-auto mb-14">
-          <h1 className="text-5xl font-bold leading-tight tracking-tight mb-5 text-gray-900">
-            Compressed Knowledge<br />for AI Agents
+      <main className="flex-grow px-6 pb-14 max-w-7xl mx-auto w-full">
+        {/* Hero — serif heading on one line, single-sentence subtitle */}
+        <section className="text-center max-w-4xl mx-auto mt-8 mb-14">
+          <h1 className="font-serif text-5xl md:text-6xl lg:text-7xl font-bold leading-tight tracking-tight mb-5 text-gray-900">
+            Compressed Knowledge for AI Agents
           </h1>
           <p className="text-lg text-gray-500 leading-relaxed">
-            Purchase domain expertise packaged as high-density, machine-first books. Equip
-            your agents with the exact context they need to perform measurably better.
+            Purchase domain expertise packaged as high-density, machine-first books.
           </p>
         </section>
 
@@ -238,7 +247,7 @@ export default function StorefrontPage() {
         <section>
           {loading ? (
             <div className="text-center py-16">
-              <div className="inline-block w-6 h-6 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin" />
+              <div className="inline-block w-6 h-6 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />
               <p className="text-gray-400 mt-4 text-sm">Loading books…</p>
             </div>
           ) : error ? (
@@ -250,87 +259,95 @@ export default function StorefrontPage() {
               <p className="text-gray-400 text-sm">No books available at this time.</p>
             </div>
           ) : (
-            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-8">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
               {books.map((book) => {
                 const badge = domainBadge(book.domain);
                 return (
                   <article
                     key={book.id}
-                    className="bg-white border border-[#E5DCC8] rounded-2xl p-5 flex gap-5 hover:shadow-md transition-shadow duration-200 h-full"
+                    className="bg-white border border-[#E5DCC8] rounded-lg overflow-hidden hover:shadow-md transition-shadow duration-200 flex flex-col h-full"
                   >
-                    {/* Left: cover (3:4 portrait, fixed width) */}
-                    <div className="w-36 flex-shrink-0">
-                      <CoverImage book={book} />
-                    </div>
+                    {/* Cover — full card width, 3:4 portrait */}
+                    <CoverImage book={book} />
 
-                    {/* Right: content */}
-                    <div className="flex-1 flex flex-col min-w-0">
-                      {/* Domain badge — per-category color */}
-                      <div className="mb-2">
+                    {/* Content section */}
+                    <div className="p-6 flex flex-col flex-grow">
+                      {/* Domain badge */}
+                      <div className="mb-3">
                         <span
-                          className={`inline-block ${badge.bg} ${badge.text} text-[11px] font-semibold px-2.5 py-1 rounded-full tracking-wide`}
+                          className={`inline-block ${badge.bg} ${badge.text} text-xs font-medium px-3 py-1 rounded-full`}
                         >
                           {badge.label}
                         </span>
                       </div>
 
-                      {/* Title */}
-                      <h2 className="text-lg font-bold text-gray-900 mb-2 leading-snug">
+                      {/* Title — upright bold serif */}
+                      <h2 className="font-serif text-xl font-bold text-gray-900 mb-2 leading-tight">
                         {book.title}
                       </h2>
 
                       {/* Description */}
-                      <p className="text-sm text-gray-500 mb-4 flex-grow line-clamp-3 leading-relaxed">
+                      <p className="text-sm text-gray-500 mb-5 flex-grow line-clamp-3 leading-relaxed">
                         {book.description ?? "No description yet."}
                       </p>
 
-                      {/* Price */}
-                      <div className="mb-3">
-                        <span className="text-2xl font-bold text-gray-900">
+                      {/* Price — stacked */}
+                      <div>
+                        <div className="text-3xl font-bold text-gray-900 leading-none">
                           {formatPrice(book.unitAmountCents)}
-                        </span>
+                        </div>
                         {book.unitAmountCents && (
-                          <span className="text-xs text-gray-400 ml-2">One-time purchase</span>
+                          <div className="text-sm text-gray-400 mt-1">One-time purchase</div>
                         )}
                       </div>
-
-                      {/* CTA */}
-                      {book.state === "granted" ? (
-                        <div className="flex items-center justify-center gap-2 bg-[#EFE8D8] text-gray-600 px-4 py-2.5 rounded-lg text-sm font-semibold">
-                          <svg
-                            className="w-4 h-4 text-green-600"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2.5}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                          Already Owned
-                        </div>
-                      ) : book.state === "for_sale" ? (
-                        <button
-                          onClick={() => handleBuyNow(book.id)}
-                          disabled={purchasingBookId === book.id}
-                          className="w-full bg-[#1A2B4D] text-[#FAF6EC] px-4 py-2.5 rounded-lg font-bold hover:bg-[#0F1B33] transition-colors disabled:opacity-50 text-sm tracking-wide"
-                        >
-                          {purchasingBookId === book.id
-                            ? "Processing…"
-                            : `Buy Now — ${formatPrice(book.unitAmountCents)}`}
-                        </button>
-                      ) : (
-                        <button
-                          disabled
-                          className="w-full bg-[#EFE8D8] text-gray-400 px-4 py-2.5 rounded-lg font-bold cursor-not-allowed text-sm"
-                        >
-                          Not Available
-                        </button>
-                      )}
                     </div>
+
+                    {/* Full-width CTA at card bottom */}
+                    {book.state === "granted" ? (
+                      <div className="bg-[#F5F1E8] py-3 px-6 text-center text-sm font-bold text-gray-700 flex items-center justify-center gap-2">
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="#10B981"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2.5}
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
+                        Already Owned
+                      </div>
+                    ) : book.state === "for_sale" ? (
+                      <button
+                        onClick={() => handleBuyNow(book.id)}
+                        disabled={purchasingBookId === book.id}
+                        className="w-full bg-[#0D1B2A] hover:bg-[#051B2A] text-[#FAF6EC] py-3 px-6 font-bold text-sm tracking-wide transition-colors disabled:opacity-50"
+                      >
+                        {purchasingBookId === book.id
+                          ? "Processing…"
+                          : `Buy Now — ${formatPrice(book.unitAmountCents)}`}
+                      </button>
+                    ) : (
+                      <div className="bg-gray-100 py-3 px-6 text-center text-sm font-bold text-gray-500 flex items-center justify-center gap-2">
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M12 11c0-1.1.9-2 2-2s2 .9 2 2v3M5 11h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2v-8a2 2 0 012-2z"
+                          />
+                        </svg>
+                        Not Available
+                      </div>
+                    )}
                   </article>
                 );
               })}
@@ -341,7 +358,7 @@ export default function StorefrontPage() {
 
       {/* ── Footer ── */}
       <footer className="border-t border-[#E5DCC8] py-8 px-6 mt-12">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-400">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-400">
           <span>&copy; 2026 Tmrwgroup. All rights reserved.</span>
           <div className="flex gap-6">
             <Link href="/about" className="hover:text-gray-600 transition-colors">About</Link>
