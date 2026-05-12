@@ -11,8 +11,10 @@ phases:
     commands:
       - echo "Installing dependencies (including devDependencies) with npm ci..."
       - npm ci --include=dev
-      - echo "Installing Semgrep for SAST scanning..."
-      - pip install semgrep==1.162.0
+      - echo "Upgrading pip + installing Semgrep..."
+      - pip install --upgrade pip
+      - pip install --prefer-binary semgrep==1.162.0
+      - semgrep --version  # fail-fast: surface missing semgrep-core in INSTALL phase
   pre_build:
     commands:
       - echo "Running SAST baseline + dependency audit (Stream D / D14.8-D14.10)..."
