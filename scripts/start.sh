@@ -38,6 +38,17 @@ if [ -f /etc/bkstr/assistant.env ]; then
 else
   echo "[start.sh] WARN: /etc/bkstr/assistant.env not present — admin assistant defaults to Sonnet 4.5 (see follow-up #84 for Opus 4.7 upgrade)."
 fi
+# Phase 5 Stream E (D15.4) — SMTP credentials for invitation emails.
+# Optional; absence is fail-graceful (invite-create still succeeds, but
+# email_send_status='failed' and admin UI surfaces the magic-link copy
+# fallback). Operator stages /etc/bkstr/smtp.env (mode 600) with the 6
+# SMTP_* vars per docs/operations.md "SMTP env file" runbook section.
+if [ -f /etc/bkstr/smtp.env ]; then
+  source /etc/bkstr/smtp.env
+  echo "[start.sh] SMTP env sourced from /etc/bkstr/smtp.env (keys: $(grep -oE '^[A-Z_]+=' /etc/bkstr/smtp.env | tr -d '=' | tr '\n' ' '))"
+else
+  echo "[start.sh] WARN: /etc/bkstr/smtp.env not present — invitation emails will fail until staged (D15.4 fail-graceful: invite-create still works, magic link surfaced for copy-paste)."
+fi
 # Phase 3 D9.4: per-service env files; add new ones above this comment
 if [ -f /etc/bkstr/aws.env ]; then
   source /etc/bkstr/aws.env

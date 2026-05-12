@@ -34,28 +34,25 @@ function safeRedirectPath(): string {
 }
 
 export async function POST(request: Request) {
+  // Phase 5 Stream F — content-type dispatch instead of try-json-then-formData.
+  // Per Fetch API, calling `request.json()` consumes the body stream even when
+  // the parse fails and `.catch()` swallows the error; a subsequent
+  // `request.formData()` then hits "Body has already been used" and yields no
+  // fields. That broke the form-POST path from /invitations/accept (the only
+  // production caller). Dispatching by Content-Type keeps both shapes
+  // supported — form-encoded from the page, JSON from curl/test — without
+  // double-consuming the body.
   let token: string | null = null;
-  try {
-    const body = (await request.json().catch(() => ({}))) as { token?: unknown };
-    if (typeof body.token === "string") {
-      token = body.token;
-    }
-  } catch {
-    // fall through; we also check the form-encoded path below
-  }
+  const contentType = request.headers.get("content-type") || "";
 
-  // The /invitations/accept page renders an HTML <form> that posts
-  // application/x-www-form-urlencoded. Support both shapes so the same
-  // endpoint serves the page's form-submit AND a curl POST with JSON.
-  if (!token) {
-    try {
-      const form = await request.formData().catch(() => null);
-      if (form) {
-        const v = form.get("token");
-        if (typeof v === "string") token = v;
-      }
-    } catch {
-      // ignore — handled by the "token missing" branch below
+  if (contentType.includes("application/json")) {
+    const body = (await request.json().catch(() => ({}))) as { token?: unknown };
+    if (typeof body.token === "string") token = body.token;
+  } else {
+    const form = await request.formData().catch(() => null);
+    if (form) {
+      const v = form.get("token");
+      if (typeof v === "string") token = v;
     }
   }
 

@@ -884,6 +884,18 @@ If (1)/(2)/(3) point at a different home, move the button — single-component e
 
 **Severity:** low. **Trigger:** when real publishers describe a different conceptual home for "archive my book" than the current Pricing-only placement. **Suggested resolution:** audit publisher feedback after first ~5 archive events. If the pattern emerges, move; otherwise leave at Pricing as the canonical home.
 
+### ~~95. Stream E omissions — start.sh smtp.env block + accept-init body-consumption~~
+
+~~Two correctness gaps Stream E shipped to main that live testing surfaced:~~
+
+~~**(a)** Stream E added the SMTP env file consumer (`src/lib/email/client.ts`) and the `docs/operations.md` "SMTP env file" runbook, but did NOT add the matching `source /etc/bkstr/smtp.env` block to `scripts/start.sh`. An operator following the runbook would stage the env file, redeploy, and still see `[smtp] WARN: SMTP_* missing` for all 6 keys — because pm2 never receives them. Worked around live by patching start.sh in-place on the EC2; the next CodeDeploy would have overwritten the patch.~~
+
+~~**(b)** `src/app/api/invitations/accept-init/route.ts` called `request.json().catch(() => ({}))` first, then fell back to `request.formData()`. Per Fetch API, the first call consumes the body stream even when the parse fails; the formData fallback hits "Body has already been used" and yields no fields. The page-form path (the only production caller) thus returned `{"error":"token is required"}` for valid invitations. JSON-curl path was unaffected, which is why local + automated checks passed.~~
+
+~~Filed retroactively to preserve the audit trail of what Stream E didn't catch and what live testing surfaced.~~
+
+**RESOLVED-in-this-commit (Stream F):** `scripts/start.sh` now sources `/etc/bkstr/smtp.env` between the `assistant.env` and `aws.env` blocks (mirrors the existing per-service convention, retains the `# Phase 3 D9.4: ... add new ones above this comment` marker semantics). `route.ts` switched from sequential try-json-then-formData to Content-Type dispatch — body is consumed exactly once per request. Regression tests `(F-1)–(F-4)` in `src/app/api/invitations/accept-init/route.test.ts` pin both the form-POST happy path and the missing/invalid-token branches.
+
 ---
 
 *Last updated: 2026-05-12. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
