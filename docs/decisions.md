@@ -73,3 +73,41 @@ bkstr remains the primary brand in `<title>`, page H1s, and dashboard nav labels
 **Reasoning:** signals corporate parentage without diluting bkstr's product identity. The "A product by" microcopy frames TMRW Group as the platform owner, not co-equal branding. Easy to lift if bkstr ever needs standalone branding — single component edit (`dashboard-shell.tsx`), swap asset files (`public/logo-*.png`, `public/favicon*`), update metadata icons field. No nested coupling to the rest of the codebase. The Stream C patch touches one component, one metadata file, one decisions doc, and the `public/` asset folder. Zero schema, zero API routes, zero tests touched.
 
 **Cross-references:** D14.1–D14.6 are functional decisions (assistant scope, model, schema, perimeter); D14.7 is the first visual-identity decision in the running log. Future visual/brand decisions append here.
+
+---
+
+> **Note (2026-05-12):** D14.8–D14.10 describe the intended SAST baseline. Stream D shipped these decisions at `fec707e` but the CI gating mechanism was reverted at `e4ab6f5` due to a Semgrep install failure in CodeBuild (pip 26 + Python 3.11.15 wheel-resolution gap). The local `npm run security:scan` script reflects the gating intent and works correctly. CI re-merge tracked as follow-up #89. The decisions themselves remain authoritative for the eventual re-merge — re-text them verbatim into the v2 branch.
+
+### D14.8 SAST baseline tools: Semgrep + npm audit (NO Snyk, NO CodeQL, NO Sonar, NO ZAP)
+
+**Choice:** Two tools constitute the v1 SAST baseline: **Semgrep** (static code analysis via `pip install semgrep==1.162.0`, rule packs `--config=auto + p/typescript + p/react + p/nextjs + p/owasp-top-ten`) and **`npm audit`** (CVE check against `package-lock.json`). No Snyk, no CodeQL, no SonarQube, no ZAP/DAST. Local invocation via `npm run security:scan`; enforcement in `buildspec.yml` `pre_build` phase that runs the same script.
+
+**Reasoning:** Semgrep + npm audit are free, mature, low-maintenance, with established rule sets that cover Next.js / Prisma / NextAuth / Stripe surfaces. Snyk has a free tier but bills aggressively once you're past the threshold; CodeQL requires GitHub Actions integration (we're on CodeBuild per existing infra); Sonar is heavyweight and overkill for this scale; ZAP/DAST is deferred until staging exists. v1 minimalism — start with the two tools that catch 80% of the categories and add specificity later if drift accumulates.
+
+**Cross-references:** D9.5 (SDK exact-pin precedent — applied to `semgrep==1.162.0`), D14.9 (severity gating), D14.10 (suppression discipline). Follow-up: future stream when staging exists may add ZAP/DAST for runtime-attack coverage.
+
+### D14.9 Severity gating: Semgrep ERROR + npm audit high/critical fail the build; WARNING + moderate/low report-only
+
+**Choice:** `security:scan` invokes `semgrep ... --error` (non-zero exit on Semgrep ERROR) and `npm audit --audit-level=high` (non-zero exit only on high+critical). WARNING-level Semgrep findings + moderate/low npm audit findings are reported in CI output but do not fail the build.
+
+**Reasoning:** balances signal vs noise. ERROR + high/critical are unambiguous "must fix" cases — at v1 baseline scale, the gating bar lands at "stop the pipeline if any of those slip in." WARNING and moderate often include theoretical attack paths or rules with high false-positive rates; gating on them would shut down deploys for cosmetic findings. Tightening the gate upward later (gating on WARNING too) is a 1-character edit; loosening it after the team's habits adapt is operationally painful (people learn to bypass the gate). Start strict on the right things, lenient on the rest, tighten over time if drift demands.
+
+**Cross-references:** D9.4 (per-service env file pattern as the precedent for "tighten over time vs upfront"), D14.8 (tool choice), D14.10 (suppression discipline).
+
+### D14.10 Suppression discipline: inline rationale + path-level rationale; no blanket suppressions
+
+**Choice:** Every suppression of a Semgrep finding requires a written rationale, either inline (`// nosemgrep: <rule-id> -- <specific reason>`) or path-level (`.semgrepignore` with comment lines explaining what the path is and why the rule doesn't apply). Rationale must be specific — "false positive" alone is not enough; cite the framework/API/test purpose that makes the rule fire incorrectly. Blanket suppression of entire rule categories is forbidden — if a rule fires 15 times for the same reason, that's a single `.semgrepignore` pattern with one rationale, not 15 inline suppressions; but it's never "ignore this whole rule everywhere because we don't like it."
+
+**Reasoning:** the cost of a suppression is its erasure of future signal. Every untrustworthy suppression normalizes the next one. Specific rationales create an audit trail — six months from now, the next operator reading `// nosemgrep: detected-aws-access-key-id-value -- test fixture: deliberate fake AKIA pattern...` understands WHY the suppression exists and can re-evaluate it if context changes (e.g. test gets deleted; AKIA pattern becomes shorter). Generic rationales decay into "we suppressed everything." Inline-comment granularity matches the D10.x audit-trail principles (every state-changing decision has a written rationale at the point of effect). Stream D's baseline ships 2 inline suppressions (both AKIA test fixtures) — both with self-contained rationales that don't require cross-referencing.
+
+**Cross-references:** D10.1 (audit-trail principle — every meaningful state change is logged with context), D14.8 (tool choice), D14.9 (severity gating).
+
+### D14.11 Gating-proof tests for CI changes MUST run in CI itself, not locally
+
+**Choice:** Any stream that adds a CI gate or modifies the buildspec MUST include a CodeBuild-verified gating-proof as a STOP gate before merge to main. The gating-proof must: (1) push a throwaway branch with a deliberate-failure commit, (2) trigger an actual CodeBuild run against that branch (e.g. via `aws codebuild start-build --source-version <branch> --artifacts-override type=NO_ARTIFACTS`), (3) observe the build fail at the expected phase with the expected error context, (4) clean up the throwaway branch. Local execution of the gate script does NOT satisfy this requirement — local environment can mask CI-specific install/runtime failures.
+
+**Reasoning:** Stream D's original dispatch specified a gating-proof test (deliberate-ERROR throwaway PR to confirm CodeBuild halts at the security stage). The test was apparently run only against the local `npm run security:scan` script, which masked a CodeBuild-specific Semgrep install failure (pip 26 wheel-resolution gap on Python 3.11.15) that did not reproduce locally. The buildspec change merged to main, the next pipeline run failed at install — caught post-merge, requiring a revert. The cost: one revert commit on main, one pipeline cycle of operator attention, ~1 hour of debugging to root-cause. The benefit of CI-verified gating: caught at gate-2, not post-merge. Cost going forward: one additional CodePipeline run per CI-affecting stream (~3 minutes). Net positive at first incident, dominant after the second.
+
+**Scope:** applies to any change that modifies `buildspec.yml`, adds dependencies that need CI installation, or otherwise alters the CI environment. Does NOT apply to pure code changes that the existing CI happily builds. Does NOT apply to documentation-only commits. The discipline kicks in specifically when the change is "the CI itself behaves differently after this commit."
+
+**Cross-references:** D14.8 (the SAST baseline this lesson originated from), follow-up #89 (Stream D re-merge; will be the first stream to apply this discipline).

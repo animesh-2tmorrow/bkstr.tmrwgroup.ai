@@ -819,6 +819,16 @@ Three tuning paths to consider when this becomes load-bearing:
 
 Investigation artifact value: the trace is reusable. If "phantom grants" ever surface in the future (a row appears without provenance), the answer is "re-run this audit, it produced zero creation paths in production code as of 2026-05-11 — anything new is genuinely new." Compare-with-this-baseline diagnostic.
 
+### 89. Re-merge Stream D (SAST baseline with CI gating)
+
+Stream D was merged at `fec707e` on 2026-05-11, reverted at `e4ab6f5` on 2026-05-12 because Semgrep failed to install in CodeBuild (pip 26 + Python 3.11.15 + Semgrep 1.162.0 wheel-resolution gap — pip kept falling back to the sdist, and the sdist's post-install hook to fetch `semgrep-core` from GitHub Releases did not land the binary). The Stream D design, suppressions, decisions doc additions (D14.8/D14.9/D14.10), and local `npm run security:scan` all worked correctly — only the CI install path was broken.
+
+**Fix plan:** switch CodeBuild install from `pip install semgrep==1.162.0` to downloading the Semgrep GitHub release binary directly (Option (c) from the original fix-attempt analysis). Bypasses pip entirely, ~3–4 lines of buildspec. Re-applying the `// nosemgrep:` suppressions on `src/lib/admin/assistant/agent.test.ts:203` and `:217` (the AKIA test fixtures, with the rationale text from Gate 1 approval — "test fixture: deliberate fake AKIA pattern feeding the error-sanitization regression test per D14.4...") is part of v2's scope since the revert removed them along with the rest of Stream D's diff. The cosmetic refactor on `src/lib/admin/assistant/agent.ts:314` (template-literal → positional args for `console.error`) also re-lands.
+
+**Verification discipline this time:** the gating-proof test MUST run inside CodeBuild (push a deliberate-ERROR throwaway branch, observe the CodeBuild build fail at the security stage, then revert). NOT just locally. The original Stream D failed in CI because the test was only run locally and the install was assumed to work in CI by analogy — captured as D14.11.
+
+**Severity:** medium. **Trigger:** when operator has time for a careful re-merge — not urgent (`npm run security:scan` works locally as a manual scan path; bkstr's SAST findings are clean, so the absence of CI gating doesn't introduce new risk, just doesn't enforce against future regressions). **Branch:** `phase-5/stream-d-ci-install-fix-v2` (do NOT reuse the v1 fix branch `phase-5/stream-d-ci-install-fix` which is muddied with attempts; leave it as historical context for now, delete later when v2 lands).
+
 ---
 
-*Last updated: 2026-05-11. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
+*Last updated: 2026-05-12. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
