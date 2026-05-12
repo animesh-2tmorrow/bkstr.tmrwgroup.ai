@@ -8,7 +8,6 @@
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "security:scan": "semgrep --config=auto --config=p/typescript --config=p/react --config=p/nextjs --config=p/owasp-top-ten --error src/ && npm audit --audit-level=high",
     "import-book": "tsx scripts/import-book.ts",
     "migrate-content-to-s3": "tsx scripts/migrate-content-to-s3.ts"
   },

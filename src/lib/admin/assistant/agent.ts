@@ -311,7 +311,7 @@ export async function* runAgent(
             // payload with an error field rather than aborting the whole
             // conversation. The model can decide whether to retry, ask the
             // user for clarification, or give up.
-            console.error("[assistant] tool", block.name, "threw:", toolErr);
+            console.error(`[assistant] tool '${block.name}' threw:`, toolErr);
             output = {
               error: sanitizeAgentError(toolErr),
             };

@@ -73,29 +73,3 @@ bkstr remains the primary brand in `<title>`, page H1s, and dashboard nav labels
 **Reasoning:** signals corporate parentage without diluting bkstr's product identity. The "A product by" microcopy frames TMRW Group as the platform owner, not co-equal branding. Easy to lift if bkstr ever needs standalone branding — single component edit (`dashboard-shell.tsx`), swap asset files (`public/logo-*.png`, `public/favicon*`), update metadata icons field. No nested coupling to the rest of the codebase. The Stream C patch touches one component, one metadata file, one decisions doc, and the `public/` asset folder. Zero schema, zero API routes, zero tests touched.
 
 **Cross-references:** D14.1–D14.6 are functional decisions (assistant scope, model, schema, perimeter); D14.7 is the first visual-identity decision in the running log. Future visual/brand decisions append here.
-
-## Phase 5 Stream D — SAST baseline + CodeBuild gating (2026-05-12)
-
-### D14.8 SAST baseline tools: Semgrep + npm audit (NO Snyk, NO CodeQL, NO Sonar, NO ZAP)
-
-**Choice:** Two tools constitute the v1 SAST baseline: **Semgrep** (static code analysis via `pip install semgrep==1.162.0`, rule packs `--config=auto + p/typescript + p/react + p/nextjs + p/owasp-top-ten`) and **`npm audit`** (CVE check against `package-lock.json`). No Snyk, no CodeQL, no SonarQube, no ZAP/DAST. Local invocation via `npm run security:scan`; enforcement in `buildspec.yml` `pre_build` phase that runs the same script.
-
-**Reasoning:** Semgrep + npm audit are free, mature, low-maintenance, with established rule sets that cover Next.js / Prisma / NextAuth / Stripe surfaces. Snyk has a free tier but bills aggressively once you're past the threshold; CodeQL requires GitHub Actions integration (we're on CodeBuild per existing infra); Sonar is heavyweight and overkill for this scale; ZAP/DAST is deferred until staging exists. v1 minimalism — start with the two tools that catch 80% of the categories and add specificity later if drift accumulates.
-
-**Cross-references:** D9.5 (SDK exact-pin precedent — applied to `semgrep==1.162.0`), D14.9 (severity gating), D14.10 (suppression discipline). Follow-up: future stream when staging exists may add ZAP/DAST for runtime-attack coverage.
-
-### D14.9 Severity gating: Semgrep ERROR + npm audit high/critical fail the build; WARNING + moderate/low report-only
-
-**Choice:** `security:scan` invokes `semgrep ... --error` (non-zero exit on Semgrep ERROR) and `npm audit --audit-level=high` (non-zero exit only on high+critical). WARNING-level Semgrep findings + moderate/low npm audit findings are reported in CI output but do not fail the build.
-
-**Reasoning:** balances signal vs noise. ERROR + high/critical are unambiguous "must fix" cases — at v1 baseline scale, the gating bar lands at "stop the pipeline if any of those slip in." WARNING and moderate often include theoretical attack paths or rules with high false-positive rates; gating on them would shut down deploys for cosmetic findings. Tightening the gate upward later (gating on WARNING too) is a 1-character edit; loosening it after the team's habits adapt is operationally painful (people learn to bypass the gate). Start strict on the right things, lenient on the rest, tighten over time if drift demands.
-
-**Cross-references:** D9.4 (per-service env file pattern as the precedent for "tighten over time vs upfront"), D14.8 (tool choice), D14.10 (suppression discipline).
-
-### D14.10 Suppression discipline: inline rationale + path-level rationale; no blanket suppressions
-
-**Choice:** Every suppression of a Semgrep finding requires a written rationale, either inline (`// nosemgrep: <rule-id> -- <specific reason>`) or path-level (`.semgrepignore` with comment lines explaining what the path is and why the rule doesn't apply). Rationale must be specific — "false positive" alone is not enough; cite the framework/API/test purpose that makes the rule fire incorrectly. Blanket suppression of entire rule categories is forbidden — if a rule fires 15 times for the same reason, that's a single `.semgrepignore` pattern with one rationale, not 15 inline suppressions; but it's never "ignore this whole rule everywhere because we don't like it."
-
-**Reasoning:** the cost of a suppression is its erasure of future signal. Every untrustworthy suppression normalizes the next one. Specific rationales create an audit trail — six months from now, the next operator reading `// nosemgrep: detected-aws-access-key-id-value -- test fixture: deliberate fake AKIA pattern...` understands WHY the suppression exists and can re-evaluate it if context changes (e.g. test gets deleted; AKIA pattern becomes shorter). Generic rationales decay into "we suppressed everything." Inline-comment granularity matches the D10.x audit-trail principles (every state-changing decision has a written rationale at the point of effect). Stream D's baseline ships 2 inline suppressions (both AKIA test fixtures) — both with self-contained rationales that don't require cross-referencing.
-
-**Cross-references:** D10.1 (audit-trail principle — every meaningful state change is logged with context), D14.8 (tool choice), D14.9 (severity gating).
