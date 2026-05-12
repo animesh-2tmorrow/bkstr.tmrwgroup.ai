@@ -60,6 +60,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "token is required" }, { status: 400 });
   }
 
+  // Phase 5 Stream G — Next.js 15 App Router's `request.url` uses the
+  // upstream listen address (e.g. localhost:3000) regardless of the
+  // Host / X-Forwarded-Host headers, so it CAN'T be used as the base
+  // for an absolute redirect behind a reverse proxy. The Location
+  // header would point at the wrong origin and the browser would
+  // either fail TLS handshake or land somewhere unreachable. Use
+  // NEXTAUTH_URL — the canonical public origin already validated for
+  // NextAuth's own callbacks. Hard-fail 500 if absent rather than
+  // silently falling back to request.url (which is the broken path).
+  const publicOrigin = process.env.NEXTAUTH_URL;
+  if (!publicOrigin) {
+    return NextResponse.json(
+      { error: "NEXTAUTH_URL is not configured" },
+      { status: 500 },
+    );
+  }
+
   // Validate BEFORE setting the cookie. An invalid token (expired,
   // already-accepted, never-existed) returns 400 with a clear error;
   // the cookie is never set so the subsequent OAuth flow can't pick up
@@ -75,7 +92,7 @@ export async function POST(request: Request) {
   // Set the cookie + redirect to NextAuth signin. The
   // events.signIn hook in src/lib/auth/index.ts reads the cookie after
   // OAuth completes.
-  const response = NextResponse.redirect(new URL(safeRedirectPath(), request.url), {
+  const response = NextResponse.redirect(new URL(safeRedirectPath(), publicOrigin), {
     status: 303, // POST → GET redirect; browsers issue a GET for /api/auth/signin
   });
   response.cookies.set({

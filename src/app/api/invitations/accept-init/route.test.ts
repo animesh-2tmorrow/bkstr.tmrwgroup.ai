@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Phase 5 Stream F — regression test for the body-consumption fix.
 //
@@ -41,12 +41,32 @@ const VALID_INVITATION = {
   acceptedAt: null,
 };
 
+// Stream G — fix the redirect-origin bug where `request.url` (Next.js's
+// upstream listen address, e.g. localhost:3000) was used as the base
+// for the Location header. Replaced with process.env.NEXTAUTH_URL.
+// G-1/G-2 pin the new contract; F-1 tightened from a loose `endsWith`
+// match (which passed against the buggy localhost Location) to exact
+// origin equality + explicit `not.toContain("localhost")`.
+
+const TEST_NEXTAUTH_URL = "https://bkstr.tmrwgroup.ai";
+let originalNextAuthUrl: string | undefined;
+
 beforeEach(() => {
   findValidInvitationByTokenMock.mockReset();
+  originalNextAuthUrl = process.env.NEXTAUTH_URL;
+  process.env.NEXTAUTH_URL = TEST_NEXTAUTH_URL;
 });
 
-describe("accept-init route — body consumption", () => {
-  it("(F-1) form-encoded POST extracts token and 303-redirects with cookie", async () => {
+afterEach(() => {
+  if (originalNextAuthUrl === undefined) {
+    delete process.env.NEXTAUTH_URL;
+  } else {
+    process.env.NEXTAUTH_URL = originalNextAuthUrl;
+  }
+});
+
+describe("accept-init route — body consumption + redirect origin", () => {
+  it("(F-1) form-encoded POST extracts token and 303-redirects to NEXTAUTH_URL with cookie", async () => {
     findValidInvitationByTokenMock.mockResolvedValue(VALID_INVITATION);
 
     const body = new URLSearchParams({ token: VALID_TOKEN }).toString();
@@ -59,7 +79,8 @@ describe("accept-init route — body consumption", () => {
     const res = await POST(req);
 
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toMatch(/\/api\/auth\/signin$/);
+    expect(res.headers.get("location")).toBe(`${TEST_NEXTAUTH_URL}/api/auth/signin`);
+    expect(res.headers.get("location")).not.toContain("localhost");
 
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie).toContain(`${PENDING_INVITATION_COOKIE}=${VALID_TOKEN}`);
@@ -82,6 +103,7 @@ describe("accept-init route — body consumption", () => {
     const res = await POST(req);
 
     expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`${TEST_NEXTAUTH_URL}/api/auth/signin`);
     expect(findValidInvitationByTokenMock).toHaveBeenCalledWith(VALID_TOKEN);
   });
 
@@ -113,6 +135,47 @@ describe("accept-init route — body consumption", () => {
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.error).toMatch(/invalid|expired|already accepted/i);
+    expect(res.headers.get("set-cookie")).toBeFalsy();
+  });
+
+  it("(G-1) Location uses NEXTAUTH_URL host, NOT request.url host", async () => {
+    process.env.NEXTAUTH_URL = "https://prod.example.com";
+    findValidInvitationByTokenMock.mockResolvedValue(VALID_INVITATION);
+
+    // Request URL deliberately uses a DIFFERENT host (mimicking Next.js's
+    // upstream listen address behind a reverse proxy). If the fix
+    // regresses to `request.url`, the Location will leak the internal
+    // host and this test fails.
+    const body = new URLSearchParams({ token: VALID_TOKEN }).toString();
+    const req = new Request("http://upstream-internal.local:3000/api/invitations/accept-init", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("https://prod.example.com/api/auth/signin");
+    expect(res.headers.get("location")).not.toContain("upstream-internal");
+    expect(res.headers.get("location")).not.toContain(":3000");
+  });
+
+  it("(G-2) missing NEXTAUTH_URL returns 500 (fail-loud, not a broken redirect)", async () => {
+    delete process.env.NEXTAUTH_URL;
+    findValidInvitationByTokenMock.mockResolvedValue(VALID_INVITATION);
+
+    const body = new URLSearchParams({ token: VALID_TOKEN }).toString();
+    const req = new Request("http://localhost/api/invitations/accept-init", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toMatch(/NEXTAUTH_URL/i);
     expect(res.headers.get("set-cookie")).toBeFalsy();
   });
 });

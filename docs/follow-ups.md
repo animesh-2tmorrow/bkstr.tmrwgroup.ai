@@ -896,6 +896,26 @@ If (1)/(2)/(3) point at a different home, move the button — single-component e
 
 **RESOLVED-in-this-commit (Stream F):** `scripts/start.sh` now sources `/etc/bkstr/smtp.env` between the `assistant.env` and `aws.env` blocks (mirrors the existing per-service convention, retains the `# Phase 3 D9.4: ... add new ones above this comment` marker semantics). `route.ts` switched from sequential try-json-then-formData to Content-Type dispatch — body is consumed exactly once per request. Regression tests `(F-1)–(F-4)` in `src/app/api/invitations/accept-init/route.test.ts` pin both the form-POST happy path and the missing/invalid-token branches.
 
+### ~~96. accept-init Location header pointed at `https://localhost:3000` behind reverse proxy~~
+
+~~Surfaced during Shaminder's invitation attempt at 06:06:53 (UTC, 2026-05-12): the form-POST returned 303 (Stream F fix working) but the `Location` header was `https://localhost:3000/api/auth/signin`. Browser tried TLS to localhost:3000, got non-TLS response from his local machine (or no listener at all), surfaced `ERR_SSL_PROTOCOL_ERROR`. No follow-up requests from his IP after the 303.~~
+
+~~**Root cause:** the route built the absolute redirect URL via `new URL(safeRedirectPath(), request.url)`. In Next.js 15 App Router, `request.url` behind a reverse proxy uses the upstream listen address (`localhost:3000`) regardless of `Host` / `X-Forwarded-Host` headers — only `X-Forwarded-Proto` is honored for the scheme. nginx properly forwarded `Host: bkstr.tmrwgroup.ai` but Next.js did not consult it.~~
+
+~~**Why Stream F missed it:** the F-1 regression test asserted `expect(location).toMatch(/\/api\/auth\/signin$/)` — a suffix match that passed against both the correct value (`https://bkstr.tmrwgroup.ai/api/auth/signin`) AND the buggy value (`https://localhost:3000/api/auth/signin`). Loose assertion; real bug slipped through.~~
+
+**RESOLVED-in-this-commit (Stream G):** route now uses `process.env.NEXTAUTH_URL` (the canonical public origin already required for NextAuth callbacks) as the redirect base; hard-fails with 500 if NEXTAUTH_URL is missing rather than silently falling back to the broken `request.url` path. F-1 tightened to exact origin equality + explicit `not.toContain("localhost")`. Added G-1 (Location must use NEXTAUTH_URL host, not request.url host — explicitly uses a different host in the request URL to catch the regression) and G-2 (missing NEXTAUTH_URL returns 500). General lesson logged: assertions against URL fields should use exact equality on the full URL, not suffix/regex matches that gloss over the origin.
+
+### 97. Any future Next.js App Router redirect that needs an absolute URL must NOT use `request.url`
+
+Stream G fixed the one site that hit this (`accept-init/route.ts`). If a future contributor adds another `NextResponse.redirect(new URL(path, request.url))` they'll re-introduce the same class of bug. Mitigations to consider:
+
+- Lint rule / grep guard in CI: reject `NextResponse.redirect(.*request\.url` in `src/**/route.ts`.
+- A helper `buildPublicUrl(path: string): URL` in `src/lib/url.ts` that internally reads `NEXTAUTH_URL` and is the only sanctioned way to build absolute redirect URLs — code review enforces "use the helper, not raw `new URL`."
+- Upgrade to NextAuth v5 once stable — `AUTH_TRUST_HOST` reads forwarded headers and would make `request.url` correct (eliminating the trap entirely). Currently on v4.24.
+
+**Severity:** medium — repeat occurrences are likely; the pattern looks correct at a glance. **Suggested resolution:** add the helper + grep guard during the next observability/hardening pass; defer NextAuth v5 upgrade until v5 GA + bkstr has bandwidth for the migration.
+
 ---
 
 *Last updated: 2026-05-12. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
