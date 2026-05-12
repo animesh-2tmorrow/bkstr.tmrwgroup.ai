@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
@@ -16,11 +17,24 @@ export const dynamic = "force-dynamic";
 // refund flow) would land here. The Stripe Dashboard payment-intent link is a
 // best-effort linkify — operators clicking through can verify the charge and,
 // in Phase 4, issue refunds.
+//
+// Phase 5 Stream H.1 — replaced toLocaleDateString() with a stable ISO date
+// helper to fix the React #418 hydration mismatch caught in the v1 audit.
+// Empty-state link routes to /storefront (the public ecommerce surface from
+// Stream H.1) so an empty buyer is funneled into the catalog rather than
+// bouncing back to their own empty Active Books table.
 
 const STRIPE_DASHBOARD_BASE =
   process.env.NODE_ENV === "production"
     ? "https://dashboard.stripe.com/payments"
     : "https://dashboard.stripe.com/test/payments";
+
+// Format a Date as a stable ISO date string (YYYY-MM-DD) to avoid React #418
+// hydration mismatch caused by toLocaleDateString() rendering differently on
+// server vs. client when locale or timezone differs.
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
 
 export default async function BillingPage() {
   const session = await auth();
@@ -79,12 +93,15 @@ export default async function BillingPage() {
           <tbody className="divide-y divide-[#E5DCC8]">
             {grants.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
-                  No purchases yet. Buy a book from the{" "}
-                  <a href="/dashboard" className="font-semibold underline hover:no-underline">
-                    Active Books
-                  </a>{" "}
-                  page.
+                <td colSpan={4} className="px-6 py-10 text-center text-gray-500">
+                  No purchases yet.{" "}
+                  <Link
+                    href="/storefront"
+                    className="font-semibold text-gray-900 underline hover:no-underline"
+                  >
+                    Browse the storefront
+                  </Link>{" "}
+                  to buy a book.
                 </td>
               </tr>
             )}
@@ -96,19 +113,19 @@ export default async function BillingPage() {
                     <div className="font-bold text-gray-900">{g.book.title}</div>
                     <div className="text-xs text-gray-500 font-mono mt-1">{g.book.slug}</div>
                   </td>
-                  <td className="px-6 py-4">
-                    <span title={g.grantedAt.toLocaleString()}>
-                      {g.grantedAt.toLocaleDateString()}
-                    </span>
+                  {/* Use stable ISO date to avoid React #418 hydration mismatch */}
+                  <td className="px-6 py-4 tabular-nums text-gray-700">
+                    {isoDate(g.grantedAt)}
                   </td>
                   <td className="px-6 py-4">
                     {g.revokedAt ? (
-                      <span className="inline-flex items-center gap-1.5 bg-[#EAE2D0] text-gray-600 px-2 py-1 rounded text-xs font-bold">
+                      <span className="inline-flex items-center gap-1.5 bg-[#EAE2D0] text-gray-600 px-2.5 py-1 rounded-md text-xs font-semibold">
                         Revoked
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 px-2 py-1 rounded text-xs font-bold">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span> Active
+                      <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 px-2.5 py-1 rounded-md text-xs font-semibold border border-green-100">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                        Active
                       </span>
                     )}
                   </td>
@@ -118,7 +135,7 @@ export default async function BillingPage() {
                         href={`${STRIPE_DASHBOARD_BASE}/${piId}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="font-mono text-xs underline hover:no-underline text-gray-700"
+                        className="font-mono text-xs text-gray-600 underline hover:no-underline hover:text-black transition-colors"
                       >
                         {piId}
                       </a>

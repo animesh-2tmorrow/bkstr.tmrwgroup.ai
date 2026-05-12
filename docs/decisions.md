@@ -180,3 +180,42 @@ The archive button placement is **`/dashboard/pricing` only for v1** (Q2). Not A
 **Reasoning:** Public-read on the cover-image prefix is the smallest amount of policy change that lets `next/image` work end-to-end without a server-side image proxy. The tradeoff is that ANY file uploaded under `book-covers/*` becomes world-discoverable forever — mitigations live in the route (MIME allowlist, size cap, owner-gated upload) plus operational discipline (publishers know "cover" means publicly visible). The MIME allowlist runs BEFORE any S3 call so a misconfigured client can't write a non-image object under the public prefix. The domain-initial fallback is intentionally cheap (no second S3 lookup, no asset bundling) — it ships zero-asset, future-proof against new domain values, and the colour palette is deterministic by hash so the same domain string always picks the same tile colour. Public-read is reversible: a future Stream can swap to signed URLs without DB or column shape changes (follow-up #98 tracks that path).
 
 **Cross-references:** D9.2 (s3Client singleton + dual-storage seam — reused here), D9.4 (per-service env files at `/etc/bkstr/aws.env`), D10.3 (boot-time WARN-on-missing pattern), D15.4 (fail-graceful env-staging precedent), follow-ups #98 (signed-URL hardening), #99 (consolidate cover bucket policy + cross-account credentials path if it ever ships).
+
+## Phase 5 Stream H.1 — storefront-first homepage + Manus polish integration (2026-05-12)
+
+### D15.7 `/` redirects to `/storefront`; marketing landing relocates to `/about`
+
+**Choice:** the root route is now a server-side `redirect("/storefront")`. The previous marketing landing — hero ("High-density knowledge / Zero context waste"), Compression Pipeline three-step explainer, Registry Highlights cards, Starter/Growth/Enterprise pricing tiers, full footer — moves to `/about` verbatim. The `/about` page's Hero CTAs are rewired: "Start free trial" → "Browse books" (→ /storefront), and the secondary CTA still points to /signup. The `/about` header gains a "Browse books" link alongside Log in / Start trial. The storefront's footer gains a `/about` link so the discovery loop closes from both sides.
+
+**Reasoning:** Edward's direction is storefront-first — the public-facing homepage should let a buyer browse + purchase in one click, not read marketing copy. The marketing copy isn't worthless (it explains what bkstr is for visitors who don't know yet), so it's preserved at `/about` rather than deleted. Two-way discoverability: `/about → Browse books → /storefront` and `/storefront → About → /about` so neither surface dead-ends. The redirect is server-side (Next.js `redirect()` returns 307) — no client JS, no flash, no SEO penalty (Google understands 307 cleanly).
+
+**Cross-references:** Stream H (D15.6) shipped the storefront at `/storefront`; this stream's redirect moves it to the public homepage slot. The marketing copy at `/about` is byte-identical to the prior `/page.tsx` except for the CTA wiring + header nav addition.
+
+### D15.8 Date rendering must be locale-independent
+
+**Choice:** any date rendered in a React component MUST use a deterministic, locale-independent format. The canonical patterns:
+- Date only: `d.toISOString().slice(0, 10)` → `"2026-05-12"`
+- Date + minute: `d.toISOString().slice(0, 16).replace("T", " ")` → `"2026-05-12 14:23"`
+- Relative time fallback (e.g. for ">30 days ago"): same as date-only.
+
+`toLocaleString()`, `toLocaleDateString()`, `toLocaleTimeString()`, and `Intl.DateTimeFormat` are FORBIDDEN in render paths unless the locale is explicitly pinned (`new Intl.DateTimeFormat('en-US', { ... })`). Tooltips (`title=""`) are not strictly load-bearing for hydration but should still follow the rule.
+
+**Reasoning:** React #418 hydration mismatch surfaced on three pages in the v1 audit (`/dashboard/pricing`, `/dashboard/admin/grants`, `/dashboard/fetch-logs?book=<uuid>`). Root cause: server (Node, locale=`en-US`, TZ=`UTC`) and client (browser, locale=user, TZ=user) render `toLocaleDateString()` differently. The server emits `"5/12/2026"`, the client hydrates expecting `"12/05/2026"` (or vice versa), React aborts hydration, falls back to client re-render. Cosmetic — pages render — but the warning forces a re-render and is the kind of warning that hides real bugs. Stream H.1 fixes all three known sites (billing, pricing-form, fetch-logs-table, admin-grants-table). Going forward, the rule prevents reintroduction. A grep guard during a future hardening pass (`grep -r "toLocaleString\|toLocaleDateString" src/`) would enforce this at CI time — file as follow-up.
+
+**Cross-references:** v1 audit + v2 audit (both flagged #418), follow-ups #100 (CI grep guard for toLocale*), #104 (fetch-logs tooltip residual).
+
+### D15.9 Manus integration: take design + polish, reject scope-bundled cleanup
+
+**Choice:** Manus's vendor zip ("bkstr-final-delivery") shipped a storefront design + cover image work that overlaps with Stream H (already on main) plus several drive-by changes. Disposition:
+
+**Taken** (real value, narrow scope): the `aspect-[4/3]` cover tile + `humanDomain()` helper + `callbackUrl=/storefront` login redirect + "Already Owned" checkmark icon (Manus's storefront refinements over Stream H); the `isoDate` hydration fix in billing + the `/storefront` empty-state link (Manus's billing edits); the three one-line hydration fixes in pricing-form / fetch-logs-table / admin-grants-table; the access-cell cosmetic polish.
+
+**Rejected**: Manus's `dashboard-shell.tsx` removed the `Usage Metrics` + `Team Access` placeholder nav links bundled with cosmetic tweaks. The placeholder removal is a deliberate scope decision (the items are documented as features in /dashboard/docs from Stream A); removing them needs a corresponding docs update via a dedicated stream, not a drive-by change inside a feature commit. Manus's cosmetic dashboard-shell tweaks are not worth the bundling risk; if any are wanted, they get a follow-up commit of their own.
+
+**No-op** (Manus's version identical to current main): api/storefront/books/route.ts, api/books/[id]/cover/route.ts, next.config.ts, prisma/schema.prisma, the migration.sql. Stream H already shipped these.
+
+**Not committed** (security): the vendor `CLAUDE_CODE_INSTRUCTIONS.md` contained the IAM access key (`AKIAQXAGJMD6LHGLXCMM` + secret) in cleartext for the second time. The key is already rotated per operator action; the doc is excluded from this commit.
+
+**Reasoning:** the dispatch's "Manus delivery is a STARTING POINT, not a spec" framing is the right model. Cherry-pick the design refinements + real bug fixes; reject the bundled cleanups that would erode the repo's stream-by-stream discipline; ignore the no-op overlaps. The `dashboard-shell.tsx` rejection is the most important — letting vendor drops silently delete nav placeholders would mean the "what does this product look like to a logged-in user" question gets answered by whoever ships the latest design package, not by the stream-by-stream scope discipline that's been the backbone of Phase 5.
+
+**Cross-references:** Stream H (D15.6) — first-pass cover images this stream refines; D2.4 / D9.4 (IAM role + per-service env files — preserved despite Manus's env-var-credentials suggestion); follow-ups #100-104 (filed for items deferred from this stream).

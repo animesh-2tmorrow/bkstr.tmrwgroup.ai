@@ -203,7 +203,8 @@ export function PricingForm({
                   {b.stripePriceId ?? <span className="text-gray-400">—</span>}
                 </td>
                 <td className="px-6 py-4 text-xs text-gray-600">
-                  {b.updatedAt ? new Date(b.updatedAt).toLocaleString() : "—"}
+                  {/* Stream H.1 — stable ISO date avoids React #418 hydration mismatch */}
+                  {b.updatedAt ? new Date(b.updatedAt).toISOString().slice(0, 16).replace("T", " ") : "—"}
                 </td>
                 <td className="px-6 py-4 text-right">
                   {b.status ? (

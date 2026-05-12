@@ -1337,3 +1337,126 @@ If step 3 returns 403, the bucket policy isn't applied (or the prefix doesn't ma
 - **Reverting** is a code + ops dance: drop the bucket policy statement, delete `cover_image_url` column (or leave it — nullable is harmless), revert the route + storefront. Follow-up #98 includes a signed-URL swap that doesn't require any DB change.
 
 ---
+
+## Stream H.1 operator actions (one-time, post-deploy)
+
+After Stream H.1 (`feat(storefront): public storefront + book covers ...`) lands on main and the pipeline deploys, **six operator-side actions** complete the wiring. None of these are in the code commit; all happen on EC2 / AWS Console / DB.
+
+### 1. Stage the cover-image URLs in the DB
+
+The 6 PNGs are already in `s3://bkstr-tmrw-prod/book-covers/` (uploaded out-of-band by Manus). The DB rows still have `cover_image_url IS NULL`. Run the staged SQL once:
+
+```bash
+# SSH / SSM into EC2
+psql "$DATABASE_URL" -f /tmp/update_book_covers.sql
+```
+
+The SQL is idempotent (UPDATE by `slug`); re-running is safe. Verification at the bottom of the file prints the resulting `slug → cover_image_url` mapping.
+
+**SQL contents:**
+```sql
+UPDATE books SET cover_image_url = 'https://bkstr-tmrw-prod.s3.us-east-1.amazonaws.com/book-covers/ci-diagnostics.png' WHERE slug = 'ci-diagnostics';
+UPDATE books SET cover_image_url = 'https://bkstr-tmrw-prod.s3.us-east-1.amazonaws.com/book-covers/developer-churn.png' WHERE slug = 'developer-churn';
+UPDATE books SET cover_image_url = 'https://bkstr-tmrw-prod.s3.us-east-1.amazonaws.com/book-covers/docker-patterns.png' WHERE slug = 'docker-patterns';
+UPDATE books SET cover_image_url = 'https://bkstr-tmrw-prod.s3.us-east-1.amazonaws.com/book-covers/gif-grep.png' WHERE slug = 'gif-grep';
+UPDATE books SET cover_image_url = 'https://bkstr-tmrw-prod.s3.us-east-1.amazonaws.com/book-covers/hermes-dogfood.png' WHERE slug = 'hermes-dogfood';
+UPDATE books SET cover_image_url = 'https://bkstr-tmrw-prod.s3.us-east-1.amazonaws.com/book-covers/node-connect.png' WHERE slug = 'node-connect';
+SELECT slug, cover_image_url FROM books ORDER BY slug;
+```
+
+(`node-connect` is currently ARCHIVED — the UPDATE still writes the row, but the storefront's `WHERE status = 'ACTIVE'` filter means its cover won't render on /storefront. The dashboard's Active Books surface — which retains ARCHIVED-with-grant rows per D15.5 — would display it.)
+
+### 2. Apply the `PublicReadBookCovers` bucket policy
+
+AWS Console → S3 → bkstr-tmrw-prod → Permissions → Bucket Policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublicReadBookCovers",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::bkstr-tmrw-prod/book-covers/*"
+    }
+  ]
+}
+```
+
+Verify with `curl -sI https://bkstr-tmrw-prod.s3.us-east-1.amazonaws.com/book-covers/ci-diagnostics.png` — expect HTTP 200 + `Content-Type: image/png`. Without this policy applied, the storefront falls through to the domain-initial placeholder tile silently (via `next/image onError`).
+
+### 3. Switch cover route to IAM-role-only auth
+
+Per Stream H.1 D15.7 locked decisions + dispatch, the cover route uses the default AWS credentials chain. **The chain prefers env vars over IMDSv2.** While `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` live in `/etc/bkstr/aws.env`, the route (and every other AWS-using path including Bedrock for the admin assistant) uses those keys instead of the EC2 instance profile. To get to IAM-role-only access:
+
+```bash
+# SSM into EC2
+# 1. Strip AWS_* credentials from the env file (keep AWS_REGION — not a credential)
+sudo sed -i '/^AWS_ACCESS_KEY_ID=/d; /^AWS_SECRET_ACCESS_KEY=/d; /^S3_BUCKET=/d' /etc/bkstr/aws.env
+
+# 2. Tighten perms to match D9.4
+sudo chmod 600 /etc/bkstr/aws.env
+sudo chown root:root /etc/bkstr/aws.env
+
+# 3. Drop the running env (pm2 reload --update-env MERGES, doesn't replace — must delete + restart)
+sudo -u ubuntu PM2_HOME=/home/ubuntu/.pm2 pm2 delete bkstr-web
+
+# 4. Trigger a fresh CodeDeploy via the pipeline, OR restart via start.sh manually:
+cd /var/www/bkstr
+sudo -u ubuntu -E bash scripts/start.sh
+```
+
+After this, the AWS SDK falls through to the IMDSv2 instance profile. `pm2 env 0 | grep -E '^AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)'` should return empty (confirms drop).
+
+### 4. Grant the EC2 instance profile `s3:PutObject` on the cover prefix
+
+IAM Console → Roles → `bkstr-ec2-role` (or whatever the EC2 instance is attached to — check via `aws sts get-caller-identity` from the box) → add an inline policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BkstrCoverUploads",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:PutObjectAcl"],
+      "Resource": "arn:aws:s3:::bkstr-tmrw-prod/book-covers/*"
+    }
+  ]
+}
+```
+
+(`s3:PutObjectAcl` is technically not needed since the bucket policy from step 2 handles public read and `BucketOwnerEnforced` Object Ownership disables ACLs anyway — but including it is defensive and harmless.)
+
+The cover route already imports `s3Client` from `@/lib/storage/book-content` (default credentials chain); once env-var creds are gone (step 3) and IAM is granted (step 4), publisher cover uploads work end-to-end against the instance profile.
+
+### 5. Verify the rotated leaked IAM access key
+
+The leaked `AKIAQXAGJMD6LHGLXCMM` (from Manus's `CLAUDE_CODE_INSTRUCTIONS.md`) was rotated. Confirm it's fully disabled:
+
+```bash
+# From a workstation with admin AWS access:
+aws iam list-access-keys --user-name bkstr-s3-user --output table
+# Confirm: AKIAQXAGJMD6LHGLXCMM is either gone or Status=Inactive.
+# If any other unused-but-active keys exist on the same user, deactivate them too.
+```
+
+If steps 3+4 are complete, the `bkstr-s3-user` IAM user may no longer be needed at all — the EC2 instance profile carries the S3 permissions. Consider deleting the user after a few days of confirmed IAM-role-only operation.
+
+### 6. Sanity-check storefront end-to-end
+
+```bash
+# (After step 1+2 are done)
+# 1. Visit https://bkstr.tmrwgroup.ai/ — expect 307 redirect to /storefront.
+# 2. Storefront should render with 5 ACTIVE books, each showing a cover image
+#    (not a domain-initial placeholder tile).
+# 3. Click "Buy Now" while logged out — expect redirect to /login?callbackUrl=/storefront.
+# 4. After Google OAuth, return to /storefront, click Buy Now — proceeds to Stripe Checkout.
+# 5. /about — marketing landing renders with "Browse books" CTAs pointing to /storefront.
+```
+
+If any step 3 storefront cover fails to load (browser shows the pastel placeholder tile), the bucket policy isn't applied. Step 6.1 redirect failing = redeploy issue. Step 4 failing on first login = NEXTAUTH_URL drift (re-verify via Stream G fix invariants).
+
+---

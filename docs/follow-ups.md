@@ -933,6 +933,36 @@ If `bkstr-tmrw-prod` ever moves to a different AWS account from the deployed EC2
 
 **Severity:** low — Edward picked one bucket for v1; both fit in one account. **Trigger:** if covers move to a TMRW-corporate AWS account separate from the bkstr deployment account. **Suggested resolution:** introduce `src/lib/storage/cover-upload.ts` with its own lazy-Proxy S3Client (D10.4 pattern), reading cover-specific env vars (`BKSTR_COVERS_BUCKET`, `BKSTR_COVERS_AWS_ACCESS_KEY_ID`, etc.). Until then, the shared singleton is fine.
 
+### 100. CI grep guard against `toLocale*` in render paths
+
+Stream H.1 fixed four sites that rendered locale-dependent date strings, hitting React #418 hydration mismatch. D15.8 locks the rule going forward: deterministic ISO formatting only. Without a grep guard at CI time, a future contributor will reintroduce `toLocaleString()` in a render path and the warning will re-emerge.
+
+**Severity:** low. **Trigger:** when CI guards are next overhauled (currently no Semgrep / no custom lint rule). **Suggested resolution:** add a CI step that runs `grep -rE 'toLocale(String|DateString|TimeString)' src/` and fails the build if any matches land inside a `.tsx`/`.ts` file used in render. Allowlist tooltip `title=""` attributes (not strictly load-bearing for hydration) if the false-positive rate is high.
+
+### 101. Cover upload route — missing `admin_actions` audit row for cross-publisher uploads
+
+`POST /api/books/[id]/cover` lets an ADMIN upload a cover to ANY book (including ones owned by another publisher). D12.7 precedent says ADMIN mutations write a row to `admin_actions`. The current route doesn't. The PUBLISHER-uploading-own-book path arguably doesn't need an audit row (matches the new-book-create path's discipline), but the ADMIN-cross-publisher case absolutely should.
+
+**Severity:** medium for the audit-trail invariant; low for actual ops because covers are reversible (overwrite or set NULL). **Suggested resolution:** wrap the prisma.book.update in a `prisma.$transaction` that also calls `writeAuditEntry(tx, { actionType: "book.cover_upload", targetType: "book", targetId: bookId, beforeState: { coverImageUrl: prev }, afterState: { coverImageUrl: new } })` — but ONLY when `session.user.role === Role.ADMIN && book.publisherUserId !== session.user.id`.
+
+### 102. Cover upload route — S3 PUT + DB UPDATE are not atomic
+
+The cover route does `s3Client.send(PutObjectCommand)` then `prisma.book.update`. If the S3 succeeds and the DB update fails (network blip, DB connection drop, schema mismatch), the object exists in S3 but `books.cover_image_url` is still NULL. The next upload attempt overwrites the orphan object — not a data-loss bug but the orphan does count against bucket storage.
+
+**Severity:** low — re-upload heals the row; S3 storage cost for orphan objects is negligible. **Suggested resolution:** swap the order (DB UPDATE first with the future URL, then S3 PUT). If S3 PUT then fails, the DB row points at a non-existent object — but `next/image` falls through to the placeholder via `onError`, so the storefront UX degrades gracefully and an operator query (`SELECT id WHERE cover_image_url IS NOT NULL AND <not-in-s3>`) catches the orphan. Better failure mode than the current one.
+
+### 103. Cover upload route — no image dimensions cap
+
+The route validates MIME (4 image types) + byte size (5 MB) but never checks pixel dimensions. A 5 MB JPEG could be 50×50 (fine), 8000×8000 (next/image handles, but the original sits forever in S3), or 16384×16384 (next/image's WASM transcoder may struggle). The Recommended dimensions in `new-book-form.tsx` are 600×800, but recommendations aren't enforcement.
+
+**Severity:** low (no exploit path; just wasted storage + slower transcodes). **Suggested resolution:** read the image with `sharp` or `image-size` (lightweight), reject if either dimension > 4096px (covers a 4K-quality cover with room).
+
+### 104. fetch-logs-table `title=""` tooltip still uses `toLocaleString()`
+
+Stream H.1 fixed the cell text body in `fetch-logs-table.tsx` (`relativeTime()` fallback now ISO), but line 73's `title={r.createdAt.toLocaleString()}` still uses locale-dependent formatting. React's hydration matcher is more lenient on attribute text than child text, so this MIGHT not trip #418 — but if the React error persists on `/dashboard/fetch-logs?book=<uuid>` after Stream H.1 deploys, this tooltip is the suspect.
+
+**Severity:** low. **Trigger:** post-deploy audit re-check; if React #418 still fires on the fetch-logs surface, drop the tooltip or rewrite it ISO. **Suggested resolution:** replace with `title={r.createdAt.toISOString()}` (slightly less human-friendly but deterministic). If the tooltip is load-bearing UX, file a separate decision about which surface uses locale (the page text says no; the tooltip might be OK — the audit will tell us).
+
 ---
 
 *Last updated: 2026-05-12. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

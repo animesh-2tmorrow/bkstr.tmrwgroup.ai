@@ -31,7 +31,9 @@ const FILTERS: ReadonlyArray<{ key: FilterKey; label: string }> = [
 
 function fmtDate(d: Date | null): string {
   if (!d) return "—";
-  return new Date(d).toLocaleString();
+  // Stream H.1 — stable ISO format avoids React #418 hydration mismatch
+  // caused by toLocaleString() rendering differently on server vs. client.
+  return new Date(d).toISOString().slice(0, 16).replace("T", " ");
 }
 
 export function AdminGrantsTable({

@@ -10,7 +10,11 @@ function relativeTime(d: Date): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
   if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
-  return d.toLocaleDateString();
+  // Stream H.1 — stable ISO date avoids React #418 hydration mismatch
+  // (toLocaleDateString rendered different strings on server vs client).
+  // NOTE: the title= tooltip on the cell still uses toLocaleString and is
+  // tracked separately as follow-up #104.
+  return d.toISOString().slice(0, 10);
 }
 
 function truncate(s: string, n: number): string {
