@@ -85,6 +85,13 @@ model Book {
   // "every book has prose description." Stream B (publisher UI) writes this
   // on new-book creation; existing 5 books backfill as NULL.
   description     String?    @db.Text
+  // Phase 5 Stream H (D15.6) — publisher-uploaded cover image stored in S3.
+  // Nullable: existing books have no cover; storefront renders a domain-initial
+  // placeholder tile when null. Written by /api/books/[id]/cover upload handler.
+  // Bucket policy on bkstr-tmrw-prod allows public reads on book-covers/* so
+  // next/image can render without signed URLs. See docs/operations.md for the
+  // bucket policy JSON + env-staging runbook.
+  coverImageUrl   String?    @map("cover_image_url") @db.Text
   domain          String     @db.VarChar(64)
   status          BookStatus @default(DRAFT)
   createdAt       DateTime   @default(now()) @map("created_at")

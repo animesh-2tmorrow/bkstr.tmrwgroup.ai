@@ -916,6 +916,23 @@ Stream G fixed the one site that hit this (`accept-init/route.ts`). If a future 
 
 **Severity:** medium — repeat occurrences are likely; the pattern looks correct at a glance. **Suggested resolution:** add the helper + grep guard during the next observability/hardening pass; defer NextAuth v5 upgrade until v5 GA + bkstr has bandwidth for the migration.
 
+### 98. Cover images on a public-read S3 prefix — consider signed URLs for v2
+
+Stream H ships covers via a bucket-policy `s3:GetObject` to principal `*` on `bkstr-tmrw-prod/book-covers/*`. The tradeoff: anything uploaded under that prefix is world-discoverable forever, with `book-covers/<bookId>.<ext>` as a predictable key shape — anyone who learns a book's UUID can fetch its cover directly. Mitigations in v1: MIME allowlist on upload + 5 MB size cap + PUBLISHER-or-ADMIN gate + owner check. These prevent the prefix from being abused as a generic public-write surface, but they do not prevent an attacker who has any book UUID from enumerating and caching covers.
+
+**Severity:** low. **Trigger:** if a publisher uploads sensitive content as a cover (treating the bucket as private) AND that becomes a real exposure event. **Suggested resolution:** swap public-read for either (a) signed S3 GET URLs minted by the storefront API per page load, or (b) a Next.js image proxy route (`/api/covers/[bookId]`) that streams the object via the existing server-side `s3Client`. Option (b) is simpler ops (no policy change required to revert), option (a) is cheaper at scale (S3 serves directly, no Node intermediary). DB shape and upload route stay; only the read path changes.
+
+### 99. Cover-image S3 bucket reuse vs. dedicated bucket / cross-account credentials
+
+Stream H reuses the singleton `s3Client` at `src/lib/storage/book-content.ts` and writes to a DIFFERENT bucket (`bkstr-tmrw-prod`) than the book-content bucket (`BKSTR_CONTENT_BUCKET` from `/etc/bkstr/aws.env`). This works because S3Client is bucket-agnostic at construction — the bucket is per-call. But it conflates two operational concerns:
+
+- Book content (private, agent-fetch path) — `BKSTR_CONTENT_BUCKET` env var, default-credentials chain.
+- Cover images (public, storefront path) — hardcoded `bkstr-tmrw-prod`, same default-credentials chain.
+
+If `bkstr-tmrw-prod` ever moves to a different AWS account from the deployed EC2's IAM principal, the env-var credentials in `/etc/bkstr/aws.env` will need to be cross-account-scoped, AND the book-content path's IMDSv2 instance-profile fallback might stop being the desired default for covers (each bucket may want its own credentials). Or: each bucket should have its own S3Client constructed from its own creds.
+
+**Severity:** low — Edward picked one bucket for v1; both fit in one account. **Trigger:** if covers move to a TMRW-corporate AWS account separate from the bkstr deployment account. **Suggested resolution:** introduce `src/lib/storage/cover-upload.ts` with its own lazy-Proxy S3Client (D10.4 pattern), reading cover-specific env vars (`BKSTR_COVERS_BUCKET`, `BKSTR_COVERS_AWS_ACCESS_KEY_ID`, etc.). Until then, the shared singleton is fine.
+
 ---
 
 *Last updated: 2026-05-12. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

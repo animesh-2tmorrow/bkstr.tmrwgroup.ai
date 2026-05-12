@@ -1262,3 +1262,78 @@ Until follow-up #91 lands, recovering a failed-send is two clicks:
 Alternatively (and preferably during the pre-SMTP-staging window), copy the magic link out of the create-invite success modal at creation time and share it out-of-band.
 
 ---
+
+## Cover images (Phase 5 Stream H, D15.6)
+
+Book cover images are uploaded by publishers (or admins) via `POST /api/books/[id]/cover` and stored in S3 at `s3://bkstr-tmrw-prod/book-covers/<bookId>.<ext>`. The storefront reads them anonymously via the public HTTPS URL `https://bkstr-tmrw-prod.s3.us-east-1.amazonaws.com/book-covers/<bookId>.<ext>`. When `books.cover_image_url IS NULL`, the storefront falls back to a deterministic domain-initial coloured tile (no external lookup).
+
+### Required AWS credentials
+
+The cover upload route reuses the singleton `s3Client` from `src/lib/storage/book-content.ts`, which uses the default AWS credentials chain:
+
+1. Env vars from `/etc/bkstr/aws.env` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`).
+2. If absent, IMDSv2 instance profile on the EC2.
+
+Whichever credentials resolve must grant `s3:PutObject` on `arn:aws:s3:::bkstr-tmrw-prod/book-covers/*`. If you stage explicit access keys in `/etc/bkstr/aws.env`, they take precedence over the instance profile. The same env file already exists for the book-content reads — adding cover creds is additive.
+
+**Staging the env vars** (NEVER paste secrets into chat / commits / logs — these are IAM credentials and treat as such):
+
+```bash
+# SSM into EC2
+sudo tee /etc/bkstr/aws.env > /dev/null <<EOF
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=<from secrets manager / IAM console>
+AWS_SECRET_ACCESS_KEY=<from secrets manager / IAM console>
+BKSTR_CONTENT_BUCKET=<existing book-content bucket name>
+EOF
+sudo chmod 600 /etc/bkstr/aws.env
+sudo chown root:root /etc/bkstr/aws.env
+
+# Restart so new vars propagate (pm2 reload --update-env merges, doesn't replace)
+sudo -u ubuntu PM2_HOME=/home/ubuntu/.pm2 pm2 delete bkstr-web
+# Then redeploy or restart via the deploy script
+```
+
+### Bucket policy — public read on the cover prefix
+
+`bkstr-tmrw-prod` must have a bucket policy that allows anonymous `s3:GetObject` for `arn:aws:s3:::bkstr-tmrw-prod/book-covers/*`. Apply this exactly once via the AWS console (S3 → bkstr-tmrw-prod → Permissions → Bucket policy):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublicReadBookCovers",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::bkstr-tmrw-prod/book-covers/*"
+    }
+  ]
+}
+```
+
+The policy is scoped to `book-covers/*` so it does NOT make the whole bucket public — other prefixes remain private. Object Ownership on the bucket should be `BucketOwnerEnforced` (ACLs disabled); the upload code does not set per-object ACLs, the bucket policy is the entire public-access surface.
+
+### Verifying the wiring
+
+```bash
+# (Apply the bucket policy first, then:)
+# 1. Upload via the new-book-form UI on /dashboard/books/new — pick a small PNG.
+# 2. After "Publish book" finishes, check the row:
+psql "$DATABASE_URL" -c "SELECT id, title, cover_image_url FROM books ORDER BY created_at DESC LIMIT 1;"
+
+# 3. Fetch the public URL anonymously (no auth header, no signed query):
+curl -sI 'https://bkstr-tmrw-prod.s3.us-east-1.amazonaws.com/book-covers/<bookId>.<ext>'
+# Expect HTTP/1.1 200 OK + Content-Type: image/<format>
+```
+
+If step 3 returns 403, the bucket policy isn't applied (or the prefix doesn't match `book-covers/*`). The storefront page will then fall through to the domain-initial placeholder tile silently — `next/image` calls `onError` which trips the `imgError` state.
+
+### Operational notes
+
+- **Anything uploaded under `book-covers/*` is world-discoverable forever.** The MIME allowlist + 5 MB cap + auth gate prevent random clients from writing arbitrary objects, but a publisher who uploads sensitive content thinking "cover image = private" is mistaken. If we ever surface this risk to publishers, do it in the upload UI copy, not just docs. Follow-up #98 tracks a signed-URL hardening path.
+- **Key shape is deterministic per book.** Re-uploading a cover with the same MIME-extension overwrites the existing object (S3 PUT is idempotent on key). Cache headers are `public, max-age=31536000, immutable` — so a re-upload may take time to propagate through any CloudFront / browser cache layer.
+- **Reverting** is a code + ops dance: drop the bucket policy statement, delete `cover_image_url` column (or leave it — nullable is harmless), revert the route + storefront. Follow-up #98 includes a signed-URL swap that doesn't require any DB change.
+
+---
