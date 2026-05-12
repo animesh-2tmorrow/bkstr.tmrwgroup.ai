@@ -6,6 +6,8 @@ import {
   UsersTable,
   type UsersTableFilter,
 } from "@/components/dashboard/admin/users-table";
+import { InviteUserButton } from "@/components/dashboard/admin/invite-user-modal";
+import { PendingInvitationsTable } from "@/components/dashboard/admin/pending-invitations-table";
 import {
   getAdminUsers,
   type AdminUsersSortBy,
@@ -106,16 +108,19 @@ export default async function AdminUsersPage({
       initial={initial}
       role={session.user.role}
     >
-      <header className="mb-8">
-        <h1 className="text-2xl font-bold">Admin: Users</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Promote or demote users between SUBSCRIBER / PUBLISHER / ADMIN roles.
-          Every mutation writes a durable audit row to{" "}
-          <span className="font-mono">admin_actions</span> (Phase 4.5 Stream G).
-          See the Stream E runbook in{" "}
-          <span className="font-mono">docs/operations.md</span> for the
-          env-file-vs-UI consistency story.
-        </p>
+      <header className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">Admin: Users</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Promote or demote users between SUBSCRIBER / PUBLISHER / ADMIN roles.
+            Every mutation writes a durable audit row to{" "}
+            <span className="font-mono">admin_actions</span> (Phase 4.5 Stream G).
+            See the Stream E runbook in{" "}
+            <span className="font-mono">docs/operations.md</span> for the
+            env-file-vs-UI consistency story.
+          </p>
+        </div>
+        <InviteUserButton />
       </header>
 
       <UsersTable
@@ -125,6 +130,8 @@ export default async function AdminUsersPage({
         sortDir={sortDir}
         currentUserId={session.user.id}
       />
+
+      <PendingInvitationsTable />
     </DashboardShell>
   );
 }

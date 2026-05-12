@@ -215,11 +215,15 @@ export async function getBookTitle(bookId: string): Promise<string | null> {
 // can reuse the same select projection without a second pass. Existing
 // fields (id/title/slug/domain/unitAmountCents/stripePriceId/updatedAt)
 // mirror the legacy pricing page shape so the form component stays stable.
+//
+// Phase 5 Stream E (D15.5) — `status` added so the per-row Archive /
+// Unarchive button renders the right state at /dashboard/pricing.
 export type PricingBookRow = {
   id: string;
   title: string;
   slug: string;
   domain: string;
+  status: string;
   description: string | null;
   publisherUserId: string | null;
   unitAmountCents: number | null;
@@ -244,6 +248,7 @@ export async function getPricingBooks(user: { id: string; role: Role }): Promise
       title: true,
       slug: true,
       domain: true,
+      status: true,
       description: true,
       publisherUserId: true,
       prices: {
@@ -260,6 +265,7 @@ export async function getPricingBooks(user: { id: string; role: Role }): Promise
     title: b.title,
     slug: b.slug,
     domain: b.domain,
+    status: b.status,
     description: b.description,
     publisherUserId: b.publisherUserId,
     unitAmountCents: b.prices[0]?.unitAmountCents ?? null,

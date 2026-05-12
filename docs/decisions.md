@@ -111,3 +111,62 @@ bkstr remains the primary brand in `<title>`, page H1s, and dashboard nav labels
 **Scope:** applies to any change that modifies `buildspec.yml`, adds dependencies that need CI installation, or otherwise alters the CI environment. Does NOT apply to pure code changes that the existing CI happily builds. Does NOT apply to documentation-only commits. The discipline kicks in specifically when the change is "the CI itself behaves differently after this commit."
 
 **Cross-references:** D14.8 (the SAST baseline this lesson originated from), follow-up #89 (Stream D re-merge; will be the first stream to apply this discipline).
+
+---
+
+## Phase 5 Stream E — admin email invitations + publisher book archive (2026-05-12)
+
+### D15.1 Magic-link email invitations, plaintext-only in transit, SHA-256 hash at rest
+
+**Choice:** ADMIN can invite users to bkstr via email. The invitation flow generates a 32-byte (256-bit) cryptographically-random token, encodes it base64url, includes it as the `?token=` query string of a magic link, and emails the link to the recipient. The DB persists ONLY the SHA-256 hex hash of the plaintext (`user_invitations.token_hash` VARCHAR(64)). Recipient clicks the link → server validates server-side → POST to `/api/invitations/accept-init` sets the `bkstr_pending_invitation` cookie (HttpOnly, Secure, SameSite=Lax, Path=/, 15-min TTL, value=plaintext) → redirect to NextAuth `/api/auth/signin` → OAuth completes → `events.signIn` hook reads the cookie, re-hashes, validates, applies the role + marks the invitation accepted. Invitations are restricted to **PUBLISHER** and **SUBSCRIBER** roles at the API layer (the schema allows any Role enum value but the POST handler at `/api/admin/invitations` rejects ADMIN — promotion to ADMIN stays gated behind the existing asymmetric-friction modal at D12.10).
+
+**Reasoning:** plaintext-in-email + hash-at-rest is the canonical password-reset / magic-link pattern. DB compromise alone cannot replay accepts (an attacker would need both DB read AND a way to forge the email-delivery side). The cookie carries plaintext for the same reason a session cookie does: HttpOnly + Secure + SameSite=Lax makes cross-site exfiltration infeasible, and an attacker who can read the cookie already controls the browser session. Server-side validation BEFORE setting the cookie prevents an invalid `?token=` from materializing a cookie that would survive 15 minutes of subsequent traffic. ADMIN-invitations-via-email forbidden because the asymmetric-friction modal (D12.10) is the load-bearing safety property for ADMIN promotion — relaxing it to an email click would re-open the regression window. Per Q1, the schema scope is just the `UserInvitation` table + relations; `BookStatus.ARCHIVED` already exists in the enum since Phase 1 so no enum migration is needed.
+
+**Cross-references:** D11.11 (monotonic-upward role promotion — applied unchanged here), D12.10 (asymmetric-friction modal — preserved for ADMIN), follow-ups #90 (invite-expiry policy), #91 (resend SMTP-failed invitations).
+
+### D15.2 Audit shape: invitation.send / invitation.cancel / invitation.accept, actor varies
+
+**Choice:** Three audit `actionType` values, all with `targetType="invitation"` (extends `AuditTargetType` union by one string; column stays VARCHAR(32)):
+
+- `invitation.send` — actor is the ADMIN who issued the invitation. Written inside the POST `/api/admin/invitations` TX.
+- `invitation.cancel` — actor is the ADMIN who cancelled the invitation. Written inside the DELETE `/api/admin/invitations/[id]` TX.
+- `invitation.accept` — actor is the **recipient themselves** (per Q5). Written inside the `events.signIn` TX when the cookie-bound invitation is consumed.
+
+The "actor is the recipient" choice for `invitation.accept` is the unusual one: every prior audit row was actor=ADMIN. The rationale (inlined verbatim at `src/lib/auth/index.ts` `applyPendingInvitation`): "actor is recipient per D15.2 — state transitions, not click attempts; recipient caused the transition by accepting." The ADMIN's contribution was the `invitation.send` row (already audited); the recipient's acceptance is a distinct downstream event with a distinct actor. NO new D-slot for this decision — it's a row-shape choice inside an existing audit precedent, not a new audit-system concept.
+
+**Reasoning:** the `admin_actions` table's contract per D12.4 / D12.7 is "every meaningful state change is a row." An accept IS a state change (role + invitation rows both move). Attributing it to the ADMIN-as-actor would suggest the ADMIN caused the accept at the moment it occurred — they didn't; they caused the SEND moments-to-days earlier. Attributing it to the recipient gives a faithful per-row "who caused this" story when an operator queries the table.
+
+**Cross-references:** D12.4 (audit-write-in-TX contract), D12.7 (admin_actions schema + the four target-type strings), Q5 lock.
+
+### D15.3 Email mismatch handling: row stays pending + emailMismatchNote column
+
+**Choice:** When the OAuth-returned email does NOT match the invitation email (case-insensitive comparison), the signin proceeds normally (user can use bkstr with their default role) but the invitation is NOT applied — the row's `acceptedAt` stays NULL. The mismatch is documented on a NEW column `user_invitations.email_mismatch_note TEXT` (semantically distinct from `email_send_error`; both columns coexist on the same row even though it's a column-add). The admin pending-invitations table surfaces the note as a column so the operator can decide whether to cancel + reissue.
+
+**Reasoning:** the operator's intent was to send the invitation to email X; a recipient who signs in as email Y proves they weren't the intended recipient (or they were, but they used a different Google account than expected). Blocking the signin would be over-friction — the user has a valid OAuth identity and bkstr is open-signup per D11.5. Auto-applying the role to email Y would be a security regression: an attacker who intercepts an invitation link could redeem it on any Google account they control. Leaving the invitation pending + documenting the mismatch + showing it in the admin UI gives the operator the right next step: cancel + reissue to the correct email. Two separate columns (`email_send_error` vs `email_mismatch_note`) so the admin UI can render two distinct status signals — "SMTP couldn't deliver" vs "delivered but redeemed by wrong email" are operationally different problems.
+
+**Cross-references:** D11.5 (open-signup), D11.11 (monotonic-upward role promotion — never lowers, even on mismatch).
+
+### D15.4 SMTP env file (`/etc/bkstr/smtp.env`) with fail-graceful boot contract
+
+**Choice:** Six required env vars: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_NAME`, `SMTP_FROM_ADDRESS`. File path `/etc/bkstr/smtp.env`, mode 600, root:root, sourced by `scripts/start.sh` on every deploy via the same `/etc/bkstr/*.env` pattern as oauth/stripe/aws/roles/assistant (D9.4 / D10.3 / D14.2). Module-load WARN per missing variable: `[smtp] WARN: <VAR> missing — invitation emails will fail to send. Stage /etc/bkstr/smtp.env to silence.` Nodemailer transporter is lazy-Proxy-instantiated on first send call (D10.4 stripe pattern). Failed sends do NOT block invitation creation — the row writes with `email_send_status='failed'` + `email_send_error=<message>` and the admin UI surfaces the magic link for copy-paste fallback.
+
+**Reasoning:** mirrors every other operator env-file at bkstr. Lazy instantiation so `next build` doesn't try to construct the transporter at compile time. Fail-graceful so a fresh deploy with no `/etc/bkstr/smtp.env` doesn't break the admin UI — operator can create invitations, see "email send failed" on the UI, copy the magic link out of the response, and share it via Slack until they stage the env file. This decouples the invitation surface from operator SMTP-provisioning timing — both can ship at their own pace. Plain-text email body (no HTML) for the same reason buyer-side fetch responses are JSON-not-HTML: portable across SMTP relays, no rendering-engine surprises, phishing-conscious recipients trust plain-text more.
+
+**Cross-references:** D9.4 (per-service env files), D10.3 (WARN-on-missing precedent), D10.4 (lazy Proxy pattern for client construction), D14.2 (assistant.env precedent for default + WARN behavior).
+
+### D15.5 Book archive via existing `BookStatus.ARCHIVED` enum + per-status routes
+
+**Choice:** Add four endpoints (no schema change — `BookStatus.ARCHIVED` already exists per Q1):
+
+- `POST /api/publisher/books/[id]/archive` — PUBLISHER or ADMIN; if PUBLISHER, ownership check (`book.publisherUserId === session.user.id`). Atomic TX: `tx.book.update({status: ARCHIVED}) + writeAuditEntry(actionType: "book.archive")`.
+- `POST /api/publisher/books/[id]/unarchive` — mirror, ARCHIVED → ACTIVE. `actionType: "book.unarchive"`.
+- `POST /api/admin/books/[id]/archive` — ADMIN-only (no ownership check). Same audit shape; actor is the admin.
+- `POST /api/admin/books/[id]/unarchive` — mirror.
+
+The archive button placement is **`/dashboard/pricing` only for v1** (Q2). Not Active Books — the pricing surface is already publisher-scoped per Stream B, so the button belongs where the publisher already lives. The button uses the asymmetric-friction modal pattern (D12.10) with **typed-slug confirmation** for archive; unarchive is benign one-click. `/dashboard/admin/books` also gets the button (next to the existing Reassign button) since ADMIN is publisher-of-last-resort.
+
+**Load-bearing UX invariant (Q6 + Q8 verified):** an ARCHIVED book stays accessible to grant-holders. `getBooksWithMetrics` has NO status filter (verified — the `where` clause is empty; the raw SQL has no `b.status` constraint). `requireBookAccess` has NO status filter on the book side (verified — the predicate is grant-side only: revokedAt + expiresAt). Together: a buyer with a PURCHASE grant on an ARCHIVED book continues to see it in their Active Books tab and continues to fetch its content. Archive is a Library-visibility toggle, NOT an access revocation. Price-edit on `/dashboard/pricing` stays visible on ARCHIVED rows (Q9) so publishers may adjust price before unarchiving.
+
+**Reasoning:** the existing enum value pre-dates this stream — using it costs zero migration. Two separate `/api/publisher/...` + `/api/admin/...` URL families because the ownership check differs (publisher must own; admin bypasses), and routing the difference through one handler with branch-on-role logic would muddy the audit shape (we still want the actor on the audit row to be whoever clicked). The two-family layout matches the existing reassign pattern at `/api/admin/books/[id]/reassign`. The "ARCHIVED stays accessible" invariant matters: archiving a book the user already paid for should not retroactively revoke their access — that would surprise buyers and undermine the marketplace contract. The Library hides it; the access-grant honors it.
+
+**Cross-references:** D12.10 (asymmetric-friction destructive-action pattern — applied here as typed-slug), D11.4 (`requireBookAccess` predicate — unchanged; verified to have no status filter), follow-ups #92 (verified clean in this stream — see follow-ups doc), #93 (Active Books surface ARCHIVED-row affordance), #94 (per-role placement audit).

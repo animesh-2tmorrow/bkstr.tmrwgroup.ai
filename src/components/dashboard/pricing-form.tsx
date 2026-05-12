@@ -2,17 +2,24 @@
 
 import { useState } from "react";
 import { formatUsdCents } from "@/lib/format/currency";
+import { ArchiveBookButton } from "@/components/dashboard/admin/archive-book-modal";
 
 // Phase 4 Stream B — BookRow gains optional `description` + `publisherUserId`
 // fields forward-friendly for Stream C's Library view, which will display the
 // description alongside Publisher metadata. The form itself only reads
 // id/title/slug/domain/unitAmountCents/stripePriceId/updatedAt — the extra
 // fields are passed through unread.
+//
+// Phase 5 Stream E (D15.5) — `status` is included so the per-row Archive /
+// Unarchive button renders the right state. Pricing surface is the v1
+// archive button placement (Q2). Price-edit stays visible on ARCHIVED
+// rows (Q9) so publishers may adjust price before unarchiving.
 type BookRow = {
   id: string;
   title: string;
   slug: string;
   domain: string;
+  status?: string;
   description?: string | null;
   publisherUserId?: string | null;
   unitAmountCents: number | null;
@@ -157,15 +164,17 @@ export function PricingForm({
           <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
             <tr>
               <th className="px-6 py-4 font-semibold text-gray-600">Book</th>
+              <th className="px-6 py-4 font-semibold text-gray-600">Status</th>
               <th className="px-6 py-4 font-semibold text-gray-600">Current price</th>
               <th className="px-6 py-4 font-semibold text-gray-600">Stripe Price ID</th>
               <th className="px-6 py-4 font-semibold text-gray-600">Last updated</th>
+              <th className="px-6 py-4 font-semibold text-gray-600 text-right">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#E5DCC8]">
             {books.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
                   {isPublisher
                     ? "No books yet. Create one at /dashboard/books/new."
                     : "No books yet. Import one with `npm run import-book` first."}
@@ -180,6 +189,9 @@ export function PricingForm({
                     {b.slug} <span className="text-gray-400">·</span> {b.domain}
                   </div>
                 </td>
+                <td className="px-6 py-4 font-mono text-xs uppercase">
+                  {b.status ?? "—"}
+                </td>
                 <td className="px-6 py-4 font-medium">
                   {b.unitAmountCents !== null ? (
                     formatUsdCents(b.unitAmountCents)
@@ -192,6 +204,15 @@ export function PricingForm({
                 </td>
                 <td className="px-6 py-4 text-xs text-gray-600">
                   {b.updatedAt ? new Date(b.updatedAt).toLocaleString() : "—"}
+                </td>
+                <td className="px-6 py-4 text-right">
+                  {b.status ? (
+                    <ArchiveBookButton
+                      book={{ id: b.id, slug: b.slug, title: b.title, status: b.status }}
+                    />
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
+                  )}
                 </td>
               </tr>
             ))}

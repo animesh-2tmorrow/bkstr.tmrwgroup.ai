@@ -184,6 +184,15 @@ model User {
   // hard-deleted without an explicit operator migration (matches AdminAction
   // precedent at D12.7).
   assistantConversations AssistantConversation[] @relation("AssistantConversationOwner")
+  // Phase 5 Stream E (D15.1) — invitations this user issued (as ADMIN) and
+  // invitations this user accepted (as recipient). Plural `invitationsAccepted`
+  // because schema-wise a user could in theory accept multiple invitations
+  // over time. ON DELETE RESTRICT on the owning side preserves history; ON
+  // DELETE SET NULL on the accepted side lets the recipient be deleted
+  // without dropping the invitation row (the row already carries the email
+  // string as audit context).
+  invitationsSent      UserInvitation[] @relation("InvitedBy")
+  invitationsAccepted  UserInvitation[] @relation("AcceptedBy")
 
   @@index([lastSigninAt(sort: Desc)])
   @@map("users")
@@ -516,4 +525,37 @@ model AssistantMessage {
 
   @@index([conversationId, createdAt])
   @@map("assistant_messages")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User Invitations (Phase 5 Stream E, D15.1–D15.4)
+//
+// Magic-link email invitations to PUBLISHER or SUBSCRIBER roles. The
+// plaintext token lives only in the email link; the DB stores a SHA-256
+// hash. On accept, the events.signIn hook reads the bkstr_pending_invitation
+// cookie, looks up the invitation by hash, validates (not expired, not
+// accepted, email match case-insensitive), and applies the pre-assigned
+// role monotonic-upward per D11.11.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model UserInvitation {
+  id                String   @id @default(uuid()) @db.Uuid
+  email             String   @db.Text  // recipient email; case-insensitive matched at accept time
+  role              Role     // PUBLISHER or SUBSCRIBER only; enforced at API layer not enum
+  tokenHash         String   @map("token_hash") @db.VarChar(64)  // SHA-256 hex
+  invitedByUserId   String   @map("invited_by_user_id") @db.Uuid
+  expiresAt         DateTime @map("expires_at") @db.Timestamptz(6)
+  acceptedAt        DateTime? @map("accepted_at") @db.Timestamptz(6)
+  acceptedByUserId  String?  @map("accepted_by_user_id") @db.Uuid
+  emailSendStatus   String   @default("pending") @map("email_send_status") @db.VarChar(32)
+  emailSendError    String?  @map("email_send_error") @db.Text
+  emailMismatchNote String?  @map("email_mismatch_note") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  invitedBy  User  @relation("InvitedBy", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+  acceptedBy User? @relation("AcceptedBy", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([email, acceptedAt])
+  @@index([tokenHash])
+  @@map("user_invitations")
 }

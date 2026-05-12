@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { AdminBookRow, AdminUserRow } from "@/lib/dashboard/queries";
 import { ReassignPublisherModal } from "@/components/dashboard/admin/reassign-publisher-modal";
+import { ArchiveBookButton } from "@/components/dashboard/admin/archive-book-modal";
 import { formatUsdCents } from "@/lib/format/currency";
 
 // Phase 4.5 Stream F — ADMIN books ledger. One row per book in the system.
@@ -99,13 +100,19 @@ export function AdminBooksTable({
                     {b.activeGrantCount.toLocaleString()}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setActiveBook(b)}
-                      className="bg-black text-[#FAF6EC] px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-black shadow-sm"
-                    >
-                      Reassign
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <ArchiveBookButton
+                        book={{ id: b.id, slug: b.slug, title: b.title, status: b.status }}
+                        adminMode
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setActiveBook(b)}
+                        className="bg-black text-[#FAF6EC] px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-black shadow-sm"
+                      >
+                        Reassign
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

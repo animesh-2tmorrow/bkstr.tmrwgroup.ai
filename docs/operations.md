@@ -1178,3 +1178,87 @@ sudo -u ubuntu pm2 logs bkstr-web --lines 50 | grep -i assistant
 ```
 
 ---
+
+## SMTP env file (`/etc/bkstr/smtp.env`)
+
+Phase 5 Stream E (D15.4) — Nodemailer reads SMTP credentials from `process.env` at first-send call time via `src/lib/email/client.ts`. The env vars are staged via `/etc/bkstr/smtp.env`, sourced by `scripts/start.sh` on every deploy in the same pattern as `roles.env`, `oauth.env`, `aws.env`, `stripe.env`, and `assistant.env` (D9.4 / D10.3 / D14.2).
+
+### File path + permissions
+
+```
+/etc/bkstr/smtp.env           mode 600   root:root
+```
+
+Staged by the operator OUT-OF-BAND of the deploy pipeline — never committed to git. Matches every other `/etc/bkstr/*.env` file's contract.
+
+### Required keys
+
+Six environment variables required for invitation email send:
+
+```
+SMTP_HOST=email-smtp.us-east-1.amazonaws.com   # the relay's host
+SMTP_PORT=587                                   # 587 (STARTTLS) or 465 (implicit TLS)
+SMTP_USER=AKIAEXAMPLE12345                      # SMTP credentials user
+SMTP_PASSWORD=BJYz...                           # SMTP credentials password
+SMTP_FROM_NAME=bkstr                            # the From-header display name
+SMTP_FROM_ADDRESS=invitations@bkstr.example     # the From-header email address
+```
+
+The exact host/port/user/password depend on the chosen relay (SES recommended; Mailgun / SendGrid / Postmark are all known-working). The From-address must be a verified sending identity in the chosen relay or messages will be rejected at the relay (not at bkstr).
+
+### Default behavior if missing (fail-graceful per D15.4)
+
+If `/etc/bkstr/smtp.env` is not staged (or doesn't contain any of the six variables), the email client logs WARNs on module load:
+
+```
+[smtp] WARN: SMTP_HOST missing — invitation emails will fail to send. Stage /etc/bkstr/smtp.env to silence.
+[smtp] WARN: SMTP_PORT missing — invitation emails will fail to send. Stage /etc/bkstr/smtp.env to silence.
+...
+```
+
+The WARNs are NON-FATAL. The module loads; invitation creation still works. Send attempts return `{status: "failed", error: "<message>"}` and the invitation row is updated with `email_send_status='failed'` + `email_send_error=<message>`. The admin UI surfaces the magic link in the create-invite modal so the operator can copy + share out-of-band (Slack, manual email). This is the canonical "ship the surface, stage the env file later" path that all `/etc/bkstr/*.env` files follow.
+
+### Staging the file (one-time operator action)
+
+```bash
+# On the EC2 box (i-0e25e88f90738b9dc):
+sudo install -m 0600 -o root -g root /dev/null /etc/bkstr/smtp.env
+sudo tee /etc/bkstr/smtp.env <<EOF
+SMTP_HOST=email-smtp.us-east-1.amazonaws.com
+SMTP_PORT=587
+SMTP_USER=<your-smtp-user>
+SMTP_PASSWORD=<your-smtp-password>
+SMTP_FROM_NAME=bkstr
+SMTP_FROM_ADDRESS=invitations@bkstr.example
+EOF
+sudo -u ubuntu pm2 reload bkstr-web --update-env
+```
+
+### Smoke test (post-staging)
+
+```bash
+# Confirm the WARNs are gone:
+sudo -u ubuntu pm2 logs bkstr-web --lines 50 | grep -i smtp
+# Expect: nothing (no '[smtp] WARN' lines after the reload).
+
+# Send a test invitation via the admin UI (/dashboard/admin/users → Invite user)
+# Recipient should receive the email within seconds. Verify by:
+#   1. The admin UI shows email_send_status='sent' on the new row.
+#   2. The recipient's inbox shows the invitation email from $SMTP_FROM_ADDRESS.
+#   3. Clicking the magic link in the email lands on /invitations/accept and
+#      shows the role-promotion CTA.
+```
+
+If any step fails, check pm2 logs for the actual error message — Nodemailer surfaces the relay's response on the row's `email_send_error` column, which is also visible in the pending-invitations table on `/dashboard/admin/users`.
+
+### Resending invitations that failed to send
+
+Until follow-up #91 lands, recovering a failed-send is two clicks:
+
+1. Find the row in the pending-invitations table on `/dashboard/admin/users` (status pill says "failed", `email_send_error` column shows the message).
+2. Click "Cancel" to mark the row cancelled.
+3. Click "Invite user" again with the same email + role. A fresh invitation row + magic link is generated.
+
+Alternatively (and preferably during the pre-SMTP-staging window), copy the magic link out of the create-invite success modal at creation time and share it out-of-band.
+
+---

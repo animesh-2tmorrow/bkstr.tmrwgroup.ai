@@ -829,6 +829,61 @@ Stream D was merged at `fec707e` on 2026-05-11, reverted at `e4ab6f5` on 2026-05
 
 **Severity:** medium. **Trigger:** when operator has time for a careful re-merge — not urgent (`npm run security:scan` works locally as a manual scan path; bkstr's SAST findings are clean, so the absence of CI gating doesn't introduce new risk, just doesn't enforce against future regressions). **Branch:** `phase-5/stream-d-ci-install-fix-v2` (do NOT reuse the v1 fix branch `phase-5/stream-d-ci-install-fix` which is muddied with attempts; leave it as historical context for now, delete later when v2 lands).
 
+### 90. Invitation expiry policy revisit
+
+Phase 5 Stream E ships with a 15-minute TTL on every invitation magic link (`user_invitations.expires_at = createdAt + 15min`, matches the `bkstr_pending_invitation` cookie TTL). 15 minutes is intentionally aggressive — it means the recipient must click the link more-or-less immediately, and a stolen-from-inbox-by-attacker scenario has a tight window to redeem before the link expires.
+
+The downside: real recipients regularly take >15 minutes to act on email. The first user-friction signal will be "I tried to click the link an hour later and it said expired" — at that point the operator has to issue a fresh invitation, which is a 30-second admin click but a non-zero re-engagement cost. If this pattern emerges, three revisit paths:
+
+- **(a) Lengthen the TTL.** 24 hours is the canonical "magic link" duration (Slack, Notion, GitHub all default near there). Single-line change at `INVITATION_TTL_MS` in `src/app/api/admin/invitations/route.ts` + the same edit at `PENDING_INVITATION_TTL_SECONDS` in `src/lib/admin/invitations.ts`. Trade-off: longer attacker window if an email is intercepted.
+- **(b) Resend instead of reissue.** Add a "Resend" button on the pending-invitations table that calls a new endpoint `POST /api/admin/invitations/[id]/resend` — generates a fresh token + hash, updates the row, sends a new email. Preserves the audit trail (the row's createdAt is unchanged; resend writes a new `invitation.resend` audit row). Doesn't require lengthening the TTL.
+- **(c) Two-tier TTL.** 15 minutes for the cookie (because cookies survive across mostly-trusted sessions); 24 hours for the DB row (so an old link still works if redeemed soon enough). Decouples the two timers. Slightly more code; cleanest UX.
+
+**Severity:** low. **Trigger:** when real recipients hit the expiry boundary in non-test usage. **Suggested resolution:** start with (a) lengthening to 24h (single config change, minimum-friction unblock); revisit with (c) two-tier if security review wants the cookie kept short.
+
+### 91. Resend SMTP-failed invitations from the admin UI
+
+Phase 5 Stream E surfaces the magic link in the invite-user-modal success state so the operator can copy-paste it as a fallback when `email_send_status='failed'` (Q4 / D15.4 fail-graceful contract). But once the modal closes, the operator can't re-fetch the magic link from the pending-invitations table — the table shows the failed-send pill but no copy-button (the token plaintext is gone; we only persist the hash per D15.1). The operator's only recovery path is "cancel the failed-send row, issue a fresh invitation" — a 30-second click but a non-zero friction.
+
+Cleaner UX: add a "Resend" affordance on rows where `email_send_status='failed'`. The handler regenerates a token + hash, updates the row in place, retries the SMTP send, and (on success) writes the new emailSendStatus='sent'. Audit row `invitation.resend` captures the attempt regardless of outcome. The new plaintext is shown in a modal so the operator can copy-paste it if SMTP fails again.
+
+Conceptually overlaps with #90's option (b) — same endpoint shape, just triggered from the SMTP-failed-pill instead of an expiry button. Could ship as a single follow-up that addresses both.
+
+**Severity:** low UX. **Trigger:** when operator hits the "modal closed, magic link lost, SMTP not yet staged" sequence more than twice. **Suggested resolution:** ship #90's option (b) and use the same endpoint for both surfaces. ~30 lines of route handler + ~10 lines of UI affordance.
+
+### ~~92. Verify `getBooksWithMetrics` includes ARCHIVED rows~~
+
+**#92 CLOSED with no action (2026-05-12)** — verified during Phase 5 Stream E implementation. `src/lib/dashboard/queries.ts:getBooksWithMetrics` (lines 38-79) has NO status filter — the raw SQL is `SELECT ... FROM books b LEFT JOIN ... GROUP BY ... ORDER BY b.title` with no `WHERE b.status = ...` clause. Therefore an ARCHIVED book with active fetches surfaces in Active Books for grant-holders exactly as the load-bearing UX invariant (D15.5) requires. No predicate fix needed; no follow-up resolution; no diff applied. `requireBookAccess` (src/lib/books/access.ts:36-53) similarly has no book-side status filter — its predicate is grant-side only.
+
+The invariant pair "Library hides ARCHIVED; Active Books and access-grants honor it" is now guarded by a vitest at `src/lib/books/access.test.ts:(h)` ensuring the access predicate has no `book.status` filter (would break if a future contributor adds one).
+
+### 93. Active Books affordance for ARCHIVED rows
+
+Phase 5 Stream E lands the archive button on `/dashboard/pricing` (publisher / admin surface). The buyer-facing `/dashboard` "Active Books" table surfaces ARCHIVED books that the buyer has a grant on (per the verified Q6 / #92 invariant — `getBooksWithMetrics` returns every book row including ARCHIVED), but the table doesn't render a status chip distinguishing ACTIVE from ARCHIVED — the buyer sees a row that looks identical to their ACTIVE rows and may be surprised when "View" still works fine but the publisher has clearly de-listed the book.
+
+Two paths to close the affordance gap:
+
+- **(a) Status chip column.** Add a `Status` column to `books-table.tsx` that renders an ARCHIVED pill for ARCHIVED rows. Buyer sees the chip; the table makes the de-listed state visible. Library-grade copy in the row tooltip: "This book has been archived by the publisher. Your existing access is preserved." Trivial column add; matches the existing pricing-form ARCHIVED row shape Stream E lands.
+- **(b) Separate "Archived" tab.** Split the buyer's table into "Active" and "Archived" tabs (mirrors the existing admin-users filter pattern from D12.3). Cleaner per-tab, more nav state. Cumulative complexity higher.
+
+**Severity:** low UX. **Trigger:** when the first buyer asks "wait, why is this book listed as Active when the publisher told me they took it down?" **Suggested resolution:** option (a) first — adds a chip without restructuring the table.
+
+### 94. Audit per-role archive-button placement once real publishers onboard
+
+Phase 5 Stream E's archive button placement is **/dashboard/pricing only** for v1 — locked decision Q2. The reasoning: pricing is the existing publisher-scoped surface, so the destructive-action button colocates with where the publisher already lives. ADMIN gets the same button on /dashboard/admin/books (next to Reassign).
+
+The trade-off: a publisher who wants to archive a book has to navigate to Pricing first, even though the conceptual home for "archive my book" might feel more like /dashboard/library (the buyer-facing catalog view) or a per-book detail page (which doesn't exist yet). The v1 placement is a "where can we cheaply add it without scope creep" decision; the right home is "wherever the publisher's mental model expects it to be" which is unknowable until real publishers use it.
+
+Once Edward + Zach (or any external publisher) onboard and use the archive flow in anger, observe:
+
+1. Where do they look for archive first? (If they consistently look at Library, the button belongs there.)
+2. Do they complain about clicking through Pricing every time? (Friction signal.)
+3. Do they ever archive without intending to change pricing? (If yes, the colocation is incidental, not load-bearing.)
+
+If (1)/(2)/(3) point at a different home, move the button — single-component edit (just import `<ArchiveBookButton />` into the relevant table component and pass the book row). The audit-trail is preserved across the move; only the UI affordance shifts.
+
+**Severity:** low. **Trigger:** when real publishers describe a different conceptual home for "archive my book" than the current Pricing-only placement. **Suggested resolution:** audit publisher feedback after first ~5 archive events. If the pattern emerges, move; otherwise leave at Pricing as the canonical home.
+
 ---
 
 *Last updated: 2026-05-12. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

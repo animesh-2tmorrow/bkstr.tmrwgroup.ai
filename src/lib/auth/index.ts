@@ -1,8 +1,15 @@
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import { getServerSession, type NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import { cookies } from "next/headers";
 import { Role } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
+import { writeAuditEntry } from "@/lib/admin/audit";
+import {
+  hashToken,
+  markInvitationAccepted,
+  PENDING_INVITATION_COOKIE,
+} from "@/lib/admin/invitations";
 
 if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
   console.warn("[auth] GOOGLE_CLIENT_ID/SECRET missing — Google sign-in will fail until /etc/bkstr/oauth.env is sourced.");
@@ -98,6 +105,151 @@ async function syncRoleFromEnv(userId: string, email: string, currentRole: Role)
     data: { role: envDerived },
   });
   console.info(`[auth] role promoted: ${normalized} ${currentRole} → ${envDerived}`);
+}
+
+/**
+ * applyPendingInvitation — Phase 5 Stream E (D15.1–D15.4).
+ *
+ * Reads the bkstr_pending_invitation cookie set by
+ * /api/invitations/accept-init, re-hashes the plaintext token, validates
+ * the invitation row (not expired, not accepted), compares the OAuth
+ * email to the invitation email case-insensitively, and either:
+ *
+ *   - applies the pre-assigned role monotonic-upward + marks the
+ *     invitation accepted + writes an `invitation.accept` audit row
+ *     (actor is the recipient themselves per Q5 — see comment below),
+ *     OR
+ *   - documents the mismatch on emailMismatchNote and leaves the
+ *     invitation pending (Q4).
+ *
+ * The cookie is always cleared after this function runs, regardless of
+ * outcome — invitation is single-use even on email-mismatch (the admin
+ * must reissue if they want a second chance).
+ *
+ * Fail-safe: any throw inside this function is caught and logged. The
+ * caller's signIn flow continues normally. We never want an invitation-
+ * processing error to block the user from signing in.
+ */
+async function applyPendingInvitation(userId: string, userEmail: string): Promise<void> {
+  let cookieStore: Awaited<ReturnType<typeof cookies>> | null = null;
+  try {
+    cookieStore = await cookies();
+  } catch {
+    // cookies() throws outside a request context; this function only
+    // ever runs inside the events.signIn hook which is request-bound, so
+    // this catch is purely defensive (e.g. test harness with no cookie
+    // jar).
+    return;
+  }
+
+  const tokenCookie = cookieStore.get(PENDING_INVITATION_COOKIE);
+  if (!tokenCookie?.value) return;
+  const plaintext = tokenCookie.value;
+
+  // Clear the cookie regardless of outcome (single-use). The cookie set
+  // happens in the accept-init POST handler; we clear here by overwriting
+  // with maxAge=0. Next's cookies() in a server-action context allows
+  // mutating cookies; events.signIn runs in that context.
+  try {
+    cookieStore.set({
+      name: PENDING_INVITATION_COOKIE,
+      value: "",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+  } catch {
+    // Some NextAuth event hooks run in a context where cookies() can be
+    // read but not written. Non-fatal — the cookie's own 15-min TTL is
+    // the worst-case fallback.
+  }
+
+  try {
+    const tokenHash = hashToken(plaintext);
+    const invitation = await prisma.userInvitation.findFirst({
+      where: {
+        tokenHash,
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (!invitation) {
+      // Stale / expired / already-accepted cookie. Nothing to do.
+      return;
+    }
+
+    const oauthEmail = userEmail.toLowerCase().trim();
+    const invitationEmail = invitation.email.toLowerCase().trim();
+
+    if (oauthEmail !== invitationEmail) {
+      // Q4 — email mismatch. Document on the row + leave pending.
+      await prisma.userInvitation.update({
+        where: { id: invitation.id },
+        data: {
+          emailMismatchNote: `Recipient signed in with ${oauthEmail} (invitation was for ${invitationEmail}) at ${new Date().toISOString()}`,
+        },
+      });
+      console.warn(
+        `[auth] invitation email mismatch — invitation ${invitation.id} stays pending (OAuth: ${oauthEmail}, invitation: ${invitationEmail})`,
+      );
+      return;
+    }
+
+    // Email match. Apply role monotonic-upward + mark accepted + write
+    // audit row, all inside one TX.
+    const ROLE_RANK_LOCAL: Record<Role, number> = {
+      [Role.SUBSCRIBER]: 0,
+      [Role.PUBLISHER]: 1,
+      [Role.ADMIN]: 2,
+    };
+    const invitationRole = invitation.role;
+
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      });
+      if (!current) return;
+      const beforeRole = current.role;
+      // Monotonic-upward (D11.11) — only UPDATE if invitation-derived
+      // role is strictly higher than current. Otherwise the invitation
+      // is a no-op (still marked accepted to consume the row).
+      if (ROLE_RANK_LOCAL[invitationRole] > ROLE_RANK_LOCAL[beforeRole]) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { role: invitationRole },
+        });
+      }
+      await markInvitationAccepted(tx, invitation.id, userId);
+      // Actor is the recipient per Q5 — state transitions, not click
+      // attempts; recipient caused the transition by accepting. NO new
+      // D-slot — this rationale lives here inline.
+      await writeAuditEntry(tx, {
+        actorUserId: userId,
+        actionType: "invitation.accept",
+        targetType: "invitation",
+        targetId: invitation.id,
+        beforeState: { role: beforeRole, acceptedAt: null },
+        afterState: {
+          role:
+            ROLE_RANK_LOCAL[invitationRole] > ROLE_RANK_LOCAL[beforeRole]
+              ? invitationRole
+              : beforeRole,
+          acceptedAt: new Date().toISOString(),
+        },
+      });
+    });
+
+    console.info(`[auth] invitation ${invitation.id} accepted by ${userId} (${oauthEmail})`);
+  } catch (err) {
+    // Never block signin on an invitation-processing error. Surface to
+    // logs so the operator can investigate; the user's session still
+    // commits and they can use the app with their default role.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[auth] applyPendingInvitation failed: ${msg}`);
+  }
 }
 
 export const authOptions: NextAuthOptions = {
@@ -199,6 +351,17 @@ export const authOptions: NextAuthOptions = {
           data: { lastSigninAt: new Date() },
         });
       }
+
+      // Phase 5 Stream E (D15.1) — invitation acceptance hook. Runs for
+      // BOTH new and returning users (Q3 — handles both paths uniformly,
+      // not just createUser). Reads the bkstr_pending_invitation cookie,
+      // validates the token, applies the role monotonic-upward, and
+      // marks the invitation accepted. Errors are caught inside the
+      // helper — they NEVER block the signin flow.
+      if (user.id && user.email) {
+        await applyPendingInvitation(user.id, user.email);
+      }
+
       // First-signin promotion is handled by createUser above (which fires
       // BEFORE signIn for new users). Skip the role re-sync here to avoid a
       // redundant DB read; the lastSigninAt UPDATE above still ran.
