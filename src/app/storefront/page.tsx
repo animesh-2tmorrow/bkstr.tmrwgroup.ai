@@ -217,7 +217,7 @@ export default function StorefrontPage() {
       </header>
 
       {/* ── Main ── */}
-      <main className="flex-grow px-6 pb-14 max-w-7xl mx-auto w-full">
+      <main className="flex-grow px-6 pb-14 max-w-screen-2xl mx-auto w-full">
         {/* Hero — single-line serif heading, one-sentence subtitle */}
         <section className="text-center max-w-4xl mx-auto mt-8 mb-14">
           <h1 className="font-serif text-5xl md:text-6xl lg:text-7xl font-bold leading-tight tracking-tight mb-5 text-gray-900">
@@ -244,13 +244,13 @@ export default function StorefrontPage() {
               <p className="text-gray-400 text-sm">No books available at this time.</p>
             </div>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
               {books.map((book) => {
                 const badge = domainBadge(book.domain);
                 return (
                   <article
                     key={book.id}
-                    className="bg-white border border-[#E5DCC8] rounded-lg overflow-hidden hover:shadow-md transition-shadow duration-200 flex flex-col h-full"
+                    className="bg-white border border-[#E5DCC8] rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col h-full"
                   >
                     {/* TOP: horizontal flex — cover-left full-bleed, content-right padded.
                         Stream H.5: removed padding from the top container + removed cover
