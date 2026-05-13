@@ -1,24 +1,27 @@
 /**
- * GET /api/books/check-slug?slug=<slug> — Phase 6 Stream K (D17.1).
+ * GET /api/books/check-slug?slug=<slug>&kind=book|skill — Phase 6 Stream K (D17.1) +
+ * Stream L (D18.1) generalization.
  *
- * Slug-existence prefetch for the new-book form's zip-upload mode (T2 option (a)).
- * On the upload form, when a publisher types a slug in zip mode the client
- * debounce-hits this endpoint to learn whether the slug is already taken under
- * the caller's publisher. The answer drives a UI banner ("creates v{N+1} of
- * '<title>' — price stays at $X") and locks the price field on the existing-
- * book branch (D-K3 / T2 — price changes go through the pricing surface, not
- * upload). Without this prefetch, the form would have to either silently
- * accept-and-ignore the typed price or surprise the user at submit time.
+ * Slug-existence prefetch for the new-book/new-skill form. Driven by the form's
+ * debounced lookup when a publisher types a slug; the response shape lets the
+ * form (a) lock the price field with the existing item's price and (b) show a
+ * "creates v{N+1} of '<title|name>' — price stays at $X" banner instead of
+ * silently overriding form input on submit.
+ *
+ * L generalization: `?kind=book` (default) queries the `books` table; `?kind=skill`
+ * queries the `skills` table. The route filename stays `/api/books/check-slug` to
+ * preserve backward compat (existing callers don't pass `kind`). Mild URL-
+ * semantics smell, same scope as the form's `/dashboard/books/new` URL — accepted,
+ * not refactored.
  *
  * Publisher-scoped per T1: resolves only against `tmrwgroup` (single-tenant
- * today; the unique key is `@@unique([publisherId, slug])`, so the same slug
- * could in principle exist under a different publisher — the schema allows
- * it, this endpoint mirrors that).
+ * today; the unique key on both tables is `@@unique([publisherId, slug])`, so
+ * the same slug could in principle exist under a different publisher — the
+ * schema allows it, this endpoint mirrors that).
  *
  * Auth: identical gate to /api/books/new — session required, role ∈
  * {PUBLISHER, ADMIN}. We don't leak slug existence to unauthenticated callers
- * (slugs aren't deeply sensitive, but publisher-only space is publisher-only
- * space).
+ * (slugs aren't deeply sensitive, but publisher-only space is publisher-only).
  */
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
@@ -32,6 +35,14 @@ export const dynamic = "force-dynamic";
 const SLUG_REGEX = /^[a-z0-9-]+$/;
 const SLUG_MAX = 128;
 const TMRWGROUP_PUBLISHER_SLUG = "tmrwgroup";
+
+type CheckKind = "book" | "skill";
+
+function parseKind(raw: string | null): CheckKind | { error: string } {
+  if (raw === null || raw === "" || raw === "book") return "book";
+  if (raw === "skill") return "skill";
+  return { error: `Invalid 'kind' query param '${raw}' (allowed: 'book' | 'skill')` };
+}
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -50,9 +61,12 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Resolve tmrwgroup publisher (single-tenant per Phase 4 §0.1). If absent,
-  // 500 with the same operator message the new-book route uses — same recovery
-  // path (seed via import-book.ts or SQL).
+  const kindParsed = parseKind(request.nextUrl.searchParams.get("kind"));
+  if (typeof kindParsed !== "string") {
+    return NextResponse.json({ error: kindParsed.error }, { status: 400 });
+  }
+  const kind: CheckKind = kindParsed;
+
   const publisher = await prisma.publisher.findFirst({
     where: { slug: TMRWGROUP_PUBLISHER_SLUG },
     select: { id: true },
@@ -64,7 +78,37 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // One round trip: find the book if any, with its USD price and latest version.
+  if (kind === "skill") {
+    const skill = await prisma.skill.findUnique({
+      where: { publisherId_slug: { publisherId: publisher.id, slug } },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        price: { select: { unitAmountCents: true } },
+        versions: {
+          orderBy: { version: "desc" },
+          select: { version: true },
+          take: 1,
+        },
+      },
+    });
+    if (!skill) {
+      return NextResponse.json({ exists: false, kind: "skill" });
+    }
+    return NextResponse.json({
+      exists: true,
+      kind: "skill",
+      skillId: skill.id,
+      name: skill.name,
+      currentPriceUsdCents: skill.price?.unitAmountCents ?? null,
+      latestVersion: skill.versions[0]?.version ?? null,
+      status: skill.status,
+    });
+  }
+
+  // kind === "book" — original Stream K behavior, unchanged response shape
+  // (no `kind` field on legacy callers' response to preserve backward compat).
   const book = await prisma.book.findUnique({
     where: { publisherId_slug: { publisherId: publisher.id, slug } },
     select: {

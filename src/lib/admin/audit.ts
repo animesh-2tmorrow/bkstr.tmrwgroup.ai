@@ -92,10 +92,10 @@ import { Prisma } from "@/generated/prisma/client";
  */
 
 // D12.7 — `target_type` discriminator. VARCHAR(32) column; app-side
-// discipline restricts the value set to four known target tables. Phase 5
-// Stream E adds "invitation" for invitation.send / invitation.cancel /
-// invitation.accept audit rows (D15.2).
-export type AuditTargetType = "user" | "book" | "grant" | "invitation";
+// discipline restricts the value set to the known target tables. Phase 5
+// Stream E adds "invitation" for invitation.send / .cancel / .accept (D15.2);
+// Phase 6 Stream L (D18.1) adds "skill" for skill.zip_upload audit rows.
+export type AuditTargetType = "user" | "book" | "grant" | "invitation" | "skill";
 
 export type WriteAuditEntryArgs = {
   /** The logged-in ADMIN's `session.user.id`. NOT NULL at the DB layer. */
