@@ -4,7 +4,16 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
 import { BookStatus, GrantSource, Role } from "@/generated/prisma/client";
+import { handleZipUpload } from "./zip-handler";
 
+// Phase 6 Stream K dispatch (D17.1) — POST now dispatches on Content-Type
+// after the shared auth + role check below:
+//   - multipart/form-data → handleZipUpload (zip-handler.ts; multi-chapter,
+//     manifest-aware, writes admin_actions, idempotent via SHA-256).
+//   - everything else     → the existing JSON single-blob path (Stream B / I,
+//     unchanged: 409s on slug collision, writes one inline BookVersion, no
+//     admin_actions row — parity backfill tracked as follow-up #109).
+//
 // Phase 4 Stream B — new-book POST. The atomicity-controlled "create one book"
 // flow per CC-9 / D11.7.
 //
@@ -161,6 +170,13 @@ export async function POST(request: Request) {
   // away from this surface for non-authoring roles.
   if (session.user.role !== Role.PUBLISHER && session.user.role !== Role.ADMIN) {
     return NextResponse.json({ error: "PUBLISHER or ADMIN role required" }, { status: 403 });
+  }
+
+  // Phase 6 Stream K — Content-Type dispatch. Multipart goes to the zip
+  // handler; everything else falls through to the legacy JSON single-blob path.
+  const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
+  if (contentType.includes("multipart/form-data")) {
+    return handleZipUpload(request, session);
   }
 
   let rawBody: unknown;
