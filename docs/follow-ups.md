@@ -1081,7 +1081,9 @@ Current implementation reads a single hardcoded `src/content/docs/index.md` with
 
 ## From Phase 6 Stream L — skills as a separate content class (2026-05-13)
 
-### 122. Agent-consumption API for skills (`GET /api/skills/{slug}/files` returning JSON)
+### ~~122. Agent-consumption API for skills (`GET /api/skills/{slug}/files` returning JSON)~~ — RESOLVED 2026-05-13 by follow-up-122 commit
+
+Shipped on branch `phase-6/stream-l-followup-122-agent-api`. `GET /api/skills/{slug}/files` returns inline JSON `{ skill: {…}, files: [{ path, content, sha256 }] }`; auth supports both session and API-key (`Authorization: Bearer bks_…`); same `AccessGrant.skillId` gate as `/download`. Shared `requireSkillAccess` helper extracted to `src/lib/skills/auth.ts` and now used by both routes. Per-file fetch endpoint (`GET /api/skills/{slug}/files/{path}`) explicitly deferred out of v1 — single-call JSON is the v1 shape; per-file is a future optimization if payloads get large. Audit-row write deferred to follow-up #128 (fetch_logs polymorphism — the right surface for read-path observability is `fetch_logs`, not `admin_actions` per D14.1). Original entry preserved below for archaeology.
 
 Stream L ships only a single zip-download endpoint for buyers (`GET /api/skills/{slug}/download`). For agents that want to consume a purchased skill programmatically — discover the file list, read individual files, watch for version changes — a JSON-shaped per-file API would mirror the book-side agent endpoint (`/api/agent/fetch?slug=…`). Shape: `GET /api/skills/{slug}/files` returns `{ version, files: [{ path, extension, byteSize }] }`; `GET /api/skills/{slug}/files/{path}` returns the file body with the file's actual content-type (`text/x-python`, `application/json`, etc.). Auth identical to `/download`: `AccessGrant.skillId` lookup, source ∈ {PURCHASE, PUBLISHER_OWN}, non-revoked, non-expired.
 
@@ -1116,6 +1118,14 @@ Stream L's skill pipeline accepts `.json` and `.yaml` files in the extension all
 Stream J, K.1, and L all hit the same friction: `prisma migrate dev` requires a shadow database to validate the migration before applying, and the bkstr dev/CI environments don't provision one. The current workaround is the schema-to-schema fallback `prisma migrate diff --from-schema /tmp/old-schema.prisma --to-schema prisma/schema.prisma --script > migration.sql`, manually saved to `prisma/migrations/<timestamp>_<name>/migration.sql`. The pattern works but is undocumented and re-discovered every stream. Three streams in a row is no longer a one-off.
 
 **Severity:** medium (process friction, not correctness — the fallback produces equivalent migrations, just bypasses the auto-generation ergonomics). **Trigger:** next schema-modifying stream (likely Stream M or P), OR pre-emptively now since the pattern is established. **Suggested resolution:** preferred — configure `shadowDatabaseUrl` in `prisma.config.ts` pointing at a per-developer ephemeral DB (Docker compose: `bkstr_dev_shadow` on a separate port); fallback — document the `--from-schema` procedure in `docs/operations.md` so future contributors don't have to re-derive it from Prisma's docs each time. The Docker compose addition is ~10 LOC; the docs addition is ~30 LOC. Either works; the Docker compose path is the more durable answer.
+
+## From follow-up #122 implementation — agent-consumption JSON endpoint (2026-05-13)
+
+### 128. `fetch_logs.skillId` polymorphism for read-path observability of skill downloads + JSON fetches
+
+Follow-up #122's dispatch asked for an `admin_actions` row on every skill JSON fetch ("Mirrors the download route's audit pattern"). But (a) the download route writes no audit row today, and (b) `admin_actions` is for ADMIN MUTATIONS per D12.4/D14.1 — D14.1 explicitly carved out read-only paths (the Stream B assistant) from the audit log. The right surface for "agent fetched skill X at time T" is the existing `fetch_logs` table, which already tracks `/api/agent/fetch` calls for books. Skills don't yet have a parallel observability surface.
+
+**Severity:** low. **Trigger:** when operator visibility into skill fetches becomes necessary (debugging, abuse detection, usage telemetry for publishers); OR when the next observability-touching stream lands and wants polymorphism parity with `AccessGrant`. **Suggested resolution:** mirror the `AccessGrant.bookId`/`skillId` polymorphism on `fetch_logs` — add `fetch_logs.skillId UUID NULL` alongside the existing `bookId UUID NULL`, with the same XOR CHECK and same per-content-class partial indexes. Write a `fetch_logs` row from both `/api/skills/[slug]/download` and `/api/skills/[slug]/files`. Single migration; ~20 LOC of route changes. The pattern is established (D18.1's `AccessGrant` polymorphism), so the design copy is mechanical.
 
 ---
 
