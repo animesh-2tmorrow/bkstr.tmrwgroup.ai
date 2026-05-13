@@ -25,7 +25,15 @@ Z2. **Skills as a content class on bkstr** — separate from books (per the SKIL
 
 These shape multiple streams. Locking them early avoids re-work.
 
-**AD1 — Multi-chapter as the canonical book shape, not an alternative shape.** Existing single-blob books become "1-chapter books with no manifest." New schema: `BookChapter` table, FK to Book, with `order`, `slug`, `content`, `tokenEstimate`, `accessTier`. Book grows manifest-derived fields (`tokenEstimate` total, `conventions`, `dependencies[]`, `sourceRefs[]`, `audience`, `domain`, `accessPattern`). All books, old and new, become uniform. Single code path forward.
+**AD1 — Multi-chapter book structure (revised after Stream J pre-gather).**
+
+Chapters are a property of a `BookVersion`, not of a `Book`. A `BookVersion` may have zero chapters (legacy single-blob shape — content lives in `BookVersion.content` / `.contentUri` via the D9.2 dual-storage seam) or N chapters (new multi-chapter shape — content lives in `BookChapter` rows ordered by `order`, read via the `getVersionContent(version)` helper).
+
+Existing single-blob versions are NOT retroactively normalized into "1-chapter versions." They remain chapterless and continue to be served via `loadBookContent` unchanged. The multi-chapter shape is the canonical shape for *new* uploads going forward (Stream K onward); the legacy shape is preserved indefinitely as a readable archive form.
+
+Manifest metadata (`tokenEstimate`, `conventions`, `dependencies`, `sourceRefs`, `audience`, `accessPattern`, `version`, the chapter listing) lives on `BookVersion` as JSONB, since manifest data is per-snapshot and may change between versions of the same book. Chapter-level access tiers are deferred (no `accessTier` field in Stream J).
+
+> *Original AD1 wording (pre-Stream-J) put `BookChapter` FK on `Book` and `manifest` fields on `Book`, and described legacy books being rewritten as "1-chapter books with slug 'main'." The Stream J pre-gather found that `Book` has no `content` column at all — content lives in the versioned `BookVersion` chain — so chapters key to `BookVersion`, manifest is per-version, and legacy versions are left as-is rather than backfilled. See `docs/decisions.md` D16.1.*
 
 **AD2 — Skills are a separate content class, not a kind of book.** Different table (`Skill`), different upload flow, different access model (probably free + bundled with bkstr publisher onboarding, OR sold separately like books, OR both). Skills can contain executable code (Python) — bkstr does NOT execute it; that's the agent's responsibility. Bkstr stores + distributes; security model is "you ran it, it's on you" with clear publisher attribution.
 
