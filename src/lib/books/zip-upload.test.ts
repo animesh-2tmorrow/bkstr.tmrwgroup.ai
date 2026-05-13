@@ -94,7 +94,7 @@ description: A skill, not a book
     if (out.kind !== "rejected") return;
     expect(out.code).toBe("SKILL_DETECTED");
     expect(out.status).toBe(400);
-    expect(out.error).toMatch(/Stream L/);
+    expect(out.error).toMatch(/\/api\/skills\/new/);
   });
 
   it("rejects entry names that survive adm-zip's own normalization but our isSafeZipEntryName catches (drive-letter prefix / control characters)", async () => {

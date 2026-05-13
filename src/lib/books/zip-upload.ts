@@ -175,7 +175,7 @@ export async function processZipUpload(
       status: 400,
       code: "SKILL_DETECTED",
       error:
-        "This looks like an Anthropic skill, not a book. Skills are a separate content class — see Stream L (not yet shipped).",
+        "This looks like an Anthropic skill, not a book. Skills are a separate content class — upload it via the 'Skill' kind toggle on /dashboard/books/new (POSTs to /api/skills/new).",
     };
   }
 

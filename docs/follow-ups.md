@@ -1037,7 +1037,9 @@ Stream K's tests are mock-only: `route.test.ts` mocks `prisma`/`stripe`/`auth` a
 
 **Severity:** low. **Trigger:** when the next mock-based test failure ships a real bug to prod, OR when test infrastructure for real-DB integration tests exists for another reason. **Suggested resolution:** add a `vitest` config slice that connects to a per-test-suite test DB (Docker compose or testcontainers); use Zach's actual `agentic-qa-manual.zip` as a fixture stored in `test/fixtures/` (gitignored if size-sensitive, or committed if small).
 
-### 116. Extract zip size-cap constants to a shared client+server module
+### ~~116. Extract zip size-cap constants to a shared client+server module~~ — RESOLVED 2026-05-13 by Stream L commit 2 (`924205b`)
+
+Stream L's c2 extracted `src/lib/books/zip-*` to a shared `src/lib/zip/` module (`limits.ts`, `validate.ts`, `virtual-root.ts`, `macosx.ts`, `utf8.ts`); the four caps (`MAX_ZIP_BYTES`, `MAX_ENTRIES`, `MAX_PER_ENTRY_BYTES`, `MAX_TOTAL_UNCOMPRESSED_BYTES`) now live in `src/lib/zip/limits.ts` and are imported by both the book pipeline (`src/lib/books/zip-validate.ts`) and the skill pipeline (`src/lib/skills/zip-validate.ts`) — single source of truth. Original entry preserved below for archaeology.
 
 The Stream K zip size cap is enforced server-side in `src/lib/books/zip-validate.ts` (`MAX_ZIP_BYTES = 10 MB`). The form (`src/components/dashboard/new-book-form.tsx`) currently carries its own `const MAX_ZIP_BYTES = 10 * 1024 * 1024` as a UX hint, with an inline comment pointing at the server-side constant. The duplicated literal is fine for now — the server is the authoritative gate — but drift risk exists if one cap changes without the other.
 
@@ -1075,13 +1077,45 @@ Current implementation reads a single hardcoded `src/content/docs/index.md` with
 
 **Severity:** low. **Trigger:** when `index.md` grows past ~400 lines, OR navigation between doc sections becomes confusing, OR a publisher-facing stream wants its own doc page rather than a subsection (likely Stream L for skills authoring). **Suggested resolution:** directory routing under `/dashboard/docs/[slug]` with per-file frontmatter (title, role, order). The current `filterByRole` block-marker mechanism stays as the in-file fine-grain primitive; the new outer surface adds top-level navigation.
 
----
+**Update 2026-05-13 (Stream L c5):** Stream L added a "Uploading a skill" subsection (~50 LOC) inside the `:::role publisher` block, taking the file past 280 lines. The original trigger ("grows past ~400 lines") still hasn't fired, but the pressure is now from *content variety* as much as from raw line count — book authoring, skill authoring, and (future) eval-suite authoring will each want their own surface with their own top-of-page TOC, not a deeper-nested subsection in a single file. Future authoring streams (Stream P, etc.) will compound this. Trigger is now ~"the next authoring-domain stream after L" rather than "400 lines"; suggested resolution unchanged.
 
-*Last updated: 2026-05-13. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
+## From Phase 6 Stream L — skills as a separate content class (2026-05-13)
 
-The Stream K zip size cap is enforced server-side in `src/lib/books/zip-validate.ts` (`MAX_ZIP_BYTES = 10 MB`). The form (`src/components/dashboard/new-book-form.tsx`) currently carries its own `const MAX_ZIP_BYTES = 10 * 1024 * 1024` as a UX hint, with an inline comment pointing at the server-side constant. The duplicated literal is fine for now — the server is the authoritative gate — but drift risk exists if one cap changes without the other.
+### 122. Agent-consumption API for skills (`GET /api/skills/{slug}/files` returning JSON)
 
-**Severity:** low. **Trigger:** when one of the caps changes and the form's user-facing copy drifts, OR pre-emptively during a future micro-cleanup. **Suggested resolution:** move the four size constants (and the matching error-code strings if it earns its keep) into a small `src/lib/books/zip-limits.ts` that contains no Node-only imports, then re-export from `zip-validate.ts` and import from the form. The constraint is that the client bundle must not pull in adm-zip/yaml; a constants-only module trivially satisfies that.
+Stream L ships only a single zip-download endpoint for buyers (`GET /api/skills/{slug}/download`). For agents that want to consume a purchased skill programmatically — discover the file list, read individual files, watch for version changes — a JSON-shaped per-file API would mirror the book-side agent endpoint (`/api/agent/fetch?slug=…`). Shape: `GET /api/skills/{slug}/files` returns `{ version, files: [{ path, extension, byteSize }] }`; `GET /api/skills/{slug}/files/{path}` returns the file body with the file's actual content-type (`text/x-python`, `application/json`, etc.). Auth identical to `/download`: `AccessGrant.skillId` lookup, source ∈ {PURCHASE, PUBLISHER_OWN}, non-revoked, non-expired.
+
+**Severity:** low. **Trigger:** when the first agent buyer reports they want per-file access instead of zip-unpack-then-read, OR when the platform ships an agent SDK that wants a JSON skill-discovery primitive. **Suggested resolution:** add the two routes; reuse the `AccessGrant.skillId` authorization helper extracted during c4 (currently inlined at `src/app/api/skills/[slug]/download/route.ts`); rate-limit per (subscriber, skill) to match the books-side `/api/agent/fetch` cadence.
+
+### 123. Skill cover image support
+
+Stream L deliberately ships without skill cover images — skills are headless (no buyer-facing visual identity beyond the name + description). If publisher feedback says skills want covers (for the `/skills` listing, mostly), the implementation mirrors the books-side two-request flow: `POST /api/skills/{slug}/cover` (multipart) → S3 upload → `Skill.coverUri` populated.
+
+**Severity:** low. **Trigger:** publisher feedback after the first batch of skills publish, OR when the `/skills` listing visual density becomes a concern. **Suggested resolution:** copy the books-side cover-upload route (`src/app/api/books/[id]/cover/route.ts`) with the skill substitutions; add `Skill.coverUri TEXT NULL` in a forward-only additive migration; surface in the publisher form's skill kind.
+
+### 124. Skill `dependencies:` field in frontmatter
+
+Anthropic's skill format supports a `dependencies: [skill_id_or_url, …]` field for skills that compose other skills. Stream L's parser accepts the field (it round-trips in the stored `skill_files` content) but does NOT validate or enforce it — a skill that depends on `mcp-filesystem` works fine if the buyer also owns `mcp-filesystem`, breaks silently if they don't. Long-term the storefront should surface the dependency list ("Requires: …") and the checkout should optionally bundle dependencies as a cart.
+
+**Severity:** low. **Trigger:** when the first multi-skill bundle ships, OR when a buyer reports a runtime failure because a transitive skill was missing. **Suggested resolution:** parse `dependencies:` in `src/lib/skills/frontmatter.ts`; store on `skill_versions.dependencies JSONB`; surface in the `/skills/[slug]` detail page; gate the buy button or auto-bundle as a cart (operator decision when the time comes).
+
+### 125. Open-marketplace surface (user-submitted skills, separate from publisher upload)
+
+Today, publishing a skill requires PUBLISHER role (env-allowlisted). The marketplace MVP assumes a curated set of publishers. Edward's msg 9 (2026-05-08) anchored the longer-term direction: an open marketplace where any signed-in user can submit a skill, with a moderation queue before listing. Same upload pipeline (`/api/skills/new`), but `Skill.status` defaults to `PENDING_REVIEW` instead of `ACTIVE`; an admin dashboard at `/dashboard/admin/skills` surfaces the queue; a `MANUAL` `admin_actions` row records the approve/reject decision. Pricing for user-submitted skills could be set by the submitter (Stripe Connect) or capped at a platform-default (single-account model retained).
+
+**Severity:** low / strategic. **Trigger:** Stream S (open marketplace UX + moderation) reaching the top of the roadmap, OR a single high-value user-submitted skill creating gravitational pull. **Suggested resolution:** Stream S scope, not Stream L. Captured here so the design hooks are visible from inside the skills code path (e.g., `Skill.status` is already a VARCHAR with `'ACTIVE'` as the only current value, leaving room for `'PENDING_REVIEW'` / `'REJECTED'` / `'ARCHIVED'` without migration).
+
+### 126. Secret-scan `.json` / `.yaml` files on skill upload
+
+Stream L's skill pipeline accepts `.json` and `.yaml` files in the extension allowlist — and publishers writing skill bundles WILL accidentally check in API keys, OAuth tokens, or AWS credentials in config files. The upload path currently does no secret-scanning; a publisher who uploads a skill with `aws_secret_access_key: AKIA…` in a config file leaks that secret to every buyer. The books pipeline doesn't have this problem (markdown rarely carries secrets, and book content is renderable text where any leak is human-visible).
+
+**Severity:** medium (latent — surfaces the moment a publisher does it once). **Trigger:** before the first user-submitted skill (per #125), OR pre-emptively before the marketplace opens to a wider publisher set, OR as part of the SAST baseline expansion when #89 re-merges. **Suggested resolution:** run a regex-based secret-scan over `.json` / `.yaml` file contents at upload time (similar to `gitleaks` / `truffleHog` rule packs); reject with a granular `SECRET_DETECTED` code naming the file + the pattern matched; document the scan rules in `docs/operations.md` so publishers know what to avoid. Inline regex is fine for v1 — the rule set is small (AWS access keys, OpenAI keys, Anthropic keys, GitHub PATs, Stripe keys, generic `password:`/`secret:`/`api_key:` YAML keys with non-redacted values).
+
+### 127. Configure `shadowDatabaseUrl` in `prisma.config.ts` OR document the `--from-schema` fallback
+
+Stream J, K.1, and L all hit the same friction: `prisma migrate dev` requires a shadow database to validate the migration before applying, and the bkstr dev/CI environments don't provision one. The current workaround is the schema-to-schema fallback `prisma migrate diff --from-schema /tmp/old-schema.prisma --to-schema prisma/schema.prisma --script > migration.sql`, manually saved to `prisma/migrations/<timestamp>_<name>/migration.sql`. The pattern works but is undocumented and re-discovered every stream. Three streams in a row is no longer a one-off.
+
+**Severity:** medium (process friction, not correctness — the fallback produces equivalent migrations, just bypasses the auto-generation ergonomics). **Trigger:** next schema-modifying stream (likely Stream M or P), OR pre-emptively now since the pattern is established. **Suggested resolution:** preferred — configure `shadowDatabaseUrl` in `prisma.config.ts` pointing at a per-developer ephemeral DB (Docker compose: `bkstr_dev_shadow` on a separate port); fallback — document the `--from-schema` procedure in `docs/operations.md` so future contributors don't have to re-derive it from Prisma's docs each time. The Docker compose addition is ~10 LOC; the docs addition is ~30 LOC. Either works; the Docker compose path is the more durable answer.
 
 ---
 

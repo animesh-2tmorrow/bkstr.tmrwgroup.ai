@@ -274,7 +274,7 @@ describe("POST /api/books/new — Stream K zip-multipart paths", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("SKILL_DETECTED");
-    expect(body.error).toMatch(/Stream L/);
+    expect(body.error).toMatch(/\/api\/skills\/new/);
 
     expect(stripeProductsCreateMock).not.toHaveBeenCalled();
     expect(stripePricesCreateMock).not.toHaveBeenCalled();

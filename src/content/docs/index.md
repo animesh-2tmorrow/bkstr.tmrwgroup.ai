@@ -119,7 +119,37 @@ In **manifest mode**, slugs derived from `file:` keep the full basename — no p
 
 **Re-uploading the same zip** is idempotent — the server computes a hash of the chapter content; an identical re-upload returns `200 {unchanged: true}` with the existing version's id. An *edited* zip creates a new `BookVersion` (v2, v3, …) of the same book. The price stays at the current value when uploading a new version — the form's price field is locked for existing slugs. Price changes happen on the Pricing page, not on upload.
 
-**Skill bundles are rejected.** A zip with `SKILL.md` at the root (or at the virtual root) whose first frontmatter block contains a `name:` field is rejected with a clear error pointing at the (future) Skills surface. Don't try to upload skills via the book form.
+**Skill bundles are rejected by the book upload path.** A zip with `SKILL.md` at the root (or at the virtual root) whose first frontmatter block contains a `name:` field is rejected with a 400 `SKILL_DETECTED` error. To upload a skill, switch the **Kind** toggle on `/dashboard/books/new` to **Skill** — that submits to `/api/skills/new` instead of `/api/books/new`. See **Uploading a skill** below.
+
+### Uploading a skill
+
+Skills are a separate content class from books — bundled instruction sets that an agent installs once and uses to consume bkstr content (or anything else). Each skill ships as a `.zip` containing a `SKILL.md` plus supporting files.
+
+Switch the **Kind** toggle at the top of `/dashboard/books/new` to **Skill**. The form contracts: title, domain, description, cover image, and the paste/markdown upload modes all hide — skills are zip-only and all metadata comes from the manifest.
+
+**What goes in the zip:**
+
+- **`SKILL.md` at the root (or virtual root) with YAML frontmatter.** Required fields in the frontmatter: `name:` and `description:`. Optional fields (`license:`, `homepage:`, etc.) are accepted but ignored by the server today; they round-trip in the stored file content so the agent can read them.
+- **Any number of supporting files** alongside `SKILL.md`. The extension allowlist is `.md`, `.py`, `.sh`, `.json`, `.yaml`. Files outside the allowlist are rejected with `EXTENSION_NOT_ALLOWED`.
+
+**Slug behavior:** the slug is auto-derived from the frontmatter `name:` (lowercased, non-alphanumerics → hyphens). The form's slug field is an override — if you fill it in, it takes precedence over the derived value.
+
+**Re-uploading the same zip is idempotent.** The server stores a normalized hash of the zip's file content on `skill_versions.normalized_hash`; an identical re-upload returns the existing version's id unchanged. An *edited* zip on a slug you already own creates a new `SkillVersion` (v2, v3, …) of the same skill. The form's price field is locked for existing slugs — price changes happen on the Pricing page, not on upload.
+
+**Wrapping is transparent**, identical to book zips: up to 3 levels of single-directory wrapping is detected and stripped silently; macOS Finder's `__MACOSX/` resource-fork siblings are stripped at the top of processing.
+
+**UTF-8 is strict.** Skill files must be valid UTF-8 — the server uses `TextDecoder("utf-8", { fatal: true })` to reject files containing invalid byte sequences. This matters because skill files are *executable code* (`.py`, `.sh`, `.json`, `.yaml`) — silently re-encoding a Windows-1252-saved `.py` file to UTF-8 would create a runtime-broken artifact downstream. If your upload fails with `INVALID_UTF8`, re-save the offending file as UTF-8 in your editor and re-upload.
+
+**Caps** (server-enforced, shared with the book zip path via `src/lib/zip/limits.ts`):
+
+- Zip file size: 10 MB
+- Per-file content: 1 MB
+- Total uncompressed: 20 MB
+- Maximum file count: 500
+
+**What buyers get.** A buyer who purchases your skill gets a single `.zip` download via `/api/skills/{slug}/download` — re-archived on demand from the stored `skill_files` rows, so the layout matches your upload (modulo the wrapping directory, which was stripped on ingest). No per-file API today — that's tracked as a follow-up (`#122`, JSON-shaped agent-consumption API).
+
+**Discoverability.** Your skill appears at `/skills` (public listing) and `/skills/{slug}` (detail). The detail page renders the manifest of file paths and sizes; file CONTENTS are behind purchase.
 
 ### ⚠️ Three sharp edges to know before you click submit
 
