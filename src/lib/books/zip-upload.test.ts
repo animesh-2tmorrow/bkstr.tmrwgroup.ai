@@ -184,4 +184,163 @@ description: A skill, not a book
     if (c.kind !== "success") throw new Error("expected success");
     expect(c.draftHash).not.toBe(a.draftHash);
   });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Phase 6 Stream K.1 (D17.2) — virtual-root resolution, __MACOSX strip,
+  // slug-derivation aggregate. Nine new tests.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it("K.1: wrapped zip — manifest at ${virtualRoot}/manifest.yaml resolves correctly; result.virtualRoot equals the wrapping prefix", async () => {
+    const buffer = buildZip([
+      {
+        name: "nqa1-agent-qa-manual/manifest.yaml",
+        content: `title: Wrapped Book
+slug: wrapped-book
+domain: qa
+chapters:
+  - slug: alpha
+    file: chapters/alpha.md
+  - slug: beta
+    file: chapters/beta.md
+`,
+      },
+      { name: "nqa1-agent-qa-manual/chapters/alpha.md", content: "alpha body" },
+      { name: "nqa1-agent-qa-manual/chapters/beta.md", content: "beta body" },
+    ]);
+
+    const out = await processZipUpload(buffer, FIELDS_OK);
+    if (out.kind !== "success") throw new Error(`expected success, got ${out.kind}`);
+    expect(out.virtualRoot).toBe("nqa1-agent-qa-manual/");
+    expect(out.title).toBe("Wrapped Book"); // manifest wins
+    expect(out.chapters.map((c) => c.slug)).toEqual(["alpha", "beta"]);
+    expect(out.chapters[0].content).toBe("alpha body");
+    expect(out.manifestPresent).toBe(true);
+    expect(out.slugDerivation).toBe("manifest_explicit");
+  });
+
+  it("K.1: wrapped zip, no manifest — filename-fallback only considers entries under the virtual root; chapter slugs use OQ-1 prefix-strip", async () => {
+    const buffer = buildZip([
+      { name: "book/ch00-intro.md", content: "intro body" },
+      { name: "book/ch01-body.md", content: "body body" },
+    ]);
+
+    const out = await processZipUpload(buffer, FIELDS_OK);
+    if (out.kind !== "success") throw new Error(`expected success, got ${out.kind}`);
+    expect(out.virtualRoot).toBe("book/");
+    expect(out.manifestPresent).toBe(false);
+    expect(out.slugDerivation).toBe("filename_fallback");
+    expect(out.chapters.map((c) => c.slug)).toEqual(["intro", "body"]);
+  });
+
+  it("K.1: wrapping 4 levels deep is rejected with WRAPPING_TOO_DEEP (status=400)", async () => {
+    // a/b/c/d/manifest.yaml — single-directory chain 4 levels deep.
+    const buffer = buildZip([
+      { name: "a/b/c/d/manifest.yaml", content: "chapters:\n  - slug: x\n" },
+      { name: "a/b/c/d/chapters/x.md", content: "x body" },
+    ]);
+
+    const out = await processZipUpload(buffer, FIELDS_OK);
+    expect(out.kind).toBe("rejected");
+    if (out.kind !== "rejected") return;
+    expect(out.code).toBe("WRAPPING_TOO_DEEP");
+    expect(out.status).toBe(400);
+  });
+
+  it("K.1: wrapping exactly 3 levels deep is accepted at the cap", async () => {
+    // a/b/c/manifest.yaml — single-directory chain exactly 3 levels deep.
+    const buffer = buildZip([
+      { name: "a/b/c/manifest.yaml", content: "chapters:\n  - slug: x\n" },
+      { name: "a/b/c/chapters/x.md", content: "x body" },
+    ]);
+
+    const out = await processZipUpload(buffer, FIELDS_OK);
+    if (out.kind !== "success") throw new Error(`expected success, got ${out.kind}`);
+    expect(out.virtualRoot).toBe("a/b/c/");
+    expect(out.chapters).toHaveLength(1);
+    expect(out.chapters[0].slug).toBe("x");
+  });
+
+  it("K.1: flat zip — result.virtualRoot is null (regression check; Stream K behavior preserved)", async () => {
+    const buffer = buildZip([
+      { name: "ch00-intro.md", content: "intro" },
+      { name: "ch01-body.md", content: "body" },
+    ]);
+
+    const out = await processZipUpload(buffer, FIELDS_OK);
+    if (out.kind !== "success") throw new Error(`expected success, got ${out.kind}`);
+    expect(out.virtualRoot).toBeNull();
+    expect(out.slugDerivation).toBe("filename_fallback");
+    expect(out.chapters).toHaveLength(2);
+  });
+
+  it("K.1: wrapped zip with SKILL.md at the virtual root is rejected with SKILL_DETECTED (not /SKILL.md)", async () => {
+    const buffer = buildZip([
+      {
+        name: "wrapped-skill/SKILL.md",
+        content: `---\nname: my-skill\ndescription: skill not book\n---\n\n# Body\n`,
+      },
+      { name: "wrapped-skill/helper.py", content: "print('hi')" },
+    ]);
+
+    const out = await processZipUpload(buffer, FIELDS_OK);
+    expect(out.kind).toBe("rejected");
+    if (out.kind !== "rejected") return;
+    expect(out.code).toBe("SKILL_DETECTED");
+  });
+
+  it("K.1: wrapped zip + __MACOSX/ siblings — __MACOSX stripped at the top so virtual-root detection still sees a single top-level dir", async () => {
+    const buffer = buildZip([
+      // macOS Finder-style resource-fork siblings at zip root
+      { name: "__MACOSX/._nqa1-agent-qa-manual", content: "resource fork garbage" },
+      { name: "__MACOSX/nqa1-agent-qa-manual/._manifest.yaml", content: "more garbage" },
+      { name: "__MACOSX/nqa1-agent-qa-manual/._ch00-intro.md", content: "even more garbage" },
+      // The real wrapped book
+      { name: "nqa1-agent-qa-manual/manifest.yaml", content: "chapters:\n  - slug: intro\n" },
+      { name: "nqa1-agent-qa-manual/chapters/intro.md", content: "intro body" },
+    ]);
+
+    const out = await processZipUpload(buffer, FIELDS_OK);
+    if (out.kind !== "success") throw new Error(`expected success, got ${out.kind}`);
+    expect(out.virtualRoot).toBe("nqa1-agent-qa-manual/");
+    expect(out.chapters).toHaveLength(1);
+    expect(out.chapters[0].slug).toBe("intro");
+    expect(out.chapters[0].content).toBe("intro body");
+  });
+
+  it("K.1: flat zip + __MACOSX/._ resource-fork .md files — filename-fallback ignores all __MACOSX entries", async () => {
+    const buffer = buildZip([
+      { name: "__MACOSX/._ch00-intro.md", content: "resource fork pretending to be markdown" },
+      { name: "__MACOSX/._ch01-body.md", content: "more resource fork garbage" },
+      { name: "ch00-intro.md", content: "real intro body" },
+      { name: "ch01-body.md", content: "real body body" },
+    ]);
+
+    const out = await processZipUpload(buffer, FIELDS_OK);
+    if (out.kind !== "success") throw new Error(`expected success, got ${out.kind}`);
+    expect(out.virtualRoot).toBeNull();
+    expect(out.chapters).toHaveLength(2); // not 4 — the __MACOSX/._*.md are stripped
+    expect(out.chapters.map((c) => c.content)).toEqual(["real intro body", "real body body"]);
+  });
+
+  it("K.1: mixed-mode manifest (one chapter file-only, one slug-only, one with both) is valid; slugDerivation='mixed'", async () => {
+    const buffer = buildZip([
+      {
+        name: "manifest.yaml",
+        content: `chapters:
+  - file: chapters/file-only.md
+  - slug: slug-only
+  - file: chapters/explicit-both.md
+    slug: explicit-both
+`,
+      },
+      { name: "chapters/file-only.md", content: "file-only body" },
+      { name: "chapters/slug-only.md", content: "slug-only body" },
+      { name: "chapters/explicit-both.md", content: "explicit-both body" },
+    ]);
+
+    const out = await processZipUpload(buffer, FIELDS_OK);
+    if (out.kind !== "success") throw new Error(`expected success, got ${out.kind}`);
+    expect(out.slugDerivation).toBe("mixed");
+    expect(out.chapters.map((c) => c.slug)).toEqual(["file-only", "slug-only", "explicit-both"]);
+  });
 });

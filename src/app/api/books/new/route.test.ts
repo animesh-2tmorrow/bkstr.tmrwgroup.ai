@@ -281,6 +281,100 @@ describe("POST /api/books/new — Stream K zip-multipart paths", () => {
     expect(transactionMock).not.toHaveBeenCalled();
   });
 
+  it("(K.1-1) zip wrapped under a single directory — 201; audit_action.after_state.virtual_root equals the wrapping prefix; chapter count matches manifest, not zip-root files", async () => {
+    authMock.mockResolvedValue(SESSION);
+    publisherFindFirstMock.mockResolvedValue({ id: PUBLISHER_ID });
+    subscriberFindFirstMock.mockResolvedValue({ id: SUBSCRIBER_ID });
+    bookFindUniqueMock.mockResolvedValue(null);
+    txBookFindUniqueMock.mockResolvedValue(null);
+    stripeProductsCreateMock.mockResolvedValue({ id: "prod_test_K1_1" });
+    stripePricesCreateMock.mockResolvedValue({ id: "price_test_K1_1" });
+
+    const zipBuf = buildZipBuffer([
+      // Resource-fork garbage that gets stripped
+      { name: "__MACOSX/._wrap-book", content: "garbage" },
+      // The real wrapped book
+      {
+        name: "wrap-book/manifest.yaml",
+        content: `chapters:\n  - slug: alpha\n    file: chapters/alpha.md\n  - slug: beta\n    file: chapters/beta.md\n`,
+      },
+      { name: "wrap-book/chapters/alpha.md", content: "alpha body" },
+      { name: "wrap-book/chapters/beta.md", content: "beta body" },
+      // A glossary file that filename-fallback would otherwise pick up; the
+      // manifest path means it's NOT a chapter (count must still be 2).
+      { name: "wrap-book/glossary.md", content: "glossary body" },
+    ]);
+    const req = buildMultipartRequest(zipBuf, {
+      title: "Wrapped",
+      slug: "wrapped-slug",
+      domain: "skill",
+      price_usd_cents: "999",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(txBookChapterCreateManyMock).toHaveBeenCalledOnce();
+    const chapterCall = txBookChapterCreateManyMock.mock.calls[0][0] as {
+      data: Array<{ order: number; slug: string }>;
+    };
+    expect(chapterCall.data).toHaveLength(2); // manifest declared 2; glossary excluded
+    expect(chapterCall.data.map((c) => c.slug)).toEqual(["alpha", "beta"]);
+
+    const auditCall = txAdminActionCreateMock.mock.calls[0][0] as {
+      data: {
+        afterState: {
+          virtual_root: string | null;
+          slug_derivation: string;
+          chapter_count: number;
+        };
+      };
+    };
+    expect(auditCall.data.afterState.virtual_root).toBe("wrap-book/");
+    expect(auditCall.data.afterState.slug_derivation).toBe("manifest_explicit");
+    expect(auditCall.data.afterState.chapter_count).toBe(2);
+  });
+
+  it("(K.1-2) zip with flat layout + file:-only manifest chapters — 201; slugs derived from basenames (no prefix strip); audit_action.after_state.slug_derivation='manifest_derived_from_file'", async () => {
+    authMock.mockResolvedValue(SESSION);
+    publisherFindFirstMock.mockResolvedValue({ id: PUBLISHER_ID });
+    subscriberFindFirstMock.mockResolvedValue({ id: SUBSCRIBER_ID });
+    bookFindUniqueMock.mockResolvedValue(null);
+    txBookFindUniqueMock.mockResolvedValue(null);
+    stripeProductsCreateMock.mockResolvedValue({ id: "prod_test_K1_2" });
+    stripePricesCreateMock.mockResolvedValue({ id: "price_test_K1_2" });
+
+    const zipBuf = buildZipBuffer([
+      // Zach-style manifest — file: only, no slug:
+      {
+        name: "manifest.yaml",
+        content: `chapters:\n  - file: chapters/ch00-core.md\n  - file: chapters/ch01-intro.md\n`,
+      },
+      { name: "chapters/ch00-core.md", content: "core body" },
+      { name: "chapters/ch01-intro.md", content: "intro body" },
+    ]);
+    const req = buildMultipartRequest(zipBuf, {
+      title: "Flat-File-Only",
+      slug: "flat-file-only",
+      domain: "skill",
+      price_usd_cents: "999",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+
+    const chapterCall = txBookChapterCreateManyMock.mock.calls[0][0] as {
+      data: Array<{ order: number; slug: string }>;
+    };
+    // No OQ-1 prefix-strip in manifest mode — basenames preserved verbatim.
+    expect(chapterCall.data.map((c) => c.slug)).toEqual(["ch00-core", "ch01-intro"]);
+
+    const auditCall = txAdminActionCreateMock.mock.calls[0][0] as {
+      data: { afterState: { virtual_root: string | null; slug_derivation: string } };
+    };
+    expect(auditCall.data.afterState.virtual_root).toBeNull();
+    expect(auditCall.data.afterState.slug_derivation).toBe("manifest_derived_from_file");
+  });
+
   it("(K-4) legacy JSON body — single-blob path still takes its branch (regression for Stream B/I)", async () => {
     authMock.mockResolvedValue(SESSION);
     publisherFindFirstMock.mockResolvedValue({ id: PUBLISHER_ID });

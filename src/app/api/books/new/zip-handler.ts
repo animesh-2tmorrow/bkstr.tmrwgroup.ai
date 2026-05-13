@@ -298,6 +298,10 @@ export async function handleZipUpload(request: Request, session: Session): Promi
           chapter_count: processed.chapters.length,
           manifest_present: processed.manifestPresent,
           total_bytes: processed.totalBytes,
+          // Phase 6 Stream K.1 (D17.2) — wrapping prefix used during path
+          // resolution (null for flat zips) + how chapter slugs were chosen.
+          virtual_root: processed.virtualRoot,
+          slug_derivation: processed.slugDerivation,
         },
       });
 
