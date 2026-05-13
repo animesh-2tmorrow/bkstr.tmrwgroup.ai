@@ -1043,6 +1043,46 @@ The Stream K zip size cap is enforced server-side in `src/lib/books/zip-validate
 
 **Severity:** low. **Trigger:** when one of the caps changes and the form's user-facing copy drifts, OR pre-emptively during a future micro-cleanup. **Suggested resolution:** move the four size constants (and the matching error-code strings if it earns its keep) into a small `src/lib/books/zip-limits.ts` that contains no Node-only imports, then re-export from `zip-validate.ts` and import from the form. The constraint is that the client bundle must not pull in adm-zip/yaml; a constants-only module trivially satisfies that.
 
+## From Phase 6 Stream K.1 — virtual-root + slug-derivation hotfix (2026-05-13)
+
+### 117. Wrapping-directory zip uploads — observation and forward note
+
+Stream K.1 handles single-directory wrapping transparently up to 3 levels deep (D17.2). Publishers who run `zip -r book.zip book/` from the CLI, drag-and-drop in Finder, or right-click → "compress" in Explorer all produce a wrapped zip; K.1 detects the virtual root and processes the content identically to a flat upload. macOS Finder's `__MACOSX/` resource-fork siblings are also stripped silently at the top of `processZipUpload`.
+
+**Severity:** informational. **Trigger:** unusual structures (e.g., 4-level nesting, multi-root) or publisher confusion about layout requirements. **Suggested resolution:** for cleanest results either `cd book && zip -r ../book.zip .` or use Finder/Explorer's "compress" on the directory's *contents* rather than the directory itself — but both produce identical results post-K.1, so this is purely a "for cleanest results" note. The publisher-facing reference content at `/dashboard/docs` (publisher section) captures the supported shapes.
+
+### 118. Slug derivation from `file:`-only manifest chapters
+
+Stream K.1 (D17.2) accepts chapter entries with only `file:` (no `slug:`) and derives the slug from the filename basename without OQ-1 prefix stripping. This intentionally diverges from filename-fallback mode (which DOES strip prefixes per OQ-1) — manifest authors expect filename fidelity, filename-fallback authors are getting a best-effort guess at slugs from raw filenames and benefit from the cleanup. The split is documented in the publisher reference content.
+
+**Severity:** informational. **Trigger:** future publisher convention shifts. **Suggested resolution:** if a publisher reports they want OQ-1 prefix stripping in manifest mode too, surface it as a per-manifest opt-in (e.g. a top-level `slug_strip_prefix: true` field) rather than changing default behavior.
+
+### 119. Smoke-prep-as-discipline (observation)
+
+2026-05-13: pre-upload smoke prep against real publisher data (Zach Simmons's `agentic-qa-manual.zip`) surfaced two parser gaps (wrapping directory, slug derivation) BEFORE any production data was created. Confirms the value of operator-side smoke prep as a verification step distinct from gate-discipline pre-gather. Both gaps would have created silently-wrong books in production; both were caught by the operator running the upload form mentally against the actual zip structure before clicking submit. Captured in `docs/decisions.md`'s "Operating discipline (cumulative)" section as the fourth and fifth catches in the closest-evidence pattern.
+
+**Severity:** informational. **Trigger:** any future stream that touches publisher-facing data formats (manifests, upload shapes, content schemas). **Suggested resolution:** no code action. The discipline note in `decisions.md` is the persistent capture.
+
+### 120. Granular-code propagation for existing manifest-parser errors
+
+Stream K.1's new rejection codes (`CHAPTER_MISSING_FILE_AND_SLUG`, `DUPLICATE_SLUG_AFTER_DERIVATION`) propagate to HTTP as themselves; the existing parser codes (`YAML_PARSE_ERROR`, `MISSING_CHAPTERS`, `INVALID_CHAPTERS_SHAPE`) continue to collapse to `MANIFEST_INVALID` at the route boundary (per Stream K behavior). Hybrid policy preserves the existing K test "rejects manifest with empty chapters[] list (MANIFEST_INVALID via INVALID_CHAPTERS_SHAPE)" exactly. The asymmetry is mildly ugly.
+
+**Severity:** low. **Trigger:** next stream touching the manifest-parser surface. **Suggested resolution:** update `zip-upload.ts`'s `if ("code" in parsed)` block to propagate the parser's code directly; update the existing Stream K test to assert the granular code (`INVALID_CHAPTERS_SHAPE`) instead of `MANIFEST_INVALID`. Net: one-line route change, one-line test update, consistent error-code semantics.
+
+### 121. Multi-file docs surface for `/dashboard/docs`
+
+Current implementation reads a single hardcoded `src/content/docs/index.md` with `:::role <name>` block markers; role filtering is per-section within that one file. Stream K.1 added a publisher-facing zip-format reference as a new subsection inside the existing `:::role publisher` block. As publisher reference content grows (future Stream L skills authoring; pricing flows; access-grant management; eval-suite authoring once Stream P exists), the single-file approach becomes unwieldy — the file already exceeds 200 lines and Stream K.1 added ~40 more.
+
+**Severity:** low. **Trigger:** when `index.md` grows past ~400 lines, OR navigation between doc sections becomes confusing, OR a publisher-facing stream wants its own doc page rather than a subsection (likely Stream L for skills authoring). **Suggested resolution:** directory routing under `/dashboard/docs/[slug]` with per-file frontmatter (title, role, order). The current `filterByRole` block-marker mechanism stays as the in-file fine-grain primitive; the new outer surface adds top-level navigation.
+
+---
+
+*Last updated: 2026-05-13. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
+
+The Stream K zip size cap is enforced server-side in `src/lib/books/zip-validate.ts` (`MAX_ZIP_BYTES = 10 MB`). The form (`src/components/dashboard/new-book-form.tsx`) currently carries its own `const MAX_ZIP_BYTES = 10 * 1024 * 1024` as a UX hint, with an inline comment pointing at the server-side constant. The duplicated literal is fine for now — the server is the authoritative gate — but drift risk exists if one cap changes without the other.
+
+**Severity:** low. **Trigger:** when one of the caps changes and the form's user-facing copy drifts, OR pre-emptively during a future micro-cleanup. **Suggested resolution:** move the four size constants (and the matching error-code strings if it earns its keep) into a small `src/lib/books/zip-limits.ts` that contains no Node-only imports, then re-export from `zip-validate.ts` and import from the form. The constraint is that the client bundle must not pull in adm-zip/yaml; a constants-only module trivially satisfies that.
+
 ---
 
 *Last updated: 2026-05-13. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

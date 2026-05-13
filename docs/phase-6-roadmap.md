@@ -66,13 +66,13 @@ Sizing notation: **S** = ~1 day, **M** = 2-3 days, **L** = 4-7 days, **XL** = 1-
 - Depends on: nothing
 - Resolves: Z1 (partial — the schema part)
 
-**Stream K — Zip upload + manifest ingestion** [M, ~2-3 days]
-- Replace/extend the new-book form to accept a zip upload
-- Server-side: unzip to /tmp, parse manifest.yaml (use `js-yaml`), validate (manifest exists, all listed chapter files exist, no path traversal), atomically write Book + chapters in transaction
-- Validation: max zip size (50MB?), max chapter count (100?), max total tokens (1M?), filetype allowlist (.md, .markdown, .yaml, .yml only — NO executables, NO binaries)
-- UX: zip upload zone next to (or replacing) the existing paste/.md picker. Show parsed manifest preview before submit ("This book has 21 chapters totaling 65k tokens — confirm?")
-- Depends on: Stream J (schema must support chapters first)
-- Resolves: Z1 (fully)
+**Stream K — Zip upload + manifest ingestion** [M] — ✅ **SHIPPED 2026-05-13** (`main` @ `c1aa515`; see `docs/decisions.md` D17.1).
+> Same-day hotfix as **Stream K.1** (hotfix at SHA TBD on top of K's `c1aa515`; D17.2): virtual-root resolution for wrapped zips + slug derivation from `file:`-only manifest chapter entries. Surfaced by operator smoke prep against Zach's actual `agentic-qa-manual.zip` and a flat repack before any production upload.
+- ~~Replace/extend the new-book form to accept a zip upload~~ — done; mode selector with paste / `.md` / `.zip` (default paste per T5).
+- ~~Server-side: parse manifest.yaml, validate, atomically write Book + chapters in transaction~~ — done with `adm-zip@0.5.17` (in-memory Buffer, no `/tmp`), `yaml@2.9.0`, interactive `prisma.$transaction` with `writeAuditEntry` inside.
+- ~~Validation: zip size, chapter count, per-entry size, total uncompressed; filetype handling~~ — done; constants in `src/lib/books/zip-validate.ts` (10 MB / 500 / 1 MB / 20 MB).
+- Depends on: Stream J (schema must support chapters first) — landed.
+- Resolves: Z1 (fully).
 
 **Stream L — Skill content class** [M, ~2-3 days]
 - New `Skill` table: id, slug, title, description, version, files[] (array of {path, content, type})
@@ -188,8 +188,8 @@ Then end-tier:
 
 **Suggested first sprint (next 2-3 weeks):**
 - ~~Stream J (multi-chapter schema)~~ — ✅ shipped 2026-05-13 (`c04762a`)
-- Stream K (zip upload + manifest) — next-up; foundation (Stream J schema) is in place
-- Stream L (skills content class)
+- ~~Stream K (zip upload + manifest)~~ — ✅ shipped 2026-05-13 (`c1aa515`) + same-day **K.1** hotfix (virtual-root + slug derivation)
+- Stream L (skills content class) — next-up
 - Stream M (agent-persona positioning copy)
 
 Why these four first:
@@ -256,10 +256,10 @@ Listing these so they don't accidentally creep into scope:
 1. Re-read this roadmap with fresh eyes. Mark `[REVIEW]` items as locked or revised.
 2. Reply to Zach: "Got your two zips, scoping multi-chapter book + skill support properly. A few questions" — pose the To-Zach open questions above.
 3. Reply to Edward: NO new message unless he writes first. Or — schedule a 30-min sync to walk through the roadmap. He'll appreciate the rigor.
-4. ~~Pick a first stream to dispatch.~~ — Stream J shipped 2026-05-13 (`c04762a`). Next-up: Stream K (zip upload + manifest); Stream M (agent-persona positioning copy) remains a cheap parallel win.
+4. ~~Pick a first stream to dispatch.~~ — Stream J shipped 2026-05-13 (`c04762a`), Stream K shipped 2026-05-13 (`c1aa515`) + K.1 hotfix same-day. Next-up: **Stream L** (skills content class); Stream M (agent-persona positioning copy) remains a cheap parallel win.
 
 **Within 2 weeks:**
-- ~~Ship Stream J~~ ✅ done — ship Stream M
+- ~~Ship Stream J~~ ✅ done; ~~ship Stream K~~ ✅ done (with K.1 hotfix) — ship Stream M next
 - Begin Stream K (Stream J has landed — its schema is the foundation Stream K builds on)
 - Begin Stream L in parallel
 

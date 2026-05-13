@@ -87,6 +87,40 @@ When you click submit, the server runs an atomic transaction: validates inputs, 
 
 Your book is `ACTIVE` and visible in the Library the moment the form submission succeeds. There's no draft state.
 
+### Uploading a `.zip` folder (multi-chapter)
+
+For books that span multiple chapters, upload a `.zip` archive instead of pasting markdown. Switch the form's upload mode to **"Upload a .zip folder"**.
+
+**What goes in the zip:**
+
+- **Optional `manifest.yaml` at the zip root.** If present, declares the ordered list of chapters plus book-level metadata. If absent, the server derives chapters from the `.md`/`.markdown` files in filename order. Minimum required field in the manifest: `chapters:` (a non-empty ordered list). Everything else (`title`, `slug`, `domain`, `description`, `audience`, `token_estimate`, `conventions`) is optional with form fallback.
+- **Chapter files**, typically under `chapters/`. Each chapter is a single `.md` or `.markdown` file.
+
+**Manifest chapter entries** accept either or both of `file:` and `slug:`:
+
+```
+chapters:
+  - file: chapters/ch00-core.md        # slug derived as "ch00-core" (no prefix stripping)
+  - slug: appendix-a                   # file derived as "chapters/appendix-a.md"
+  - file: chapters/ch01-intro.md       # both used as given
+    slug: introduction
+```
+
+In **manifest mode**, slugs derived from `file:` keep the full basename — no prefix stripping. In **filename-fallback mode** (no manifest), a leading `ch00-` or `01_` prefix on the filename IS stripped (`ch00-core.md` → slug `core`). The split is deliberate: manifest authors usually want filename fidelity; filename-fallback authors are getting a best-effort guess at slugs.
+
+**Wrapping is transparent.** If your zip wraps everything under a single top-level directory (the default when running `zip -r foo.zip foo/` from the CLI, or using Finder's "Compress", or right-clicking → "Send to → Compressed folder" in Explorer), the server detects the wrapping directory and uses it as the virtual root for all path resolution — including the `manifest.yaml` lookup and chapter file references. Up to 3 levels of nested single-directory wrapping is accepted. No need to repack flat. macOS Finder's `__MACOSX/` resource-fork siblings are stripped silently.
+
+**Caps** (server-enforced):
+
+- Zip file size: 10 MB
+- Per-chapter content: 1 MB
+- Total uncompressed: 20 MB
+- Maximum chapter count: 500
+
+**Re-uploading the same zip** is idempotent — the server computes a hash of the chapter content; an identical re-upload returns `200 {unchanged: true}` with the existing version's id. An *edited* zip creates a new `BookVersion` (v2, v3, …) of the same book. The price stays at the current value when uploading a new version — the form's price field is locked for existing slugs. Price changes happen on the Pricing page, not on upload.
+
+**Skill bundles are rejected.** A zip with `SKILL.md` at the root (or at the virtual root) whose first frontmatter block contains a `name:` field is rejected with a clear error pointing at the (future) Skills surface. Don't try to upload skills via the book form.
+
 ### ⚠️ Three sharp edges to know before you click submit
 
 These are real limitations of the current build. Both fixes are scheduled (follow-ups #73 and #74) but not implemented yet.
