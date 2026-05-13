@@ -991,7 +991,57 @@ Stream J shipped the `book_chapters` table additive-only: the 6 pre-Stream-J `bo
 
 `servedFrom(version)` (in `src/lib/storage/book-content.ts`) reports the version's `contentUri` storage backend — `"s3"` or `"inline"` — and the three content readers log it (`served_from=… version_id=… bytes=…`). Once chapter-shaped versions exist (Stream K), that label becomes misleading: a chapterized version's content comes from `book_chapters` rows, not from its `contentUri`, but `servedFrom` would still report `"inline"` (or whatever the placeholder URI says).
 
-**Severity:** low. **Trigger:** Stream K mid-flight (when the first chapterized version is about to exist). **Suggested resolution:** decide then whether `servedFrom` returns a `"chapters"` arm for chapterized versions, or whether richer fetch telemetry (chapter count, per-chapter byte sizes, assembled total) is wanted instead — and whether any of it belongs in `fetch_logs` columns vs. pm2 logs (the latter has been the convention per CC-4).
+**Severity:** low. **Trigger:** ~~Stream K mid-flight~~ **TRIGGERED by Stream K's first chapterized version (2026-05-13).** **Suggested resolution:** decide whether `servedFrom` returns a `"chapters"` arm for chapterized versions, or whether richer fetch telemetry (chapter count, per-chapter byte sizes, assembled total) is wanted instead — and whether any of it belongs in `fetch_logs` columns vs. pm2 logs (the latter has been the convention per CC-4).
+
+## From Phase 6 Stream K — zip upload + multi-chapter ingestion (2026-05-13)
+
+### 109. Backfill audit on the JSON single-blob book-create path for parity with the zip-upload path
+
+Stream K writes an `admin_actions` row (`action_type='book.zip_upload'`) on every successful upload via the new zip path; the legacy JSON single-blob path at `/api/books/new` (Stream B / I) still does NOT write an audit row. The asymmetry was an explicit Gate-2 decision (T3) — retrofitting audit onto the legacy path is out of scope for K — but the legacy path's mutations (Book/BookVersion/BookPrice/PUBLISHER_OWN grant creation) are exactly the kind of state changes the D12.7 audit-trail contract exists to capture.
+
+**Severity:** low. **Trigger:** after Stream K stabilizes; small standalone change OR rolled into whatever stream next touches `/api/books/new`. **Suggested resolution:** switch the legacy path's array-form `prisma.$transaction([…])` to the interactive form, append a `writeAuditEntry(tx, { actionType: 'book.create_inline', … })` call, and use `before_state={}` / `after_state={chapter_count: 0, source: 'paste'|'md-file'}`. No schema change required.
+
+### 110. Manifest-declared cover image extraction
+
+The new-book form's cover-image flow is currently a separate `POST /api/books/[id]/cover` request after the zip upload returns `{id}` (Stream H two-request flow preserved per T4). When `manifest.yaml` declares a `cover:` field pointing to a `cover.png|jpg` inside the zip, we could extract it during zip processing and write it to S3 alongside the book, eliminating the second request.
+
+**Severity:** low. **Trigger:** when a publisher asks (Zach hasn't). **Suggested resolution:** detect `manifest.cover` in `processZipUpload`, validate the referenced entry is an allowed image type (jpeg/png/webp/gif) and ≤ 5 MB, then call the existing cover-upload helper inside the zip handler's transaction (or post-tx best-effort, matching the legacy path's compromise). Defer the design until there's a concrete request.
+
+### 111. Confirm Stream K assumed answers with Zach (ZACH-Q A1–A4)
+
+Stream K shipped on assumed defaults for four [ZACH-Q] items pending Zach's confirmation: **A1** manifest optional with filename fallback (D-K2); **A2** manifest-first metadata + form fallback, price always form (D-K3); **A3** `.zip`-only, folder-multi-select deferred (D-K1); **A4** skill rejection with Stream-L redirect (D-K4). None paints us into a corner — Zach's answers would refine, not reverse — but the assumed answers should be confirmed.
+
+**Severity:** low. **Trigger:** post-Stream-K-merge. **Suggested resolution:** include in the next Zach-sync message ("we shipped K on these defaults; agree?"). If A1 diverges, ratchet OQ-2 strictness (require additional manifest fields). If A2 diverges, decide whether price-in-manifest is wanted (currently form-only). If A3 diverges, design folder-multi-select as a follow-up stream with its own data flow. If A4 diverges (he wants skills folded into books somehow), redesign AD2.
+
+### 112. Parse first H1 of chapter content for chapter title when filename fallback yields no title
+
+When chapters are derived via filename-sort (OQ-1 (d)), the chapter title is currently `null` — only the slug is populated from the basename. Stream K's first-H1 enrichment (option (c) in the OQ-1 alternatives) was deferred. If a chapter file's first non-empty line is a markdown H1 (`# Foo`), we could use "Foo" as the chapter title.
+
+**Severity:** low. **Trigger:** publisher ask (or storefront UX promotes chapter titles into a visible surface). **Suggested resolution:** in `deriveChaptersFromFilenames` (or downstream in `processZipUpload`'s filename-fallback branch), regex the first ~10 lines of `c.content` for `^#\s+(.+)$` and use the capture as the chapter title if found.
+
+### 113. Default-mode promotion for the new-book form (zip becomes the default instead of paste)
+
+The new-book form's default upload mode is currently `paste` (Stream K T5 sub-decision), preserving muscle memory for publishers who've only used paste/`.md`-upload. Once zip becomes the canonical authoring shape (Stream M / persona-positioning rollout reframes "the canonical way to publish on bkstr"), the default should flip to zip.
+
+**Severity:** low. **Trigger:** Stream M / persona-positioning rollout. **Suggested resolution:** change `useState<UploadMode>("paste")` → `useState<UploadMode>("zip-file")` in `src/components/dashboard/new-book-form.tsx`, update the comment block, and consider whether the radio order should change too.
+
+### 114. Triage pre-existing `npm audit` findings
+
+Inventory taken during Stream K Gate 2 (2026-05-13): 8 advisories total (2 low, 6 moderate; 0 high/critical) across `@hono/node-server`, `@next-auth/prisma-adapter`, `@prisma/dev`, `next`, `next-auth`, `nodemailer`, `postcss`, `prisma`. None introduced by Stream K's new deps (adm-zip / yaml are clean).
+
+**Severity:** low. **Trigger:** when one of these gets escalated to high/critical, OR during the security-phase pre-Stream-R hardening pass — whichever is sooner. **Suggested resolution:** re-audit at trigger time (inventory is point-in-time), evaluate each advisory's exploitation surface against bkstr's deployment, and decide between `npm audit fix` (when safe), upstream-version bump (when the surface matters), or accept-with-rationale (when the advisory doesn't apply to our usage).
+
+### 115. Real-DB integration test for the zip-upload path
+
+Stream K's tests are mock-only: `route.test.ts` mocks `prisma`/`stripe`/`auth` and exercises the route handler's branching. The post-deploy manual smoke (operator uploads Zach's `agentic-qa-manual.zip` via `/dashboard/books/new`) is the integration check for v1. A real-DB integration test using a test database + a fixture zip would validate the transaction shape end-to-end (mocks can't fully cover `$transaction`'s actual isolation semantics, FK enforcement, and `book_chapters`'s unique constraints).
+
+**Severity:** low. **Trigger:** when the next mock-based test failure ships a real bug to prod, OR when test infrastructure for real-DB integration tests exists for another reason. **Suggested resolution:** add a `vitest` config slice that connects to a per-test-suite test DB (Docker compose or testcontainers); use Zach's actual `agentic-qa-manual.zip` as a fixture stored in `test/fixtures/` (gitignored if size-sensitive, or committed if small).
+
+### 116. Extract zip size-cap constants to a shared client+server module
+
+The Stream K zip size cap is enforced server-side in `src/lib/books/zip-validate.ts` (`MAX_ZIP_BYTES = 10 MB`). The form (`src/components/dashboard/new-book-form.tsx`) currently carries its own `const MAX_ZIP_BYTES = 10 * 1024 * 1024` as a UX hint, with an inline comment pointing at the server-side constant. The duplicated literal is fine for now — the server is the authoritative gate — but drift risk exists if one cap changes without the other.
+
+**Severity:** low. **Trigger:** when one of the caps changes and the form's user-facing copy drifts, OR pre-emptively during a future micro-cleanup. **Suggested resolution:** move the four size constants (and the matching error-code strings if it earns its keep) into a small `src/lib/books/zip-limits.ts` that contains no Node-only imports, then re-export from `zip-validate.ts` and import from the form. The constraint is that the client bundle must not pull in adm-zip/yaml; a constants-only module trivially satisfies that.
 
 ---
 
