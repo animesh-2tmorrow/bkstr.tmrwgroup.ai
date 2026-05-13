@@ -44,7 +44,13 @@ import {
   checkEntrySize,
   checkAggregateLimits,
   ZipValidationError,
-} from "./zip-validate";
+} from "@/lib/zip/validate";
+import {
+  resolveVirtualRoot,
+  applyVirtualRoot,
+  VirtualRootTooDeepError,
+} from "@/lib/zip/virtual-root";
+import { isMacOsxEntry } from "@/lib/zip/macosx";
 import { normalizedChapterHash } from "./chapter-hash";
 import type {
   ZipUploadFields,
@@ -58,22 +64,10 @@ import type {
 const SLUG_REGEX = /^[a-z0-9-]+$/;
 const SLUG_MAX = 128;
 
-// Phase 6 Stream K.1 (D17.2) — virtual-root descent cap. 0,1,2,3 levels of
-// wrapping accepted; a 4th descent throws WRAPPING_TOO_DEEP. The cap is
-// large enough for legitimate `outer/inner/book/` style hand-organized
-// projects and small enough that a malicious deeply-nested zip can't waste
-// our parser cycles.
-const MAX_WRAPPING_DEPTH = 3 as const;
-
-/** Phase 6 Stream K.1 — thrown by resolveVirtualRoot when wrapping nests past
- *  MAX_WRAPPING_DEPTH. Caught at the processZipUpload boundary and translated
- *  to a tagged ZipUploadResult rejection with code WRAPPING_TOO_DEEP. */
-class VirtualRootTooDeepError extends Error {
-  constructor(depth: number) {
-    super(`Zip wrapping exceeds ${depth} levels of single-directory nesting`);
-    this.name = "VirtualRootTooDeepError";
-  }
-}
+// Phase 6 Stream L (D18.1) — virtual-root descent cap, VirtualRootTooDeepError,
+// tryDescendOne, and resolveVirtualRoot were lifted to @/lib/zip/virtual-root
+// as shared helpers (closes #116-adjacent refactor for skills consumption).
+// The behavior is byte-identical to the K.1 implementation.
 
 /** Detect Anthropic skill packaging — SKILL.md at the virtual root with
  *  `name:` in YAML frontmatter. Per AD2 / D-K4: skills are a separate content
@@ -81,7 +75,7 @@ class VirtualRootTooDeepError extends Error {
  *  storing them as a book. K.1 prefixes the path with virtualRoot so a skill
  *  bundled inside a wrapping directory is still detected. */
 function isSkillPackage(zip: AdmZip, virtualRoot: string): boolean {
-  const target = `${virtualRoot}SKILL.md`;
+  const target = applyVirtualRoot(virtualRoot, "SKILL.md");
   const entry = zip.getEntries().find((e) => e.entryName === target);
   if (!entry || entry.isDirectory) return false;
   let text: string;
@@ -104,65 +98,6 @@ function normalizeManifestFilePath(file: string): string {
   if (p.startsWith("./")) p = p.slice(2);
   if (p.startsWith("/")) p = p.slice(1);
   return p;
-}
-
-/** Phase 6 Stream K.1 (D17.2) — try to descend exactly one level from `prefix`.
- *  Returns the new prefix (with trailing "/") if the current level has exactly
- *  one directory and no files, AND that directory contains either manifest.yaml
- *  at its root or ≥1 .md/.markdown at any depth. Returns null otherwise
- *  (wrapping invariant broken — a sibling file or sibling directory exists, or
- *  the candidate directory doesn't look like a book). */
-function tryDescendOne(
-  entries: ReadonlyArray<{ entryName: string }>,
-  prefix: string,
-): string | null {
-  const tops = new Set<string>();
-  let hasRootFile = false;
-
-  for (const e of entries) {
-    if (!e.entryName.startsWith(prefix)) continue;
-    const rest = e.entryName.slice(prefix.length);
-    if (rest.length === 0) continue;
-    const slashIdx = rest.indexOf("/");
-    if (slashIdx < 0) {
-      // file directly at this level — sibling to any candidate dir → not wrapping
-      hasRootFile = true;
-      tops.add(rest);
-    } else {
-      tops.add(rest.slice(0, slashIdx));
-    }
-  }
-
-  if (hasRootFile) return null;
-  if (tops.size !== 1) return null;
-
-  const [dirName] = [...tops];
-  const nextPrefix = `${prefix}${dirName}/`;
-  const hasManifest = entries.some((e) => e.entryName === `${nextPrefix}manifest.yaml`);
-  const hasMd = entries.some(
-    (e) => e.entryName.startsWith(nextPrefix) && /\.(md|markdown)$/i.test(e.entryName),
-  );
-  if (!hasManifest && !hasMd) return null;
-  return nextPrefix;
-}
-
-/** Resolve the virtual root prefix for a zip. Returns "" for a flat zip;
- *  returns the deepest stable single-directory prefix otherwise (e.g.
- *  "nqa1-agent-qa-manual/"). Throws VirtualRootTooDeepError if descent would
- *  continue past MAX_WRAPPING_DEPTH. */
-function resolveVirtualRoot(entries: ReadonlyArray<{ entryName: string }>): string {
-  let prefix = "";
-  for (let descended = 0; descended < MAX_WRAPPING_DEPTH; descended++) {
-    const next = tryDescendOne(entries, prefix);
-    if (next === null) return prefix;
-    prefix = next;
-  }
-  // We descended MAX_WRAPPING_DEPTH times. If one more descent is still
-  // possible, the zip is wrapped too deeply.
-  if (tryDescendOne(entries, prefix) !== null) {
-    throw new VirtualRootTooDeepError(MAX_WRAPPING_DEPTH);
-  }
-  return prefix;
 }
 
 export async function processZipUpload(
@@ -191,7 +126,7 @@ export async function processZipUpload(
   const allEntries = zip
     .getEntries()
     .filter((e) => !e.isDirectory)
-    .filter((e) => !e.entryName.startsWith("__MACOSX/"));
+    .filter((e) => !isMacOsxEntry(e.entryName));
 
   // ─── 3, 4. Validate caps + paths ────────────────────────────────────────
   try {
@@ -245,7 +180,9 @@ export async function processZipUpload(
   }
 
   // ─── 7. Manifest parse (optional, at virtual root) ──────────────────────
-  const manifestEntry = allEntries.find((e) => e.entryName === `${virtualRoot}manifest.yaml`);
+  const manifestEntry = allEntries.find(
+    (e) => e.entryName === applyVirtualRoot(virtualRoot, "manifest.yaml"),
+  );
   let manifest: ManifestParsed | null = null;
   if (manifestEntry) {
     const yamlText = zip.readAsText(manifestEntry, "utf8");
@@ -282,9 +219,9 @@ export async function processZipUpload(
       const decl = manifest.chapters[i];
       const candidates: string[] = [];
       if (decl.file) {
-        candidates.push(`${virtualRoot}${normalizeManifestFilePath(decl.file)}`);
+        candidates.push(applyVirtualRoot(virtualRoot, normalizeManifestFilePath(decl.file)));
       }
-      candidates.push(`${virtualRoot}chapters/${decl.slug}.md`);
+      candidates.push(applyVirtualRoot(virtualRoot, `chapters/${decl.slug}.md`));
 
       const resolved = candidates.find((path) =>
         allEntries.some((e) => e.entryName === path),

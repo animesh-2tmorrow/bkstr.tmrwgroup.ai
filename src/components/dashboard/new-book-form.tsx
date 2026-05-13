@@ -4,6 +4,12 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { MarkdownFileInput } from "./markdown-file-input";
+// Phase 6 Stream L (D18.1) — single-source-of-truth import; previously this
+// file carried its own `MAX_ZIP_BYTES = 10 * 1024 * 1024` literal with an
+// inline pointer comment at the server-side constant (follow-up #116). The
+// shared module is server- AND client-safe (constants only; no Node-only
+// imports), so the form can import it directly.
+import { MAX_ZIP_BYTES } from "@/lib/zip/limits";
 
 // Phase 4 Stream B / Phase 5 Stream I / Phase 6 Stream K — client form for
 // /dashboard/books/new. Three upload modes:
@@ -48,7 +54,7 @@ function slugify(input: string): string {
 const SLUG_REGEX = /^[a-z0-9-]+$/;
 const MAX_COVER_BYTES = 5 * 1024 * 1024; // 5MB
 const ALLOWED_COVER_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
-const MAX_ZIP_BYTES = 10 * 1024 * 1024; // 10 MB — matches server cap (zip-validate.MAX_ZIP_BYTES)
+// MAX_ZIP_BYTES is imported from @/lib/zip/limits (Stream L / #116 close).
 
 export function NewBookForm() {
   const router = useRouter();
