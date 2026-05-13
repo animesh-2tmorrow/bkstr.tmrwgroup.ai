@@ -58,7 +58,8 @@ model Publisher {
   name      String   @db.VarChar(255)
   createdAt DateTime @default(now()) @map("created_at")
 
-  books Book[]
+  books  Book[]
+  skills Skill[]
 
   @@map("publishers")
 }
@@ -220,6 +221,11 @@ model User {
   // and Stream B's new-book creation. ON DELETE SET NULL preserves the books
   // independent of the publisher's User row.
   publishedBooks Book[]        @relation("BookPublisher")
+  // Phase 6 Stream L (D18.1) — inverse of Skill.publisherUser. A User's
+  // published skills. No `@relation` name needed (single User↔Skill relation).
+  // Unlike Book.publisherUser (`SetNull`), Skill.publisherUser is non-null —
+  // skills always carry a known authoring user.
+  publishedSkills Skill[]
   // Phase 4.5 Stream G (D12.7) — inverse of AdminAction.actor. Durable audit
   // trail of every ADMIN mutation this user performed (role changes, book
   // ownership reassignment, access_grants revoke). ON DELETE RESTRICT on the
@@ -416,7 +422,14 @@ model FetchLog {
 model AccessGrant {
   id                    String      @id @default(uuid()) @db.Uuid
   subscriberId          String      @map("subscriber_id") @db.Uuid
-  bookId                String      @map("book_id") @db.Uuid
+  // Phase 6 Stream L (D18.1) — book_id becomes nullable to accommodate
+  // skill-only grants. Per-row invariant (exactly one of book_id/skill_id is
+  // non-null) is enforced via a CHECK constraint added in the L migration's
+  // hand-authored SQL block, alongside two partial unique indexes that
+  // replace the prior `@@unique([subscriberId, bookId, source])` (NULL-
+  // distinct semantics would otherwise allow duplicate skill grants).
+  bookId                String?     @map("book_id") @db.Uuid
+  skillId               String?     @map("skill_id") @db.Uuid
   source                GrantSource
   stripeSubscriptionId  String?     @map("stripe_subscription_id") @db.VarChar(64)
   stripePaymentIntentId String?     @map("stripe_payment_intent_id") @db.VarChar(64)
@@ -426,10 +439,13 @@ model AccessGrant {
   grantedBy             String?     @map("granted_by") @db.Uuid
 
   subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
-  book       Book       @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  book       Book?      @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  skill      Skill?     @relation(fields: [skillId], references: [id], onDelete: Cascade)
   grantor    User?      @relation("AccessGrantGrantor", fields: [grantedBy], references: [id], onDelete: SetNull)
 
-  @@unique([subscriberId, bookId, source])
+  // The previous `@@unique([subscriberId, bookId, source])` is intentionally
+  // dropped — replaced by two partial unique indexes (book-only and skill-
+  // only) in the L migration's hand-authored SQL. See D18.1.
   @@index([subscriberId, bookId])
   @@index([stripeSubscriptionId])
   @@map("access_grants")
@@ -606,4 +622,109 @@ model UserInvitation {
   @@index([email, acceptedAt])
   @@index([tokenHash])
   @@map("user_invitations")
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skills (Phase 6 Stream L, D18.1)
+//
+// New content class, parallel to Book/BookVersion/BookChapter. A skill bundles
+// a SKILL.md (Anthropic-style frontmatter manifest: `name`, `description`) plus
+// supporting files (.md / .py / .sh / .json / .yaml). Per-file rows in
+// `skill_files`; per-upload version rows in `skill_versions` (append-only,
+// idempotent re-upload short-circuits). Stripe Product+Price per skill (one-
+// time purchase, single-currency by construction). Access governed by the
+// shared `access_grants` table — see D18.1 for the partial-unique-indexes +
+// XOR CHECK that enforces "exactly one of book_id/skill_id non-null per row."
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SkillStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+model Skill {
+  id              String      @id @default(uuid()) @db.Uuid
+  publisherId     String      @map("publisher_id") @db.Uuid
+  publisherUserId String      @map("publisher_user_id") @db.Uuid
+  slug            String      @db.VarChar(128)
+  name            String      @db.VarChar(255)
+  description     String      @db.Text
+  status          SkillStatus @default(ACTIVE)
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  // RESTRICT is deliberate; see commit message for rationale.
+  publisher     Publisher      @relation(fields: [publisherId], references: [id])
+  // RESTRICT is deliberate; see commit message for rationale.
+  publisherUser User           @relation(fields: [publisherUserId], references: [id])
+  versions      SkillVersion[]
+  price         SkillPrice?
+  accessGrants  AccessGrant[]
+
+  @@unique([publisherId, slug])
+  @@map("skills")
+}
+
+model SkillVersion {
+  id             String   @id @default(uuid()) @db.Uuid
+  skillId        String   @map("skill_id") @db.Uuid
+  version        Int
+  byteSize       Int      @map("byte_size")
+  // Parsed SKILL.md frontmatter (`name`, `description`, plus any future fields)
+  // stored verbatim. Mirrors `book_versions.manifest` (D16.1).
+  manifest       Json     @db.JsonB
+  // SHA-256 hex of sorted-by-path file contents concatenated — wrapping-dir-
+  // independent so a re-upload with a different top-level wrap produces the
+  // same hash (idempotency requirement).
+  normalizedHash String   @map("normalized_hash") @db.VarChar(64)
+  // K.1 parity — wrapping prefix used during path resolution; null for flat zips.
+  virtualRoot    String?  @map("virtual_root") @db.VarChar(256)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  skill Skill       @relation(fields: [skillId], references: [id])
+  files SkillFile[]
+
+  @@unique([skillId, version])
+  @@map("skill_versions")
+}
+
+model SkillFile {
+  id             String   @id @default(uuid()) @db.Uuid
+  skillVersionId String   @map("skill_version_id") @db.Uuid
+  // 0-indexed: SKILL.md is order=0; remaining files alphabetical by relative path.
+  order          Int
+  // Path relative to the virtual root (NOT the literal zip entry name) — keeps
+  // the idempotency hash wrapping-dir-independent.
+  path           String   @db.VarChar(512)
+  // ".md" | ".py" | ".sh" | ".json" | ".yaml" — extension allowlist enforced
+  // at upload time (D18.1 §0).
+  extension      String   @db.VarChar(8)
+  content        String   @db.Text
+  byteSize       Int      @map("byte_size")
+  contentHash    String   @map("content_hash") @db.VarChar(64)
+  // Forward-compat: token estimate, executable flag, etc. NOT NULL with default
+  // `{}` matches BookChapter.metadata (D16.1) for caller ergonomics.
+  metadata       Json     @default("{}") @db.JsonB
+
+  skillVersion SkillVersion @relation(fields: [skillVersionId], references: [id])
+
+  @@unique([skillVersionId, path])
+  @@index([skillVersionId, order])
+  @@map("skill_files")
+}
+
+model SkillPrice {
+  id              String @id @default(uuid()) @db.Uuid
+  // Single-currency by construction in v1 — `skillId @unique` enforces "one
+  // price row per skill total." If multi-currency surface ever ships, relax
+  // to `@@unique([skillId, currency])` and drop the `@unique` on skillId.
+  skillId         String @unique @map("skill_id") @db.Uuid
+  currency        String @default("USD") @db.VarChar(3)
+  unitAmountCents Int    @map("unit_amount_cents")
+  stripePriceId   String @map("stripe_price_id") @db.VarChar(255)
+
+  skill Skill @relation(fields: [skillId], references: [id])
+
+  @@map("skill_prices")
 }
