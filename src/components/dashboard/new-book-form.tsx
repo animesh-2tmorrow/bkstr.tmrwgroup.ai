@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { MarkdownFileInput } from "./markdown-file-input";
 
 // Phase 4 Stream B — client form for /dashboard/books/new. Fields:
 //   - Title (required, 1..255)
@@ -10,7 +11,11 @@ import Image from "next/image";
 //     change but operator-editable thereafter)
 //   - Domain (required, 1..64)
 //   - Description (optional, 0..5000)
-//   - Content (required, markdown, up to 1MB)
+//   - Content (required, markdown, up to 1MB) — either pasted into the textarea
+//     OR loaded from a .md file via the MarkdownFileInput above it. The file is
+//     read client-side (FileReader) and its text populates the textarea; there
+//     is no server endpoint for the upload — file pick is UI sugar, the POST
+//     /api/books/new payload shape is unchanged. See Stream I (D15.13).
 //   - Price USD (required, >= $0.50 per Stripe minimum)
 //   - Cover Image (optional, JPEG/PNG/WebP/GIF, max 5MB) — uploaded to S3
 //     via POST /api/books/[id]/cover after book creation. Storefront renders
@@ -45,6 +50,7 @@ export function NewBookForm() {
   const [domain, setDomain] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
+  const [contentFilename, setContentFilename] = useState<string | null>(null);
   const [priceDollars, setPriceDollars] = useState("");
 
   // Cover image state
@@ -360,6 +366,19 @@ export function NewBookForm() {
           <p className="text-xs text-red-600 mt-1">{coverError}</p>
         )}
       </div>
+
+      <MarkdownFileInput
+        onContentLoaded={(text, filename) => {
+          setContent(text);
+          setContentFilename(filename);
+        }}
+        currentFilename={contentFilename ?? undefined}
+        onClear={() => {
+          setContent("");
+          setContentFilename(null);
+        }}
+        disabled={submitting}
+      />
 
       <div>
         <label htmlFor="content" className="block text-sm font-semibold text-gray-700 mb-1">
