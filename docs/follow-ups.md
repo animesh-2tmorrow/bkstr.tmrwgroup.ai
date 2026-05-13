@@ -979,6 +979,20 @@ Stream H.3 shipped vertical cards because Manus's locked-spec doc answered "card
 
 **Severity:** process. **Trigger:** future stream that integrates external-vendor design drops. **Suggested resolution:** add a one-line discipline note in `docs/decisions.md` near the top: *"When integrating external design drops, the screenshot wins over the spec. If they disagree, the spec is treated as a tiebreaker note for ambiguous details, not a primary source of truth for layout decisions."* Reference this follow-up.
 
+## From Phase 6 Stream J — multi-chapter book schema (2026-05-13)
+
+### 107. Decide whether to retroactively chapterize the 6 legacy book versions
+
+Stream J shipped the `book_chapters` table additive-only: the 6 pre-Stream-J `book_versions` rows stay chapterless and are served via `loadBookContent` unchanged (D16.1). New multi-chapter uploads (Stream K onward) are the only writers of `book_chapters`. At some point we should make a deliberate call on whether to backfill the legacy seeds into 1-chapter versions for uniformity — but the likely answer is *don't*: they're stable seed content, `getVersionContent` already handles both shapes transparently, and a backfill is a one-way data mutation with no behavioral upside.
+
+**Severity:** low. **Trigger:** after Stream K ships and is stable for a production cycle. **Suggested resolution:** most likely "no action — legacy versions remain chapterless by design"; if uniformity is wanted anyway, a small idempotent migration creating one `BookChapter` (`order=0`, `slug='main'`) per legacy version with the inline content copied across — but only after confirming nothing reads `book_versions.content` in a way that would diverge from the assembled-chapters path.
+
+### 108. `servedFrom(version)` observability for chapterized versions
+
+`servedFrom(version)` (in `src/lib/storage/book-content.ts`) reports the version's `contentUri` storage backend — `"s3"` or `"inline"` — and the three content readers log it (`served_from=… version_id=… bytes=…`). Once chapter-shaped versions exist (Stream K), that label becomes misleading: a chapterized version's content comes from `book_chapters` rows, not from its `contentUri`, but `servedFrom` would still report `"inline"` (or whatever the placeholder URI says).
+
+**Severity:** low. **Trigger:** Stream K mid-flight (when the first chapterized version is about to exist). **Suggested resolution:** decide then whether `servedFrom` returns a `"chapters"` arm for chapterized versions, or whether richer fetch telemetry (chapter count, per-chapter byte sizes, assembled total) is wanted instead — and whether any of it belongs in `fetch_logs` columns vs. pm2 logs (the latter has been the convention per CC-4).
+
 ---
 
-*Last updated: 2026-05-12. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
+*Last updated: 2026-05-13. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*

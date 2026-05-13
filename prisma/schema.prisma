@@ -123,14 +123,55 @@ model BookVersion {
   contentUri String   @map("content_uri") @db.Text
   byteSize   Int      @map("byte_size")
   content    String?  @db.Text
+  // Phase 6 Stream J (D16.1) — per-version manifest metadata for multi-chapter
+  // books; '{}' for legacy single-blob versions. Populated from the uploaded
+  // manifest.yaml by new multi-chapter uploads (Stream K onward): tokenEstimate,
+  // conventions, dependencies, sourceRefs, audience, accessPattern, version, and
+  // the chapter listing. Per-version (not per-book) because manifest data is a
+  // property of the snapshot and may change between versions of the same book.
+  manifest   Json     @default("{}") @db.JsonB
   createdAt  DateTime @default(now()) @map("created_at")
 
-  book      Book       @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  book      Book          @relation(fields: [bookId], references: [id], onDelete: Cascade)
   fetchLogs FetchLog[]
+  chapters  BookChapter[]
 
   @@unique([bookId, version])
   @@index([bookId, createdAt])
   @@map("book_versions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Book Chapters (Phase 6 Stream J, D16.1)
+// Ordered subdivisions of a BookVersion's content (the multi-chapter shape).
+// A BookVersion has either zero chapters — legacy single-blob shape, content
+// lives in BookVersion.content / .contentUri via the D9.2 dual-storage seam —
+// or N chapters — multi-chapter shape, content assembled from these rows in
+// `order` by getVersionContent(version). The 6 pre-Stream-J versions are NOT
+// backfilled into chapters; this table starts empty and is populated only by
+// new multi-chapter uploads (Stream K onward). Chapter-level access tiers are
+// deferred (no accessTier field). token_estimate + metadata are carried now
+// (nullable / default '{}') so Stream K needs no further schema migration.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BookChapter {
+  id            String   @id @default(uuid()) @db.Uuid
+  bookVersionId String   @map("book_version_id") @db.Uuid
+  order         Int // 0-indexed position within the version
+  slug          String   @db.VarChar(128)
+  title         String?  @db.VarChar(255)
+  content       String   @db.Text
+  tokenEstimate Int?     @map("token_estimate")
+  metadata      Json     @default("{}") @db.JsonB
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  bookVersion BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([bookVersionId, slug])
+  @@unique([bookVersionId, order])
+  @@index([bookVersionId])
+  @@map("book_chapters")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

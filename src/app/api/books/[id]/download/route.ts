@@ -3,11 +3,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { BookAccessError, requireBookAccess } from "@/lib/books/access";
-import {
-  EmptyBookContentError,
-  loadBookContent,
-  servedFrom,
-} from "@/lib/storage/book-content";
+import { EmptyBookContentError, servedFrom } from "@/lib/storage/book-content";
+import { getVersionContent } from "@/lib/books/content";
 
 // Phase 4 Stream C — content-egress: Download.
 // Session-cookie authenticated; requires an active access_grant for
@@ -82,7 +79,13 @@ export async function GET(
   const version = await prisma.bookVersion.findFirst({
     where: { bookId },
     orderBy: { version: "desc" },
-    select: { id: true, bookId: true, content: true, contentUri: true },
+    select: {
+      id: true,
+      bookId: true,
+      content: true,
+      contentUri: true,
+      chapters: { orderBy: { order: "asc" }, select: { order: true, content: true } },
+    },
   });
   if (!version) {
     return NextResponse.json({ error: "Book version not found" }, { status: 404 });
@@ -138,7 +141,7 @@ export async function GET(
   const start = Date.now();
   let content: string;
   try {
-    content = await loadBookContent(version);
+    content = await getVersionContent(version);
     console.log(
       `[books/download] served_from=${servedFrom(version)} version_id=${version.id} bytes=${content.length}`,
     );

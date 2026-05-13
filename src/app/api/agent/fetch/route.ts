@@ -10,11 +10,8 @@ import {
 } from "@/lib/agent/system-prompt";
 import { cacheKey, getCached, setCached } from "@/lib/agent/cache";
 import { sanitizeError } from "@/lib/agent/sanitize";
-import {
-  EmptyBookContentError,
-  loadBookContent,
-  servedFrom,
-} from "@/lib/storage/book-content";
+import { EmptyBookContentError, servedFrom } from "@/lib/storage/book-content";
+import { getVersionContent } from "@/lib/books/content";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,12 +98,24 @@ export async function POST(request: NextRequest): Promise<Response> {
   const version = versionId
     ? await prisma.bookVersion.findUnique({
         where: { id: versionId },
-        select: { id: true, bookId: true, content: true, contentUri: true },
+        select: {
+          id: true,
+          bookId: true,
+          content: true,
+          contentUri: true,
+          chapters: { orderBy: { order: "asc" }, select: { order: true, content: true } },
+        },
       })
     : await prisma.bookVersion.findFirst({
         where: { bookId: book.id },
         orderBy: { version: "desc" },
-        select: { id: true, bookId: true, content: true, contentUri: true },
+        select: {
+          id: true,
+          bookId: true,
+          content: true,
+          contentUri: true,
+          chapters: { orderBy: { order: "asc" }, select: { order: true, content: true } },
+        },
       });
 
   if (!version || version.bookId !== book.id) {
@@ -180,7 +189,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   //    CC-4 we log the served-from arm to pm2 (no fetch_logs schema column).
   let content: string;
   try {
-    content = await loadBookContent(version);
+    content = await getVersionContent(version);
     console.log(
       `[agent/fetch] served_from=${servedFrom(version)} version_id=${version.id} bytes=${content.length}`,
     );
