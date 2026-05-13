@@ -506,14 +506,21 @@ export async function getAdminBooks(): Promise<AdminBookRow[]> {
 // is single-select per Q-F4 (matches Stream E's tabs pattern). Joins
 // subscriber + book so the table can render subscriber email + book title
 // inline.
+// Phase 6 Stream L (D18.1) — AccessGrant becomes polymorphic over Book/Skill
+// (XOR-checked at the DB layer). The admin grants ledger renders either; rows
+// carry both bookId+skill fields (one set non-null, the other null), and the
+// table component shows the populated title/name with a Book/Skill badge.
 export type AdminGrantRow = {
   id: string;
   source: GrantSource;
   subscriberId: string;
   subscriberEmail: string;
-  bookId: string;
-  bookTitle: string;
-  bookSlug: string;
+  bookId: string | null;
+  bookTitle: string | null;
+  bookSlug: string | null;
+  skillId: string | null;
+  skillName: string | null;
+  skillSlug: string | null;
   grantedAt: Date;
   revokedAt: Date | null;
   expiresAt: Date | null;
@@ -523,6 +530,7 @@ export async function getAdminGrants(opts: {
   source?: GrantSource;
   subscriberId?: string;
   bookId?: string;
+  skillId?: string;
 }): Promise<AdminGrantRow[]> {
   // Build the where clause from optional filters — undefined keys are
   // dropped by Prisma so the no-filter call returns every grant row.
@@ -530,6 +538,7 @@ export async function getAdminGrants(opts: {
   if (opts.source) where.source = opts.source;
   if (opts.subscriberId) where.subscriberId = opts.subscriberId;
   if (opts.bookId) where.bookId = opts.bookId;
+  if (opts.skillId) where.skillId = opts.skillId;
 
   const grants = await prisma.accessGrant.findMany({
     where,
@@ -543,6 +552,7 @@ export async function getAdminGrants(opts: {
       source: true,
       subscriberId: true,
       bookId: true,
+      skillId: true,
       grantedAt: true,
       revokedAt: true,
       expiresAt: true,
@@ -557,6 +567,7 @@ export async function getAdminGrants(opts: {
         },
       },
       book: { select: { title: true, slug: true } },
+      skill: { select: { name: true, slug: true } },
     },
   });
 
@@ -566,8 +577,11 @@ export async function getAdminGrants(opts: {
     subscriberId: g.subscriberId,
     subscriberEmail: g.subscriber.email || g.subscriber.user?.email || "—",
     bookId: g.bookId,
-    bookTitle: g.book.title,
-    bookSlug: g.book.slug,
+    bookTitle: g.book?.title ?? null,
+    bookSlug: g.book?.slug ?? null,
+    skillId: g.skillId,
+    skillName: g.skill?.name ?? null,
+    skillSlug: g.skill?.slug ?? null,
     grantedAt: g.grantedAt,
     revokedAt: g.revokedAt,
     expiresAt: g.expiresAt,

@@ -97,8 +97,18 @@ export function AdminGrantsTable({
                   <tr key={g.id} className={rowClass}>
                     <td className="px-6 py-4">{g.subscriberEmail}</td>
                     <td className="px-6 py-4">
-                      <div className="font-medium">{g.bookTitle}</div>
-                      <div className="text-xs text-gray-500 font-mono mt-1">{g.bookSlug}</div>
+                      {/* Stream L: a grant points at either a book or a skill
+                          (XOR-checked at the DB layer). Render whichever is
+                          populated; the "—" fallback is defensive. */}
+                      <div className="font-medium flex items-center gap-2">
+                        {g.bookTitle ?? g.skillName ?? "—"}
+                        <span className="text-[10px] uppercase tracking-wide text-gray-500 bg-[#EAE2D0] px-1.5 py-0.5 rounded">
+                          {g.bookId ? "Book" : g.skillId ? "Skill" : "—"}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500 font-mono mt-1">
+                        {g.bookSlug ?? g.skillSlug ?? "—"}
+                      </div>
                     </td>
                     <td className="px-6 py-4 font-mono text-xs">{g.source}</td>
                     <td className="px-6 py-4 text-xs">{fmtDate(g.grantedAt)}</td>

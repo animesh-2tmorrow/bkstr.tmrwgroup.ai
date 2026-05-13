@@ -36,6 +36,14 @@ import { MAX_ZIP_BYTES } from "@/lib/zip/limits";
 
 type UploadMode = "paste" | "md-file" | "zip-file";
 
+// Phase 6 Stream L (D18.1) — kind toggle at top of the form. Book mode is
+// the existing Stream B/I/K/K.1 behavior unchanged. Skill mode forces the
+// upload mode to "zip-file" (skills are inherently multi-file zip uploads),
+// hides title/domain/description/cover (manifest-from-SKILL.md-frontmatter
+// supplies title and description; domain doesn't apply; cover deferred to
+// follow-up #123), and posts to /api/skills/new instead of /api/books/new.
+type Kind = "book" | "skill";
+
 type SlugCheckState =
   | { state: "idle" }
   | { state: "checking" }
@@ -58,6 +66,7 @@ const ALLOWED_COVER_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp
 
 export function NewBookForm() {
   const router = useRouter();
+  const [kind, setKind] = useState<Kind>("book"); // Stream L default — Book mode
   const [mode, setMode] = useState<UploadMode>("paste"); // T5 default
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
@@ -113,25 +122,37 @@ export function NewBookForm() {
     setSlugCheck({ state: "checking" });
     const handle = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/books/check-slug?slug=${encodeURIComponent(candidate)}`);
+        // Phase 6 Stream L (D18.1) — append &kind=skill in skill mode so the
+        // generalized /api/books/check-slug queries the skills table. Default
+        // kind=book is preserved when no param is sent (Book-mode call).
+        const kindParam = kind === "skill" ? "&kind=skill" : "";
+        const res = await fetch(
+          `/api/books/check-slug?slug=${encodeURIComponent(candidate)}${kindParam}`,
+        );
         if (!res.ok) {
           setSlugCheck({ state: "error", message: `Couldn't check slug (HTTP ${res.status})` });
           return;
         }
+        // Skill response uses `name` instead of `title`; normalize at this boundary
+        // so the SlugCheckState.exists shape stays uniform for the banner render.
         const body = (await res.json()) as
           | { exists: false }
           | {
               exists: true;
-              bookId: string;
-              title: string;
+              bookId?: string;
+              skillId?: string;
+              title?: string;
+              name?: string;
               currentPriceUsdCents: number | null;
               latestVersion: number | null;
               status: string;
+              kind?: "skill";
             };
         if (body.exists) {
+          const displayTitle = body.title ?? body.name ?? "—";
           setSlugCheck({
             state: "exists",
-            title: body.title,
+            title: displayTitle,
             priceCents: body.currentPriceUsdCents,
             latestVersion: body.latestVersion,
           });
@@ -149,7 +170,7 @@ export function NewBookForm() {
       }
     }, 400);
     return () => clearTimeout(handle);
-  }, [slug, mode]);
+  }, [slug, mode, kind]);
 
   function onCoverChange(e: React.ChangeEvent<HTMLInputElement>) {
     setCoverError(null);
@@ -218,6 +239,32 @@ export function NewBookForm() {
     setStripeReconcile(null);
   }
 
+  // Phase 6 Stream L (D18.1) — switching to Skill mode forces upload-mode to
+  // zip-file and clears the book-specific state (title/domain/description/
+  // content/cover). Switching back to Book leaves state cleared (publisher
+  // re-enters). Slug state is preserved across kind changes so a typed slug
+  // doesn't get nuked when toggling.
+  function onKindChange(next: Kind) {
+    setKind(next);
+    setError(null);
+    setStripeReconcile(null);
+    if (next === "skill") {
+      setMode("zip-file");
+      setTitle("");
+      setDomain("");
+      setDescription("");
+      setContent("");
+      setContentFilename(null);
+      setCoverFile(null);
+      setCoverPreview(null);
+      setCoverError(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+    // Reset slug-prefetch state so the effect re-runs against the new kind's
+    // check-slug branch on the next slug change.
+    setSlugCheck({ state: "idle" });
+  }
+
   async function submitZipMode(): Promise<{ bookId?: string } | { error: string }> {
     if (!zipFile) {
       return { error: "Choose a .zip file before submitting." };
@@ -249,13 +296,19 @@ export function NewBookForm() {
 
     const fd = new FormData();
     fd.append("zip", zipFile);
-    if (trimmedTitle) fd.append("title", trimmedTitle);
+    // Stream L: skill upload only carries slug (optional) + price (new-skill only).
+    // SKILL.md frontmatter is authoritative for name + description; title/domain
+    // aren't applicable to skills and the form hides them in skill mode.
+    if (kind === "book") {
+      if (trimmedTitle) fd.append("title", trimmedTitle);
+      if (trimmedDomain) fd.append("domain", trimmedDomain);
+      if (description.trim()) fd.append("description", description.trim());
+    }
     if (trimmedSlug) fd.append("slug", trimmedSlug);
-    if (trimmedDomain) fd.append("domain", trimmedDomain);
-    if (description.trim()) fd.append("description", description.trim());
     if (priceCents != null) fd.append("price_usd_cents", String(priceCents));
 
-    const res = await fetch("/api/books/new", { method: "POST", body: fd });
+    const endpoint = kind === "skill" ? "/api/skills/new" : "/api/books/new";
+    const res = await fetch(endpoint, { method: "POST", body: fd });
     const body = (await res.json().catch(() => ({}))) as {
       id?: string;
       slug?: string;
@@ -343,32 +396,44 @@ export function NewBookForm() {
       const result =
         mode === "zip-file" ? await submitZipMode() : await submitJsonMode();
       if ("error" in result) throw new Error(result.error);
-      const bookId = result.bookId;
+      const entityId = result.bookId; // also holds the skill id when kind === "skill"
 
-      // Cover upload (unchanged from Stream H — two-request flow)
-      if (coverFile && bookId) {
+      // Cover upload — Book-mode only. Skills don't have covers in v1 (cover
+      // support deferred to follow-up #123). Two-request flow unchanged for
+      // books (Stream H).
+      if (kind === "book" && coverFile && entityId) {
         setSubmitStep("uploading-cover");
         const formData = new FormData();
         formData.append("cover", coverFile);
-        const coverRes = await fetch(`/api/books/${bookId}/cover`, {
+        const coverRes = await fetch(`/api/books/${entityId}/cover`, {
           method: "POST",
           body: formData,
         });
         if (!coverRes.ok) {
           const coverBody = (await coverRes.json().catch(() => ({}))) as { error?: string };
           console.warn(
-            `[new-book-form] Cover upload failed for book ${bookId}: ${coverBody.error ?? "unknown error"}`,
+            `[new-book-form] Cover upload failed for book ${entityId}: ${coverBody.error ?? "unknown error"}`,
           );
           setError(
             `Book published, but cover upload failed: ${coverBody.error ?? "unknown error"}. You can re-upload the cover from the library.`,
           );
-          setTimeout(() => router.push(`/dashboard/library?book=${bookId ?? ""}`), 3000);
+          setTimeout(() => router.push(`/dashboard/library?book=${entityId ?? ""}`), 3000);
           return;
         }
       }
 
       setSubmitStep("done");
-      router.push(`/dashboard/library?book=${bookId ?? ""}`);
+      // Stream L: skill uploads have no /dashboard/library counterpart yet
+      // (deferred — future skill-library surface). Redirect skill uploads to
+      // the public /skills/{slug} detail page when a slug was provided/derived
+      // client-side, else to the /skills listing. Book uploads keep the
+      // existing /dashboard/library?book=<id> redirect.
+      if (kind === "skill") {
+        const slugTyped = slug.trim().toLowerCase();
+        router.push(slugTyped.length > 0 ? `/skills/${encodeURIComponent(slugTyped)}` : "/skills");
+      } else {
+        router.push(`/dashboard/library?book=${entityId ?? ""}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create book");
     } finally {
@@ -384,39 +449,79 @@ export function NewBookForm() {
     return "Publishing…";
   };
 
-  const titleSlugDomainRequired = mode !== "zip-file";
+  // Stream L: in skill mode, title/domain are not collected from the form
+  // (manifest's name/description authoritative; domain doesn't apply). Slug
+  // remains optional in both modes' zip-upload variant.
+  const titleSlugDomainRequired = mode !== "zip-file" && kind === "book";
   const priceLockedToExisting = mode === "zip-file" && slugCheck.state === "exists";
   const priceRequired = mode !== "zip-file" || slugCheck.state === "new";
+  const showBookOnlyFields = kind === "book";
 
   return (
     <form
       onSubmit={handleSubmit}
       className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-6 space-y-5"
     >
-      {/* Mode selector — Stream K (D17.1, T5 default = paste) */}
+      {/* Kind selector — Stream L (D18.1). Book vs Skill is the top-level
+          content-class toggle. Skill mode forces zip upload and hides the
+          book-only fields. */}
       <fieldset className="border border-[#E5DCC8] rounded-lg p-3 bg-white">
-        <legend className="px-2 text-sm font-semibold text-gray-700">Upload mode</legend>
+        <legend className="px-2 text-sm font-semibold text-gray-700">Kind</legend>
         <div className="flex flex-col sm:flex-row sm:gap-4 gap-2">
           {([
-            ["paste", "Paste markdown"],
-            ["md-file", "Upload a single .md file"],
-            ["zip-file", "Upload a .zip folder (multi-chapter)"],
+            ["book", "Book"],
+            ["skill", "Skill"],
           ] as const).map(([value, label]) => (
             <label key={value} className="inline-flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="radio"
-                name="upload-mode"
+                name="content-kind"
                 value={value}
-                checked={mode === value}
-                onChange={() => onModeChange(value)}
+                checked={kind === value}
+                onChange={() => onKindChange(value)}
                 disabled={submitting}
               />
               {label}
             </label>
           ))}
         </div>
+        {kind === "skill" && (
+          <p className="mt-2 text-xs text-gray-500">
+            Skills upload as <code>.zip</code> with <code>SKILL.md</code> at the root carrying YAML
+            frontmatter (<code>name</code>, <code>description</code>). The form below shows the
+            skill-specific fields only.
+          </p>
+        )}
       </fieldset>
 
+      {/* Mode selector — Stream K (D17.1, T5 default = paste). Hidden in skill
+          mode (skills are always zip uploads). */}
+      {kind === "book" && (
+        <fieldset className="border border-[#E5DCC8] rounded-lg p-3 bg-white">
+          <legend className="px-2 text-sm font-semibold text-gray-700">Upload mode</legend>
+          <div className="flex flex-col sm:flex-row sm:gap-4 gap-2">
+            {([
+              ["paste", "Paste markdown"],
+              ["md-file", "Upload a single .md file"],
+              ["zip-file", "Upload a .zip folder (multi-chapter)"],
+            ] as const).map(([value, label]) => (
+              <label key={value} className="inline-flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="radio"
+                  name="upload-mode"
+                  value={value}
+                  checked={mode === value}
+                  onChange={() => onModeChange(value)}
+                  disabled={submitting}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
+      {showBookOnlyFields && (
       <div>
         <label htmlFor="title" className="block text-sm font-semibold text-gray-700 mb-1">
           Title{" "}
@@ -436,6 +541,7 @@ export function NewBookForm() {
           disabled={submitting}
         />
       </div>
+      )}
 
       <div>
         <label htmlFor="slug" className="block text-sm font-semibold text-gray-700 mb-1">
@@ -482,6 +588,8 @@ export function NewBookForm() {
         )}
       </div>
 
+      {showBookOnlyFields && (
+      <>
       <div>
         <label htmlFor="domain" className="block text-sm font-semibold text-gray-700 mb-1">
           Domain{" "}
@@ -573,6 +681,8 @@ export function NewBookForm() {
 
         {coverError && <p className="text-xs text-red-600 mt-1">{coverError}</p>}
       </div>
+      </>
+      )}
 
       {/* md-file mode: the Stream I file picker */}
       {mode === "md-file" && (

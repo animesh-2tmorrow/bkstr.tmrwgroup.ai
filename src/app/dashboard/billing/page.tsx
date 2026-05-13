@@ -60,7 +60,11 @@ export default async function BillingPage() {
           grantedAt: true,
           revokedAt: true,
           stripePaymentIntentId: true,
+          // Phase 6 Stream L: a PURCHASE grant points at either a book or a
+          // skill (XOR-checked at the DB layer). Select both; the table renders
+          // whichever is non-null, with "—" as a defensive fallback.
           book: { select: { title: true, slug: true } },
+          skill: { select: { name: true, slug: true } },
         },
       })
     : [];
@@ -107,11 +111,23 @@ export default async function BillingPage() {
             )}
             {grants.map((g) => {
               const piId = g.stripePaymentIntentId;
+              // Stream L: a grant points at either a book or a skill. Render
+              // whichever is non-null; show "—" as a defensive fallback (the
+              // XOR CHECK at the DB layer ensures exactly one is set, so the
+              // fallback should never render in practice).
+              const targetTitle = g.book?.title ?? g.skill?.name ?? "—";
+              const targetSlug = g.book?.slug ?? g.skill?.slug ?? "—";
+              const targetKind = g.book ? "Book" : g.skill ? "Skill" : null;
               return (
                 <tr key={g.id} className="hover:bg-[#F5F0E6] transition-colors">
                   <td className="px-6 py-4">
-                    <div className="font-bold text-gray-900">{g.book.title}</div>
-                    <div className="text-xs text-gray-500 font-mono mt-1">{g.book.slug}</div>
+                    <div className="font-bold text-gray-900">{targetTitle}</div>
+                    <div className="text-xs text-gray-500 font-mono mt-1">
+                      {targetSlug}
+                      {targetKind && (
+                        <span className="ml-2 text-gray-400">· {targetKind}</span>
+                      )}
+                    </div>
                   </td>
                   {/* Use stable ISO date to avoid React #418 hydration mismatch */}
                   <td className="px-6 py-4 tabular-nums text-gray-700">

@@ -39,18 +39,27 @@ export async function GET(request: Request) {
       orderBy: { title: "asc" },
     });
 
-    // Get access grants for the current user if authenticated
+    // Get BOOK access grants for the current user if authenticated.
+    // Phase 6 Stream L: AccessGrant.bookId is now nullable (skill grants have
+    // bookId=null + skillId set, XOR-checked at the DB layer). The storefront
+    // /api/storefront/books endpoint is books-only by design, so we filter
+    // book_id IS NOT NULL at query time — keeps the Map<string, …> typing
+    // intact and ensures skill grants don't leak into the books view.
     let grantsByBook = new Map<string, { source: string }>();
     if (subscriberId) {
       const grants = await prisma.accessGrant.findMany({
         where: {
           subscriberId,
+          bookId: { not: null },
           revokedAt: null,
           OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
         },
         select: { bookId: true, source: true },
       });
-      grantsByBook = new Map(grants.map((g) => [g.bookId, { source: g.source }]));
+      // After the `bookId: { not: null }` filter, g.bookId is logically
+      // non-null but TS still types it as `string | null` from the Prisma
+      // generated client. The non-null assertion narrows it for the Map key.
+      grantsByBook = new Map(grants.map((g) => [g.bookId!, { source: g.source }]));
     }
 
     // Format response

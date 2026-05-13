@@ -83,53 +83,75 @@ export async function POST(request: Request) {
 
 async function handlePaymentIntentSucceeded(pi: Stripe.PaymentIntent): Promise<void> {
   const bookId = pi.metadata?.book_id;
+  const skillId = pi.metadata?.skill_id;
   const subscriberId = pi.metadata?.subscriber_id;
 
-  if (!bookId || !subscriberId) {
-    // Operator-staged Stripe Checkout Sessions populate this metadata via
-    // payment_intent_data.metadata (set in /api/checkout). A PaymentIntent
-    // arriving without it is either a manually-created PI in the Stripe
-    // Dashboard or a misconfiguration. Log loudly and skip — better than
-    // throwing and triggering Stripe retries on a permanently-broken event.
-    console.warn(
-      `[webhooks/stripe] payment_intent.succeeded missing metadata.book_id/subscriber_id (pi=${pi.id}); no access_grant created.`,
+  // XOR validation per D18.1 §5: exactly one of book_id / skill_id must be
+  // present in the metadata. Both-present is a programmer error in the
+  // /api/checkout route's metadata generation — throw so Stripe retries until
+  // it's fixed. Neither-present is the legacy "this PI isn't ours" path
+  // (manually-created PI in Stripe Dashboard, or pre-Stream-L event before
+  // metadata schema landed); throw per dispatch — Stripe retries surface the
+  // misconfiguration in the Stripe dashboard for operator follow-up.
+  // (Behavior change from Stream K's "log + skip" for the missing-metadata
+  // case — see commit message.)
+  if (bookId && skillId) {
+    throw new Error(
+      `[webhooks/stripe] payment_intent.succeeded metadata has BOTH book_id and skill_id (pi=${pi.id}) — XOR violation; check /api/checkout metadata generation`,
     );
-    return;
+  }
+  if (!bookId && !skillId) {
+    throw new Error(
+      `[webhooks/stripe] payment_intent.succeeded missing metadata.book_id AND metadata.skill_id (pi=${pi.id}) — no AccessGrant target`,
+    );
+  }
+  if (!subscriberId) {
+    throw new Error(
+      `[webhooks/stripe] payment_intent.succeeded missing metadata.subscriber_id (pi=${pi.id})`,
+    );
   }
 
-  // Per D9.6: AccessGrant unique key is (subscriber_id, book_id, source). The
-  // upsert key here is that triple with source='PURCHASE'. If a PURCHASE row
-  // already exists for this (subscriber, book), update branch fires — log so
-  // duplicate-purchase scenarios (refund-then-rebuy, ops re-trigger, etc.)
-  // are visible in pm2 logs.
-  const result = await prisma.accessGrant.upsert({
-    where: {
-      subscriberId_bookId_source: {
-        subscriberId,
-        bookId,
-        source: "PURCHASE",
-      },
-    },
-    create: {
-      subscriberId,
-      bookId,
-      source: "PURCHASE",
-      stripePaymentIntentId: pi.id,
-    },
-    update: {
-      // Clear any prior revocation — re-purchase intent is a fresh grant.
-      revokedAt: null,
-      stripePaymentIntentId: pi.id,
-    },
-  });
+  // Per D18.1: the @@unique([subscriberId, bookId, source]) Prisma helper
+  // disappeared with the schema change. Two partial unique indexes now enforce
+  // uniqueness per content type — book-only on (subscriber_id, book_id, source)
+  // WHERE book_id IS NOT NULL, and skill-only on (subscriber_id, skill_id,
+  // source) WHERE skill_id IS NOT NULL. We use raw INSERT … ON CONFLICT with
+  // the partial-index inference form (Postgres matches by columns + WHERE) so
+  // we don't depend on Prisma's generated composite-key helper names (which
+  // can vary by version when partial indexes are involved).
+  //
+  // DO UPDATE preserves the Stream K re-purchase semantic: a buyer who had a
+  // grant revoked and then re-pays gets revoked_at cleared. The latest
+  // stripe_payment_intent_id is stored so the most recent PI links back.
 
-  // The upsert API doesn't expose a "did create vs update" signal; do the
-  // existence check separately so the warning fires only on update.
-  // (Alternative: do a findFirst before the upsert, but that doubles the
-  // round-trips; we accept a slightly less-precise log signal.)
-  if (result.stripePaymentIntentId === pi.id) {
+  if (bookId) {
+    await prisma.$executeRaw`
+      INSERT INTO access_grants
+        (id, subscriber_id, book_id, source, stripe_payment_intent_id, granted_at)
+      VALUES
+        (gen_random_uuid(), ${subscriberId}::uuid, ${bookId}::uuid, 'PURCHASE'::"GrantSource", ${pi.id}, NOW())
+      ON CONFLICT ("subscriber_id", "book_id", "source") WHERE "book_id" IS NOT NULL
+      DO UPDATE SET
+        revoked_at = NULL,
+        stripe_payment_intent_id = EXCLUDED.stripe_payment_intent_id
+    `;
     console.log(
       `[webhooks/stripe] payment_intent.succeeded → AccessGrant for subscriber=${subscriberId} book=${bookId} pi=${pi.id}`,
+    );
+  } else {
+    // skillId is non-null by the XOR check above.
+    await prisma.$executeRaw`
+      INSERT INTO access_grants
+        (id, subscriber_id, skill_id, source, stripe_payment_intent_id, granted_at)
+      VALUES
+        (gen_random_uuid(), ${subscriberId}::uuid, ${skillId}::uuid, 'PURCHASE'::"GrantSource", ${pi.id}, NOW())
+      ON CONFLICT ("subscriber_id", "skill_id", "source") WHERE "skill_id" IS NOT NULL
+      DO UPDATE SET
+        revoked_at = NULL,
+        stripe_payment_intent_id = EXCLUDED.stripe_payment_intent_id
+    `;
+    console.log(
+      `[webhooks/stripe] payment_intent.succeeded → AccessGrant for subscriber=${subscriberId} skill=${skillId} pi=${pi.id}`,
     );
   }
 }
