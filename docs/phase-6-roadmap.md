@@ -53,7 +53,9 @@ Sizing notation: **S** = ~1 day, **M** = 2-3 days, **L** = 4-7 days, **XL** = 1-
 
 ### Foundation streams (must come first; rest depends on these)
 
-**Stream J — Multi-chapter schema migration** [M, ~2-3 days]
+**Stream J — Multi-chapter schema migration** [M] — ✅ **SHIPPED 2026-05-13** (`main` @ `c04762a`; AD1 revision @ `0b1ee88`; deployed-and-verified — see `docs/decisions.md` D16.1).
+> The bullets below describe the *pre-pre-gather* plan and are superseded. What actually shipped: `BookChapter` keyed to `BookVersion` (not `Book` — `Book` has no `content` column), `manifest` JSONB on `BookVersion` (not `Book`), additive-only (no backfill — the 6 legacy versions stay chapterless and readable via `loadBookContent`), reads route through `getVersionContent(version)`. Test baseline now 46/46.
+
 - New `BookChapter` table; book.content becomes book.chapters[0].content for legacy books via migration; new `manifest` JSONB column on Book for the rest of the manifest.yaml metadata
 - Backfill: existing 7 books each become 1-chapter books with the existing content as chapter[0], manifest minimal
 - Update all `Book.content`-reading code paths to read `Book.chapters[0].content` for legacy access OR fetch a specific chapter
@@ -185,8 +187,8 @@ Then end-tier:
 **Realistic total: ~8-10 weeks of focused work** if streams are done sequentially. ~5-6 weeks if parallel work is genuinely parallel and there's no rework.
 
 **Suggested first sprint (next 2-3 weeks):**
-- Stream J (multi-chapter schema)
-- Stream K (zip upload + manifest)
+- ~~Stream J (multi-chapter schema)~~ — ✅ shipped 2026-05-13 (`c04762a`)
+- Stream K (zip upload + manifest) — next-up; foundation (Stream J schema) is in place
 - Stream L (skills content class)
 - Stream M (agent-persona positioning copy)
 
@@ -254,11 +256,11 @@ Listing these so they don't accidentally creep into scope:
 1. Re-read this roadmap with fresh eyes. Mark `[REVIEW]` items as locked or revised.
 2. Reply to Zach: "Got your two zips, scoping multi-chapter book + skill support properly. A few questions" — pose the To-Zach open questions above.
 3. Reply to Edward: NO new message unless he writes first. Or — schedule a 30-min sync to walk through the roadmap. He'll appreciate the rigor.
-4. Pick a first stream to dispatch. Recommend Stream J (multi-chapter schema) or Stream M (agent-persona positioning copy — fastest win).
+4. ~~Pick a first stream to dispatch.~~ — Stream J shipped 2026-05-13 (`c04762a`). Next-up: Stream K (zip upload + manifest); Stream M (agent-persona positioning copy) remains a cheap parallel win.
 
 **Within 2 weeks:**
-- Ship Stream J + Stream M
-- Begin Stream K once J lands
+- ~~Ship Stream J~~ ✅ done — ship Stream M
+- Begin Stream K (Stream J has landed — its schema is the foundation Stream K builds on)
 - Begin Stream L in parallel
 
 **Within 4 weeks:**
