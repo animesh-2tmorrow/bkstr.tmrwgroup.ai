@@ -1,38 +1,42 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useSession } from "next-auth/react";
+import {
+  Masthead,
+  MarketingFooter,
+  Eyebrow,
+  Pill,
+  BookCover,
+  Button,
+} from "@/components/design";
+import {
+  bookToCoverData,
+  derivePalette,
+} from "@/lib/books/cover-derive";
+import type { PillVariant } from "@/components/design";
+import type { BookCoverPalette } from "@/components/design/book-cover";
 
-// Phase 5 Stream H.4 (D15.12) — restore horizontal card layout to match
-// the actual reference screenshot (Manus's Q1 answer was wrong; the
-// screenshot itself shows horizontal cards, not vertical).
+// bkstr redesign PR 1 — public catalog.
 //
-// Final layout — H.2 horizontal structure + H.3 styling tokens:
+// Reskin of the Stream H storefront (prior page used photographic
+// thumbnails on horizontal cards w/ navy-on-cream CTAs). The new version:
+//   - Editorial top chrome (Masthead) shared with `/`.
+//   - Display-serif page title with eyebrow.
+//   - Shelves filter (Pill primitive) + search + sort row.
+//   - Vertical book grid using BookCover SVG (typographic) — no
+//     photographic covers (HANDOFF.md §What NOT to do).
+//   - Per-card Pill for domain category (color derived from `palette`).
+//   - Bottom CTA stack: lift placeholder + price + Buy/Owned button.
 //
-//   ┌──────────────────────────────────────────────┐
-//   │  ┌──────┐  Badge                             │
-//   │  │      │  Title (font-serif bold upright)   │
-//   │  │ Cvr  │  Description (3 lines)             │
-//   │  │ 3:4  │                                    │
-//   │  │      │  $5.00                             │
-//   │  │      │  One-time purchase                 │
-//   │  └──────┘                                    │
-//   ├──────────────────────────────────────────────┤
-//   │           Buy Now — $5.00 (navy)             │
-//   └──────────────────────────────────────────────┘
+// Data shape from /api/storefront/books is unchanged — dispatch §constraint
+// is "Keep all existing data fetching and state — just swap the markup
+// and classes." The session-aware Buy / Already-Owned / Not-Available
+// states are preserved.
 //
-// All other style tokens unchanged from H.3:
-//   - Navy CTA #0D1B2A / hover #051B2A
-//   - Per-category badge colors (Manus's locked spec)
-//   - Card rounded-lg, border #E5DCC8, overflow-hidden
-//   - Title font-serif font-bold UPRIGHT (italic only on wordmark)
-//   - Hero: single-line serif heading, one-sentence subtitle
-//   - Header: non-sticky, flush against page background
-//   - Loading spinner muted gray
-//   - Already Owned: full-width bottom pill #F5F1E8 + #10B981 check
-//   - Not Available: full-width bottom pill gray + lock SVG
+// `palette` and `glyph` are derived locally via lib/books/cover-derive
+// until PR 8 adds real columns.
 
 interface BookWithPrice {
   id: string;
@@ -46,16 +50,27 @@ interface BookWithPrice {
   grantSource: string | null;
 }
 
-function domainColour(domain: string): string {
-  const palette = [
-    "#D4E4F7", "#D4F0E4", "#F7E4D4", "#EAD4F7",
-    "#F7D4E4", "#F7F0D4", "#D4F7F0", "#F0D4F7",
-  ];
-  let hash = 0;
-  for (let i = 0; i < domain.length; i++) {
-    hash = domain.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return palette[Math.abs(hash) % palette.length];
+const MASTHEAD_NAV = [
+  { label: "Home", href: "/" },
+  { label: "Catalog", href: "/storefront", active: true },
+  { label: "Docs", href: "/dashboard/docs" },
+  { label: "Log in", href: "/login" },
+];
+
+// Map BookCover palette key → Pill variant. Lets the per-card domain pill
+// share the cover's palette without an extra lookup.
+const PALETTE_PILL: Record<BookCoverPalette, PillVariant> = {
+  saffron: "saffron",
+  forest: "forest",
+  oxblood: "oxblood",
+  indigo: "indigo",
+  plum: "plum",
+  slate: "slate",
+};
+
+function formatPrice(cents: number | null): string {
+  if (!cents) return "Contact for pricing";
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
 function humanDomain(domain: string): string {
@@ -70,61 +85,14 @@ function humanDomain(domain: string): string {
     .join(" ");
 }
 
-const BADGE_BY_DOMAIN: Record<string, { label: string; bg: string; text: string }> = {
-  "ci-diagnostics":      { label: "DevOps",                  bg: "bg-blue-50",     text: "text-blue-700" },
-  "docker-patterns":     { label: "DevOps",                  bg: "bg-blue-50",     text: "text-blue-700" },
-  "developer-marketing": { label: "Engineering Leadership",  bg: "bg-orange-50",   text: "text-orange-700" },
-  "gifgrep":             { label: "Developer Tools",         bg: "bg-purple-50",   text: "text-purple-700" },
-  "dogfood":             { label: "Product Management",      bg: "bg-indigo-50",   text: "text-indigo-700" },
-  "node-connect":        { label: "Backend Development",     bg: "bg-cyan-50",     text: "text-cyan-700" },
+type SortKey = "featured" | "price-asc" | "price-desc" | "newest";
+
+const SORT_LABELS: Record<SortKey, string> = {
+  featured: "FEATURED",
+  "price-asc": "PRICE ↑",
+  "price-desc": "PRICE ↓",
+  newest: "NEWEST",
 };
-
-function domainBadge(domain: string): { label: string; bg: string; text: string } {
-  return BADGE_BY_DOMAIN[domain] ?? {
-    label: humanDomain(domain),
-    bg: "bg-gray-50",
-    text: "text-gray-700",
-  };
-}
-
-function CoverImage({ book }: { book: BookWithPrice }) {
-  const [imgError, setImgError] = useState(false);
-
-  // Stream H.5 — cover is full-bleed within its column (no rounded corners
-  // of its own; the card's `overflow-hidden rounded-lg` clips the top-left
-  // and bottom-left to match card edges). Sizing comes from the parent
-  // column's `aspect-[3/4]` so the image fills naturally.
-  if (book.coverImageUrl && !imgError) {
-    return (
-      <Image
-        src={book.coverImageUrl}
-        alt={`${book.title} cover`}
-        fill
-        className="object-cover"
-        onError={() => setImgError(true)}
-        sizes="(max-width: 768px) 40vw, (max-width: 1024px) 20vw, 160px"
-      />
-    );
-  }
-
-  const initial = book.domain.charAt(0).toUpperCase();
-  const bg = domainColour(book.domain);
-  return (
-    <div
-      className="absolute inset-0 flex items-center justify-center"
-      style={{ backgroundColor: bg }}
-    >
-      <span className="text-5xl font-bold text-gray-500 opacity-50 select-none tracking-tighter">
-        {initial}
-      </span>
-    </div>
-  );
-}
-
-function formatPrice(cents: number | null): string {
-  if (!cents) return "Contact for pricing";
-  return `$${(cents / 100).toFixed(2)}`;
-}
 
 export default function StorefrontPage() {
   const { data: session, status } = useSession();
@@ -133,12 +101,19 @@ export default function StorefrontPage() {
   const [error, setError] = useState<string | null>(null);
   const [purchasingBookId, setPurchasingBookId] = useState<string | null>(null);
 
+  // Filter / sort / search state — URL-less for now; can promote to
+  // ?domain=&q=&sort= search params in a later polish pass if shareable
+  // filtered views become important.
+  const [activeDomain, setActiveDomain] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<SortKey>("featured");
+  const [query, setQuery] = useState("");
+
   useEffect(() => {
-    const fetchBooks = async () => {
+    const run = async () => {
       try {
         const response = await fetch("/api/storefront/books");
         if (!response.ok) throw new Error("Failed to fetch books");
-        const data = await response.json();
+        const data = (await response.json()) as BookWithPrice[];
         setBooks(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
@@ -146,8 +121,47 @@ export default function StorefrontPage() {
         setLoading(false);
       }
     };
-    fetchBooks();
+    run();
   }, []);
+
+  // Build the shelves filter row — distinct domain values + their counts.
+  const domains = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const b of books) {
+      counts.set(b.domain, (counts.get(b.domain) ?? 0) + 1);
+    }
+    return [
+      { id: "all", label: "All catalog", count: books.length, palette: null as BookCoverPalette | null },
+      ...Array.from(counts.entries()).map(([id, count]) => ({
+        id,
+        label: humanDomain(id),
+        count,
+        palette: derivePalette(id),
+      })),
+    ];
+  }, [books]);
+
+  const filtered = useMemo(() => {
+    let bs = books;
+    if (activeDomain !== "all") bs = bs.filter((b) => b.domain === activeDomain);
+    if (query) {
+      const q = query.toLowerCase();
+      bs = bs.filter(
+        (b) =>
+          b.title.toLowerCase().includes(q) ||
+          b.domain.toLowerCase().includes(q) ||
+          (b.description ?? "").toLowerCase().includes(q),
+      );
+    }
+    if (sortBy === "price-asc") {
+      bs = [...bs].sort((a, b) => (a.unitAmountCents ?? 0) - (b.unitAmountCents ?? 0));
+    } else if (sortBy === "price-desc") {
+      bs = [...bs].sort((a, b) => (b.unitAmountCents ?? 0) - (a.unitAmountCents ?? 0));
+    }
+    // 'featured' and 'newest' fall through to the server-provided order
+    // (currently insertion order from /api/storefront/books).
+    return bs;
+  }, [books, activeDomain, sortBy, query]);
 
   const handleBuyNow = async (bookId: string) => {
     if (status !== "authenticated") {
@@ -175,180 +189,180 @@ export default function StorefrontPage() {
     }
   };
 
+  // Right-slot in the masthead changes by auth state.
+  const rightSlot = session ? (
+    <Link
+      href="/dashboard"
+      className="text-sm text-ink-2 hover:text-ink transition-colors"
+    >
+      Dashboard
+    </Link>
+  ) : (
+    <Link
+      href="/signup"
+      className="inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium bg-ink text-paper border border-ink hover:bg-ink-2 transition-colors"
+    >
+      Sign up free
+    </Link>
+  );
+
   return (
-    <div className="min-h-screen flex flex-col bg-[#FAF6EC]">
-      {/* ── Header — non-sticky, no border ── */}
-      <header className="px-8 py-6 flex justify-between items-center">
-        <Link href="/storefront" className="no-underline">
-          <span className="font-serif italic text-2xl font-bold text-gray-900 tracking-tight">
-            bkstr.tmrwgroup.ai
-          </span>
-        </Link>
+    <div className="min-h-screen flex flex-col bg-paper">
+      <Masthead navItems={MASTHEAD_NAV} rightSlot={rightSlot} />
 
-        <nav className="flex items-center gap-6 text-sm font-semibold">
-          {session ? (
-            <>
-              <Link
-                href="/dashboard"
-                className="text-gray-600 hover:text-gray-900 transition-colors"
-              >
-                Dashboard
-              </Link>
-              <span className="text-gray-300">|</span>
-              <span className="text-gray-500 text-xs font-normal">{session.user?.email}</span>
-            </>
-          ) : (
-            <>
-              <Link
-                href="/login"
-                className="text-gray-600 hover:text-gray-900 transition-colors"
-              >
-                Log in
-              </Link>
-              <Link
-                href="/signup"
-                className="bg-[#0D1B2A] text-[#FAF6EC] px-5 py-2.5 rounded-md text-sm font-semibold hover:bg-[#051B2A] transition-colors"
-              >
-                Sign up
-              </Link>
-            </>
-          )}
-        </nav>
-      </header>
-
-      {/* ── Main ── */}
-      <main className="flex-grow px-6 pb-14 max-w-screen-2xl mx-auto w-full">
-        {/* Hero — single-line serif heading (Stream H.9: no max-w on section so
-            h1 has full width to render "Compressed Knowledge for AI Agents" on
-            one line at desktop). Subtitle keeps a max-w constraint for legibility. */}
-        <section className="text-center mt-8 mb-14">
-          <h1 className="font-serif text-4xl sm:text-5xl md:text-6xl font-bold leading-tight tracking-tight mb-5 text-gray-900">
-            Compressed Knowledge for AI Agents
-          </h1>
-          <p className="text-lg text-gray-500 leading-relaxed max-w-2xl mx-auto">
-            Purchase domain expertise packaged as high-density, machine-first books.
-          </p>
+      <main className="flex-grow max-w-[1280px] mx-auto px-8 w-full">
+        {/* Page header */}
+        <section className="pt-14 pb-6">
+          <Eyebrow className="block">§ THE CATALOG</Eyebrow>
+          <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-14 items-end mt-3">
+            <h1 className="font-serif text-[clamp(36px,4.4vw,56px)] leading-[1.05] tracking-display m-0">
+              The shelves in print.
+              <br />
+              <em className="italic">Every category</em> your fleet reads.
+            </h1>
+            <p className="font-serif italic text-ink-2 text-base leading-[1.6] m-0 max-w-[44ch]">
+              Each title is editorially indexed, density-tested for token
+              efficiency, and priced per volume — a one-time purchase, never a
+              subscription.
+            </p>
+          </div>
         </section>
 
-        {/* Books Grid */}
-        <section>
+        {/* Filter / search / sort row */}
+        <div className="border-t-2 border-ink border-b border-rule py-4 flex gap-4 items-center flex-wrap">
+          <Eyebrow>SHELVES</Eyebrow>
+          <div className="flex gap-1.5 flex-wrap flex-1">
+            {domains.map((d) => {
+              const isActive = activeDomain === d.id;
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setActiveDomain(d.id)}
+                  className={[
+                    "inline-flex items-center gap-1.5 rounded-full border",
+                    "px-2.5 py-0.5 font-mono text-[10.5px] uppercase tracking-[0.08em]",
+                    "transition-colors",
+                    isActive
+                      ? "bg-ink text-paper border-ink"
+                      : "bg-transparent text-ink-2 border-rule hover:border-ink",
+                  ].join(" ")}
+                >
+                  {d.label}
+                  <span className="opacity-60 ml-1">{d.count}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex gap-2.5 items-center">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search titles & domains..."
+              className="font-sans text-[13px] py-2 px-3 bg-paper border border-rule outline-none w-60 focus:border-ink"
+            />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortKey)}
+              className="font-mono text-[11px] tracking-[1px] py-2 px-2.5 bg-paper border border-rule uppercase focus:border-ink outline-none"
+            >
+              {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                <option key={k} value={k}>
+                  SORT · {SORT_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Result count strip */}
+        <div className="py-4 flex justify-between items-baseline">
+          <Eyebrow>
+            {filtered.length} {filtered.length === 1 ? "VOLUME" : "VOLUMES"} ·
+            SORTED BY {SORT_LABELS[sortBy]}
+          </Eyebrow>
+          <Eyebrow className="text-ink-3">PRICES IN USD · BILLED VIA STRIPE</Eyebrow>
+        </div>
+
+        {/* Grid */}
+        <section className="pt-6 pb-20">
           {loading ? (
-            <div className="text-center py-16">
-              <div className="inline-block w-6 h-6 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />
-              <p className="text-gray-400 mt-4 text-sm">Loading books…</p>
+            <div className="text-center py-16 text-ink-3 text-sm">
+              <div className="inline-block w-6 h-6 border-2 border-rule border-t-ink rounded-full animate-spin" />
+              <p className="mt-4">Loading books…</p>
             </div>
           ) : error ? (
             <div className="text-center py-16">
-              <p className="text-red-500 text-sm">Failed to load books. Please refresh.</p>
+              <p className="text-status-err text-sm">{error}</p>
             </div>
-          ) : books.length === 0 ? (
-            <div className="text-center py-16">
-              <p className="text-gray-400 text-sm">No books available at this time.</p>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-16 text-ink-3">
+              No volumes match those filters yet.
             </div>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
-              {books.map((book) => {
-                const badge = domainBadge(book.domain);
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-12">
+              {filtered.map((book) => {
+                const palette = derivePalette(book.domain);
+                const pillVariant = PALETTE_PILL[palette];
+                const isOwned = book.state === "granted";
+                const isForSale = book.state === "for_sale";
                 return (
-                  <article
-                    key={book.id}
-                    className="bg-white border border-[#E5DCC8] rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col h-full"
-                  >
-                    {/* TOP: horizontal flex — cover-left + content-right, padded all around.
-                        Stream H.9 — reverts H.5's full-bleed cover. Manus's reference card
-                        shows ~24px of whitespace on all sides of the cover (top, left,
-                        bottom, right-into-gap). `p-6` on the top flex container gives that
-                        padding uniformly; `gap-5` separates cover and content; `items-start`
-                        keeps cover at natural aspect-[3/4] so there's whitespace below it
-                        before the bottom CTA. Bottom CTA is OUTSIDE this padded section so
-                        it still spans full card width edge-to-edge. */}
-                    <div className="flex flex-grow items-start p-6 gap-5">
-                      {/* Cover column: ~40% of inner content area, 3:4 portrait.
-                          rounded on the wrapper so the cover image has subtle rounded
-                          corners (image inside is clipped via overflow-hidden). */}
-                      <div className="relative w-2/5 flex-shrink-0 aspect-[3/4] bg-gray-50 overflow-hidden rounded">
-                        <CoverImage book={book} />
+                  <article key={book.id} className="flex flex-col">
+                    <BookCover
+                      book={bookToCoverData({ title: book.title, domain: book.domain })}
+                      size="lg"
+                      className="w-full h-auto"
+                    />
+                    <div className="mt-5 pb-3">
+                      <div className="flex justify-between items-baseline gap-2">
+                        <Pill variant={pillVariant}>{humanDomain(book.domain)}</Pill>
+                        <Eyebrow className="text-ink-3">V1</Eyebrow>
                       </div>
-
-                      {/* Content column: no padding (parent provides via p-6) */}
-                      <div className="flex-1 flex flex-col min-w-0">
-                        {/* Badge */}
-                        <div className="mb-2">
-                          <span
-                            className={`inline-block ${badge.bg} ${badge.text} text-xs font-medium px-2.5 py-1 rounded-full`}
-                          >
-                            {badge.label}
-                          </span>
-                        </div>
-
-                        {/* Title — upright bold serif, larger */}
-                        <h2 className="font-serif text-xl font-bold text-gray-900 mb-2 leading-snug">
-                          {book.title}
-                        </h2>
-
-                        {/* Description */}
-                        <p className="text-sm text-gray-500 mb-4 flex-grow line-clamp-3 leading-relaxed">
-                          {book.description ?? "No description yet."}
+                      <h2 className="font-serif text-[22px] leading-[1.15] text-ink tracking-tight mt-3">
+                        {book.title}
+                      </h2>
+                      {book.description ? (
+                        <p className="text-ink-3 text-[13.5px] leading-[1.5] mt-3 mb-0 line-clamp-3">
+                          {book.description}
                         </p>
-
-                        {/* Price — stacked at bottom of content column */}
-                        <div className="mt-auto">
-                          <div className="text-2xl font-bold text-gray-900 leading-none">
-                            {formatPrice(book.unitAmountCents)}
-                          </div>
-                          {book.unitAmountCents && (
-                            <div className="text-xs text-gray-400 mt-1">One-time purchase</div>
-                          )}
+                      ) : null}
+                    </div>
+                    <div className="mt-auto pt-3.5 border-t border-rule flex justify-between items-baseline">
+                      <div>
+                        <Eyebrow className="text-ink-3">PRICE</Eyebrow>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-serif text-[24px] num">
+                          {formatPrice(book.unitAmountCents)}
                         </div>
+                        {book.unitAmountCents ? (
+                          <Eyebrow className="text-ink-3">One-time purchase</Eyebrow>
+                        ) : null}
                       </div>
                     </div>
-
-                    {/* BOTTOM: full-width CTA, flush against card edges */}
-                    {book.state === "granted" ? (
-                      <div className="bg-[#F5F1E8] py-3 px-6 text-center text-sm font-bold text-gray-700 flex items-center justify-center gap-2">
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="#10B981"
-                          viewBox="0 0 24 24"
+                    <div className="mt-3.5">
+                      {isOwned ? (
+                        <div className="block bg-paper-2 border border-rule text-center py-3 text-sm font-medium text-ink">
+                          ✓ Already owned
+                        </div>
+                      ) : isForSale ? (
+                        <Button
+                          type="button"
+                          onClick={() => handleBuyNow(book.id)}
+                          disabled={purchasingBookId === book.id}
+                          size="md"
+                          className="w-full"
                         >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2.5}
-                            d="M5 13l4 4L19 7"
-                          />
-                        </svg>
-                        Already Owned
-                      </div>
-                    ) : book.state === "for_sale" ? (
-                      <button
-                        onClick={() => handleBuyNow(book.id)}
-                        disabled={purchasingBookId === book.id}
-                        className="w-full bg-[#0D1B2A] hover:bg-[#051B2A] text-[#FAF6EC] py-3 px-6 font-bold text-sm tracking-wide transition-colors disabled:opacity-50"
-                      >
-                        {purchasingBookId === book.id
-                          ? "Processing…"
-                          : `Buy Now — ${formatPrice(book.unitAmountCents)}`}
-                      </button>
-                    ) : (
-                      <div className="bg-gray-100 py-3 px-6 text-center text-sm font-bold text-gray-500 flex items-center justify-center gap-2">
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M12 11c0-1.1.9-2 2-2s2 .9 2 2v3M5 11h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2v-8a2 2 0 012-2z"
-                          />
-                        </svg>
-                        Not Available
-                      </div>
-                    )}
+                          {purchasingBookId === book.id
+                            ? "Processing…"
+                            : `Buy — ${formatPrice(book.unitAmountCents)} →`}
+                        </Button>
+                      ) : (
+                        <div className="block border border-rule text-center py-3 text-sm text-ink-3">
+                          Not available
+                        </div>
+                      )}
+                    </div>
                   </article>
                 );
               })}
@@ -357,17 +371,7 @@ export default function StorefrontPage() {
         </section>
       </main>
 
-      {/* ── Footer ── */}
-      <footer className="border-t border-[#E5DCC8] py-8 px-6 mt-12">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-400">
-          <span>&copy; 2026 Tmrwgroup. All rights reserved.</span>
-          <div className="flex gap-6">
-            <Link href="/about" className="hover:text-gray-600 transition-colors">About</Link>
-            <Link href="/login" className="hover:text-gray-600 transition-colors">Log in</Link>
-            <Link href="/signup" className="hover:text-gray-600 transition-colors">Sign up</Link>
-          </div>
-        </div>
-      </footer>
+      <MarketingFooter />
     </div>
   );
 }

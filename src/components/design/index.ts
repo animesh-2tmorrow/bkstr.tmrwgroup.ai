@@ -22,3 +22,4 @@ export { Masthead } from './masthead';
 export type { MastheadNavItem, MastheadProps } from './masthead';
 export { DashShell } from './dash-shell';
 export type { DashShellProps, DashNavGroup, DashNavItem } from './dash-shell';
+export { MarketingFooter } from './marketing-footer';
