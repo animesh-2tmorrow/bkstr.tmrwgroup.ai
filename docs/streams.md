@@ -39,8 +39,9 @@ This drift has bitten twice: (1) the markdown-upload work wanted "Stream H" but 
 | Q | RESERVED | — | — | Library-card subscription (recurring billing). |
 | R | RESERVED | — | — | Stripe Connect + publisher payouts. |
 | S | RESERVED | — | — | Open marketplace UX + moderation. |
+| T | RESERVED 2026-05-14 | — | — | Paste → zip default-mode promotion (ex-follow-up #113) — make zip upload the default mode on the new-book form; paste-mode becomes secondary. *Reserved to resolve the M/T conflict: 2026-05-14 handover queue erroneously labeled this work as "Stream M"; Stream M remains agent-persona positioning per this registry.* |
 
-**Next unreserved letter: `T`.** L–S are reserved by `docs/phase-6-roadmap.md`; A–H are spent in the pre-Phase-6 namespaces (below) and are not reused for new work.
+**Next unreserved letter: `U`.** L–S are reserved by `docs/phase-6-roadmap.md`; T is reserved by follow-up #113; A–H are spent in the pre-Phase-6 namespaces (below) and are not reused for new work.
 
 ---
 
@@ -81,4 +82,4 @@ This drift has bitten twice: (1) the markdown-upload work wanted "Stream H" but 
 
 ---
 
-*Last updated: 2026-05-14. Stream L shipped 2026-05-13 (ff-merge HEAD `1ee6633`); follow-up #122 (agent-consumption JSON API) shipped 2026-05-14 at `19846ad`.*
+*Last updated: 2026-05-14. Stream L shipped 2026-05-13 (ff-merge HEAD `1ee6633`); follow-up #122 (agent-consumption JSON API) shipped 2026-05-14 at `19846ad`. Stream T reserved 2026-05-14 (paste → zip default-mode promotion, ex-#113).*
