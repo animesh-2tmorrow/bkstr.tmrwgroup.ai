@@ -1,25 +1,103 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,600;0,700;0,800;1,700;1,800&family=Inter:wght@400;500;600;700&display=swap');
+/* bkstr redesign — design system foundation (PR 0).
+ *
+ * Token strategy: keep the design-system tokens DECLARED here as CSS vars
+ * so non-Tailwind code (raw SVG, third-party widgets) can reference them
+ * with `var(--ink)`. Tailwind's `extend.colors` mirrors these so JSX uses
+ * `bg-paper`/`text-ink-3`/etc. semantically.
+ *
+ * Body uses Geist (sans); h1/h2/h3 use Newsreader (serif) by default. Page
+ * code can override per-element with Tailwind font-family utilities.
+ *
+ * Existing utility classes (.serif / .compressed-text / .input-field /
+ * .nav-item.active) are preserved for back-compat — Stream H storefront
+ * + dashboard sidebar use them today. PR 1+ migrate to design-system
+ * primitives.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500;1,6..72,600&family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  body {
-    font-family: 'Inter', sans-serif;
-    background-color: #F5F0E6;
-    color: #111827;
-    letter-spacing: -0.02em;
+  :root {
+    /* ─── paper / ink / rule ─────────────────────────────────────── */
+    --paper:    #F4EFE5;
+    --paper-2:  #ECE5D3;
+    --paper-3:  #E2D9C2;
+    --ink:      #161613;
+    --ink-2:    #2E2E2A;
+    --ink-3:    #6B6963;
+    --ink-4:    #98948A;
+    --rule:     rgba(22, 22, 19, 0.14);
+    --rule-2:   rgba(22, 22, 19, 0.07);
+
+    /* ─── accents ───────────────────────────────────────────────── */
+    --saffron:     #C46A1F;
+    --saffron-dk:  #B05A14;
+    --oxblood:     #6B2424;
+    --forest:      #1F3D2B;
+    --indigo:      #2A3D6B;
+    --plum:        #4B2A5C;
+    --slate:       #354455;
+
+    /* ─── status ────────────────────────────────────────────────── */
+    --status-ok:    #2F6A3F;
+    --status-warn:  #8A5818;
+    --status-err:   #8E3A22;
+    --status-info:  #2A4F86;
+
+    /* ─── type ──────────────────────────────────────────────────── */
+    --serif: 'Newsreader', 'Source Serif Pro', 'Iowan Old Style', Georgia, serif;
+    --sans:  'Geist', 'Söhne', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --mono:  'JetBrains Mono', 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   }
+
+  body {
+    font-family: var(--sans);
+    background-color: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
   h1, h2, h3 {
-    font-family: 'Fraunces', Georgia, serif;
+    font-family: var(--serif);
     letter-spacing: -0.02em;
   }
 }
 
 @layer utilities {
+  /* ─── Design-system utilities ──────────────────────────────────── */
+  /* Mono eyebrow — used widely; the `text-eyebrow` Tailwind utility
+   * (font-size 11px + tracking 0.14em + lh 1) covers the size, this
+   * adds the uppercase + color + font-family for the full eyebrow. */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    line-height: 1;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+  }
+
+  .num {
+    font-feature-settings: 'tnum' 1, 'lnum' 1;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  .display em {
+    font-style: italic;
+    font-feature-settings: 'ss01';
+  }
+
+  /* ─── Back-compat utilities (existing code) ─────────────────────── */
+  /* These predate the redesign. Pages built before PR 1+ still use them.
+   * Migrated as each page is reskinned (PR 1 onward). */
   .serif {
-    font-family: 'Fraunces', Georgia, serif;
+    font-family: var(--serif);
   }
   .compressed-text {
     letter-spacing: -0.05em;
