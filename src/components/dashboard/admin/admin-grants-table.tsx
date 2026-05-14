@@ -39,9 +39,16 @@ function fmtDate(d: Date | null): string {
 export function AdminGrantsTable({
   grants,
   activeSource,
+  currentUserId,
+  currentUserEmail,
 }: {
   grants: AdminGrantRow[];
   activeSource: GrantSource | null;
+  // Stream V (D19.x) — forwarded to RevokeGrantModal for self-protection
+  // soft-rail. Required (non-optional) so a missing wire-up at the page
+  // surfaces at compile time.
+  currentUserId: string;
+  currentUserEmail: string;
 }) {
   // Modal state — a single grant being revoked at a time.
   const [activeGrant, setActiveGrant] = useState<AdminGrantRow | null>(null);
@@ -136,7 +143,12 @@ export function AdminGrantsTable({
       )}
 
       {activeGrant && (
-        <RevokeGrantModal grant={activeGrant} onClose={() => setActiveGrant(null)} />
+        <RevokeGrantModal
+          grant={activeGrant}
+          currentUserId={currentUserId}
+          currentUserEmail={currentUserEmail}
+          onClose={() => setActiveGrant(null)}
+        />
       )}
     </>
   );

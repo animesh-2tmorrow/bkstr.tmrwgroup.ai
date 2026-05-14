@@ -515,6 +515,11 @@ export type AdminGrantRow = {
   source: GrantSource;
   subscriberId: string;
   subscriberEmail: string;
+  // Stream V (D19.x) — exposed for the modal's self-protection soft rail.
+  // Compared against the current admin's session.user.id; equality + source
+  // === PUBLISHER_OWN triggers the typed-email confirmation block. Nullable
+  // because Subscriber.userId is nullable (legacy rows with no linked user).
+  subscriberUserId: string | null;
   bookId: string | null;
   bookTitle: string | null;
   bookSlug: string | null;
@@ -563,7 +568,9 @@ export async function getAdminGrants(opts: {
           // join-back to users is only needed for cases where subscribers.email
           // is empty (rare; PrismaAdapter copies user.email into the
           // subscriber row at signin per src/lib/auth/index.ts:154).
-          user: { select: { email: true } },
+          // Stream V (D19.x) — also pull user.id so the row can carry
+          // subscriberUserId for the modal's self-protection comparison.
+          user: { select: { id: true, email: true } },
         },
       },
       book: { select: { title: true, slug: true } },
@@ -576,6 +583,9 @@ export async function getAdminGrants(opts: {
     source: g.source,
     subscriberId: g.subscriberId,
     subscriberEmail: g.subscriber.email || g.subscriber.user?.email || "—",
+    // Stream V (D19.x) — exposed for the revoke modal's self-protection
+    // soft rail. Null when the subscriber has no linked user row.
+    subscriberUserId: g.subscriber.user?.id ?? null,
     bookId: g.bookId,
     bookTitle: g.book?.title ?? null,
     bookSlug: g.book?.slug ?? null,

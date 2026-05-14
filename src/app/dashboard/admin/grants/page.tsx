@@ -38,7 +38,7 @@ export default async function AdminGrantsPage({
   searchParams: Promise<{ source?: string }>;
 }) {
   const session = await auth();
-  if (!session?.user?.email) redirect("/login");
+  if (!session?.user?.email || !session.user.id) redirect("/login");
 
   const params = await searchParams;
   const source = parseSource(params.source);
@@ -71,7 +71,12 @@ export default async function AdminGrantsPage({
         </p>
       </header>
 
-      <AdminGrantsTable grants={grants} activeSource={source ?? null} />
+      <AdminGrantsTable
+        grants={grants}
+        activeSource={source ?? null}
+        currentUserId={session.user.id}
+        currentUserEmail={session.user.email}
+      />
     </DashboardShell>
   );
 }

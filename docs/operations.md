@@ -1051,6 +1051,36 @@ Side effects after un-revoke:
 
 Q-F5 + D12.6 together mean: revoking is a button click, un-revoking is a deliberate psql action. The asymmetry is intentional — un-revoke is rare and benefits from the friction of stepping into the database directly.
 
+### Revoking your own publisher grant (Stream V / D19.1)
+
+The admin grants page (`/dashboard/admin/grants`) refuses to revoke your own `PUBLISHER_OWN` grant on your own content. This is a Stream V self-protection rail (D19.1) added 2026-05-14 in response to two incidents where the operator swept their own publisher grants while clearing test grants. The protection has two layers:
+
+1. **Hard rail (route)**: `POST /api/admin/grants/[id]/revoke` returns `409` with `{"code": "SELF_PROTECTION", "error": "..."}` when `grant.source === 'PUBLISHER_OWN'` AND `grant.subscriber.userId === session.user.id`. No `admin_actions` row is written (the TX rolls back before the audit entry). Unbypassable by a fast click.
+2. **Soft rail (UI)**: the revoke modal flips to a red destructive-confirmation form when the same predicate holds. Typed-email match required before the Confirm Revoke button enables. Mirrors D12.9's role-mutation-modal asymmetric-friction pattern.
+
+If you genuinely need to revoke your own publisher grant (rare — usually indicates intent to hand off the publisher role to a successor), use psql:
+
+```sql
+-- Find your subscriber-owned PUBLISHER_OWN grants
+SELECT g.id, g.book_id, g.skill_id, b.slug AS book_slug, s.slug AS skill_slug,
+       g.granted_at, g.revoked_at
+  FROM access_grants g
+  LEFT JOIN books  b ON b.id = g.book_id
+  LEFT JOIN skills s ON s.id = g.skill_id
+  JOIN subscribers sub ON sub.id = g.subscriber_id
+  JOIN users u ON u.id = sub.user_id
+ WHERE u.email = '<your-email>' AND g.source = 'PUBLISHER_OWN';
+
+-- Revoke the chosen one
+UPDATE access_grants
+   SET revoked_at = NOW()
+ WHERE id = '<grant-uuid>';
+```
+
+Document the action in a dated runbook note. The psql path bypasses both rails and bypasses `writeAuditEntry` (same Q-F5 audit-bypass note as un-revoke applies).
+
+The hard rail allows revoking OTHER publishers' `PUBLISHER_OWN` grants normally — the Stream F admin-revoke surface for cross-publisher access management is intact. Only self-revoke is friction-gated.
+
 ### Hard-delete is psql-only (and rare)
 
 Soft-revoke retains the audit trail. Hard-delete is the unhappy-path:

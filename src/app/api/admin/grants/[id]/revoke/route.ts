@@ -24,6 +24,10 @@ class HandlerError extends Error {
   constructor(
     message: string,
     public status: number,
+    // Stream V (D19.x) — optional machine-readable error code. The two-arg
+    // form continues to work; only the new self-protection branch passes a
+    // code so the client can distinguish friction-blocked from other 409s.
+    public code?: string,
   ) {
     super(message);
   }
@@ -61,11 +65,37 @@ export async function POST(
           revokedAt: true,
           subscriberId: true,
           bookId: true,
+          // Stream V (D19.x) — pull subscriber.userId so the self-protection
+          // gate below can compare against session.user.id. Nullable: legacy
+          // subscriber rows with no linked user fail the strict-equality
+          // check and skip the gate (correct — those grants aren't operator-
+          // owned).
+          subscriber: { select: { userId: true } },
         },
       });
       if (!grant) throw new HandlerError("Grant not found", 404);
       if (grant.revokedAt !== null) {
         throw new HandlerError("Grant already revoked", 400);
+      }
+
+      // Stream V (D19.x) — self-protection gate. Refuse to revoke a
+      // PUBLISHER_OWN grant where the underlying subscriber's user is the
+      // actor themselves. Audit-trail invariant: the throw is INSIDE the TX
+      // before any write happens, so the TX rolls back with zero rows
+      // touched in access_grants AND zero rows in admin_actions. Mirrors
+      // D12.9's "refused mutations are not audited" discipline. The hard
+      // rail at the route is unbypassable by a fast click; the soft rail
+      // (typed-email confirmation in the modal) catches operator intent
+      // before the route is even called.
+      if (
+        grant.source === "PUBLISHER_OWN" &&
+        grant.subscriber.userId === session.user.id
+      ) {
+        throw new HandlerError(
+          "Cannot revoke your own PUBLISHER_OWN grant via this surface. If intentional, run the SQL UPDATE in psql per docs/operations.md.",
+          409,
+          "SELF_PROTECTION",
+        );
       }
 
       const revokedAt = new Date();
@@ -97,7 +127,11 @@ export async function POST(
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof HandlerError) {
-      return NextResponse.json({ error: err.message }, { status: err.status });
+      // Stream V (D19.x) — surface optional `code` when present so the
+      // client can distinguish SELF_PROTECTION from other 409s.
+      const body: { error: string; code?: string } = { error: err.message };
+      if (err.code) body.code = err.code;
+      return NextResponse.json(body, { status: err.status });
     }
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
