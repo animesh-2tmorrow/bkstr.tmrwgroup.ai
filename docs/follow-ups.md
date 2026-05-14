@@ -1127,22 +1127,6 @@ Follow-up #122's dispatch asked for an `admin_actions` row on every skill JSON f
 
 **Severity:** low. **Trigger:** when operator visibility into skill fetches becomes necessary (debugging, abuse detection, usage telemetry for publishers); OR when the next observability-touching stream lands and wants polymorphism parity with `AccessGrant`. **Suggested resolution:** mirror the `AccessGrant.bookId`/`skillId` polymorphism on `fetch_logs` — add `fetch_logs.skillId UUID NULL` alongside the existing `bookId UUID NULL`, with the same XOR CHECK and same per-content-class partial indexes. Write a `fetch_logs` row from both `/api/skills/[slug]/download` and `/api/skills/[slug]/files`. Single migration; ~20 LOC of route changes. The pattern is established (D18.1's `AccessGrant` polymorphism), so the design copy is mechanical.
 
-## From Phase 6 Stream L post-deploy review — dashboard-parity gaps for skills (2026-05-14)
-
-### 129. Dashboard-parity rollup for skills (My Skills tab, owned-skills list, pricing edit, admin skills page)
-
-Surfaced during Stream L's prod-deploy review (2026-05-14). Stream L's MVP made skills first-class on the public surface (`/skills` listing + `/skills/[slug]` detail + the sidebar deep-link added in commit `312c01c`) but left the dashboard surfaces books-only. Five concrete gaps:
-
-1. **No "My Skills" tab for publishers.** `/dashboard/library` is hardcoded to books only. Publishers visit `/skills` (the public listing) to see their own skills alongside everyone else's — there's no aggregated publisher view.
-2. **No "Active Skills" / "Owned Skills" tab for buyers.** Parallel to `/dashboard/library`'s "Active" tab for books. Buyers go to `/skills/[slug]` directly to download; their owned-skill list isn't aggregated anywhere except indirectly via `/dashboard/billing`.
-3. **No deep-link sidebar entry beyond the top-level "Skills" link.** Commit `312c01c` added a sidebar entry pointing at `/skills` (the public listing). A `/dashboard/skills` surface would be the natural deep-link target instead.
-4. **No price-edit UI for skills.** `/dashboard/pricing` is books-only. Skill prices are set at upload and can't be changed via UI; the workaround is operator SQL or a re-upload (slug collision creates v2 with a locked price).
-5. **No `/dashboard/admin/skills` for admin skill management.** Parallel to `/dashboard/admin/books`. Soft-revoke works via `/dashboard/admin/grants`, but there's no reassign-publisher / archive-skill admin UI for skills.
-
-Plus the storefront cross-link asymmetry: `/skills` links back to `/storefront`, but `/storefront` doesn't link forward to `/skills` (operator should verify and add if missing).
-
-**Severity:** medium. Skills work end-to-end via the public surfaces today (publisher uploads at `/dashboard/books/new` with kind=skill → form redirects to `/skills/[slug]` → buyer purchases via public listing → download or agent-fetch via `/api/skills/[slug]/download` or `/api/skills/[slug]/files`). The gap is dashboard-side discoverability and self-service management. **Trigger:** when a publisher or buyer asks why skills don't appear in their dashboard, OR when the second skill ships and the storefront-only navigation feels awkward, OR proactively as a Stream L.1 "dashboard-parity" mini-stream. **Suggested resolution:** scoped Stream L.1 with the five gaps above as the scope. Implementation copies the books-side patterns one-to-one — `/dashboard/library` gets a skills tab (filter the existing query on `kind`); `/dashboard/pricing` gets a skills section reading from `skill_prices`; `/dashboard/admin/skills` mirrors `/dashboard/admin/books`'s shape with archive + reassign-publisher actions. No schema changes required — Stream L's tables already support every read this entry needs.
-
 ---
 
-*Last updated: 2026-05-14. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
+*Last updated: 2026-05-13. Add new entries with the next available number; do not renumber existing entries even if older ones are resolved (mark resolved entries with a strikethrough and a one-line resolution note instead).*
