@@ -41,12 +41,35 @@ export default async function HomePage() {
   // Three for the shelf; the hero stack picks the first three to render
   // rotated. Order by createdAt DESC so recently-added titles surface
   // (no `featured` flag in the production schema today).
-  const books = await prisma.book.findMany({
-    where: { status: 'ACTIVE' },
-    select: { id: true, slug: true, title: true, domain: true },
-    orderBy: { createdAt: 'desc' },
-    take: 6,
-  });
+  //
+  // Fault-tolerant: if Prisma rejects (DB unreachable, schema drift, local
+  // dev env without a populated books table), we log the error code and
+  // render the landing without the hero cover stack + featured shelf.
+  // The rest of the page is content-static and doesn't depend on real
+  // data — the page still gives the visitor everything except the live
+  // book renders.
+  let books: { id: string; slug: string; title: string; domain: string }[] = [];
+  try {
+    books = await prisma.book.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true, slug: true, title: true, domain: true },
+      orderBy: { createdAt: 'desc' },
+      take: 6,
+    });
+  } catch (err) {
+    // Log enough to root-cause without crashing the page. The Prisma
+    // error class carries `.code` (e.g. P2021 = table does not exist,
+    // P1001 = DB unreachable, P1003 = database does not exist) — the
+    // operator can grep `[home/books]` in dev terminal output.
+    const code =
+      err && typeof err === 'object' && 'code' in err
+        ? (err as { code: string }).code
+        : 'unknown';
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[home/books] prisma.book.findMany failed (code=${code}); rendering landing without book covers. Detail: ${message}`,
+    );
+  }
   const heroBooks = books.slice(0, 3);
   const shelfBooks = books.slice(0, 3);
 
