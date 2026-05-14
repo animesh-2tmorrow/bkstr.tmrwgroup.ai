@@ -22,7 +22,44 @@ import {
   Button,
   BookCover,
 } from '@/components/design';
+import type { BookCoverData } from '@/components/design/book-cover';
 import { bookToCoverData } from '@/lib/books/cover-derive';
+
+// Sample covers for the hero stack when the DB has fewer than 3 books
+// (e.g., a fresh dev environment, or pre-launch state). These mirror the
+// reference's marketing.jsx hero indices [BOOKS[0], BOOKS[2], BOOKS[3]] so
+// the landing's visual demo is stable regardless of catalog size. Real
+// books take over once the DB has 3+. Replace once `palette`/`glyph`
+// columns ship in PR 8 and the catalog is seeded.
+const SAMPLE_HERO_BOOKS: readonly BookCoverData[] = [
+  {
+    title: 'Marketing Operations Playbook',
+    glyph: 'M',
+    palette: 'saffron',
+    domain: 'Marketing Ops',
+    vol: 'Vol. 01',
+    version: 'v2.3',
+    author: 'Etumos',
+  },
+  {
+    title: 'Agentic Quality Assurance',
+    glyph: 'Q',
+    palette: 'forest',
+    domain: 'Agent QA',
+    vol: 'Vol. 01',
+    version: 'v2',
+    author: 'M. Vasquez',
+  },
+  {
+    title: 'CI Diagnostics',
+    glyph: 'C',
+    palette: 'indigo',
+    domain: 'DevOps',
+    vol: 'Vol. 03',
+    version: 'v1',
+    author: 'S. Lindqvist',
+  },
+];
 
 export const metadata = {
   title: 'bkstr — the bookstore for AI agents',
@@ -70,7 +107,15 @@ export default async function HomePage() {
       `[home/books] prisma.book.findMany failed (code=${code}); rendering landing without book covers. Detail: ${message}`,
     );
   }
-  const heroBooks = books.slice(0, 3);
+  // Hero stack always renders 3 covers — real books if 3+ are available,
+  // sample covers otherwise. This keeps the landing's visual demo stable
+  // for anonymous visitors regardless of catalog size, and gives local
+  // dev environments a working preview without a seeded DB.
+  const heroBookCovers: BookCoverData[] =
+    books.length >= 3 ? books.slice(0, 3).map(bookToCoverData) : [...SAMPLE_HERO_BOOKS];
+  // "On the shelf" only renders when real catalog data exists. We don't
+  // pad with samples here — the section's headline ("BROWSE ALL N →")
+  // is meaningless against fake data.
   const shelfBooks = books.slice(0, 3);
 
   return (
@@ -133,29 +178,30 @@ export default async function HomePage() {
             </div>
           </div>
 
-          {/* Hero cover stack — three covers rotated, only renders on lg+ */}
-          {heroBooks.length >= 3 ? (
-            <div className="relative h-[540px] hidden lg:block">
-              <div
-                className="absolute left-0 top-[30px]"
-                style={{ transform: 'rotate(-6deg)' }}
-              >
-                <BookCover book={bookToCoverData(heroBooks[2])} size="lg" />
-              </div>
-              <div
-                className="absolute right-0 top-0"
-                style={{ transform: 'rotate(4deg)' }}
-              >
-                <BookCover book={bookToCoverData(heroBooks[1])} size="lg" />
-              </div>
-              <div
-                className="absolute left-[60px] bottom-0 z-10"
-                style={{ transform: 'rotate(-1deg)' }}
-              >
-                <BookCover book={bookToCoverData(heroBooks[0])} size="lg" />
-              </div>
+          {/* Hero cover stack — three covers rotated, only renders on lg+.
+              `heroBookCovers` is guaranteed length-3 (real catalog if 3+,
+              SAMPLE_HERO_BOOKS otherwise) so this always renders the
+              full three-cover composition. */}
+          <div className="relative h-[540px] hidden lg:block">
+            <div
+              className="absolute left-0 top-[30px]"
+              style={{ transform: 'rotate(-6deg)' }}
+            >
+              <BookCover book={heroBookCovers[2]} size="lg" />
             </div>
-          ) : null}
+            <div
+              className="absolute right-0 top-0"
+              style={{ transform: 'rotate(4deg)' }}
+            >
+              <BookCover book={heroBookCovers[1]} size="lg" />
+            </div>
+            <div
+              className="absolute left-[60px] bottom-0 z-10"
+              style={{ transform: 'rotate(-1deg)' }}
+            >
+              <BookCover book={heroBookCovers[0]} size="lg" />
+            </div>
+          </div>
         </div>
       </section>
 
