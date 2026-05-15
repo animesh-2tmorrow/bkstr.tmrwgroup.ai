@@ -893,7 +893,20 @@ export async function getLandingStats(): Promise<LandingStats> {
           COALESCE(SUM(output_tokens), 0)::bigint
             AS tokens_served_30d,
           PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
-            FILTER (WHERE latency_ms IS NOT NULL AND status = 'success')
+            FILTER (
+              WHERE latency_ms IS NOT NULL
+                AND status = 'success'
+                -- redesign(10)/4 — exclude Bedrock judge calls from the P95
+                -- sample. Phase 1's verification surfaced fetch_p95_ms=10150
+                -- (~10s) skewed by eval-runner Phase 2 judge turns (Sonnet
+                -- 4.5 at ~15s each). The marketing surface wants the
+                -- interactive-fetch P95, not the judge-loop P95. We filter
+                -- on model string suffixes since fetch_logs.model is a free
+                -- text column today (no enum) — anything containing
+                -- 'sonnet-4-5' or 'judge' is excluded.
+                AND model NOT LIKE '%sonnet-4-5%'
+                AND model NOT LIKE '%judge%'
+            )
             AS fetch_p95_ms
         FROM fetch_logs
         WHERE created_at > NOW() - INTERVAL '30 days'
@@ -1195,4 +1208,35 @@ export async function getAccessStatesForCatalog(
   }
 
   return out;
+}
+
+// ─── Top-N recent ACTIVE books (login left-rail shelf) ──────────────────────
+//
+// redesign(10)/4 — replaces the hardcoded SHELF_COVERS array in /login
+// (3 fabricated Etumos / Northpoint / etc entries). Returns the N most
+// recently-created ACTIVE books with the fields the BookCover SVG needs
+// (slug + title + palette + glyph). Books only — skills don't carry
+// palette/glyph for the cover render. If catalog is smaller than `limit`,
+// returns however many exist; caller falls back to its own empty state.
+
+export type RecentBookCover = {
+  slug: string;
+  title: string;
+  palette: BookCoverPalette;
+  glyph: string;
+};
+
+export async function topRecentBooks(limit: number): Promise<RecentBookCover[]> {
+  const rows = await prisma.book.findMany({
+    where: { status: "ACTIVE" },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: { slug: true, title: true, palette: true, glyph: true },
+  });
+  return rows.map((b) => ({
+    slug: b.slug,
+    title: b.title,
+    palette: b.palette as BookCoverPalette,
+    glyph: b.glyph,
+  }));
 }

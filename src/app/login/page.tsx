@@ -6,95 +6,95 @@ import {
   BookCover,
   type BookCoverData,
 } from "@/components/design";
+import { topRecentBooks } from "@/lib/dashboard/queries";
 
 // bkstr redesign PR 2 — /login.
 //
 // Editorial two-column layout per HANDOFF.md page-by-page §/login.
-// Left column: pull-quote with saffron-emphasis on key phrase, attribution
-// row (initial-glyph + serif name + eyebrow role), "ON THE SHELF THIS WEEK"
-// strip with 3 mini covers.
-// Right column: serif heading, Google sign-in button, cross-link to /signup.
+// Left rail (originally): pull-quote + attribution + 3 mini covers.
+// Right rail: serif heading, Google sign-in, cross-link to /signup.
 //
-// AUTH SURFACE UNCHANGED: only Google OAuth is wired. The reference's
-// email/password form fields are intentionally omitted — they would
-// require touching the auth flow per dispatch §constraints. The shipped
-// surface is Google + value-prop copy + cross-link.
+// AUTH SURFACE UNCHANGED: only Google OAuth is wired. Email/password
+// stays as honest UX copy.
 //
-// Copy audit (per dispatch §6 / HANDOFF.md pricing-critical):
-//   - "Start a trial" -> "Sign up free" (cross-link bottom)
-//   - "Email and password sign-in coming soon—use Google for now" stays
-//     as honest UX (we ship what we have).
+// redesign(10)/4 — honesty pass:
+//   - Pull-quote + Lena Park byline REMOVED entirely (operator decision
+//     7.7 option A — replace with live shelf strip).
+//   - SHELF_COVERS hardcoded array (3 fabricated covers with fake version
+//     strings + authors) REPLACED with topRecentBooks(3) from queries.ts.
+//   - "TODAY ON THE SHELF" eyebrow + 1-line caption framing per operator
+//     decision 7.7.
+//   - Page becomes an async server component to fetch the live shelf.
 
 export const metadata = {
   title: "Log in | bkstr",
 };
 
-// Mini-cover row on the left rail. Per reference auth.jsx:78-80,
-// the books are BOOKS[0] / [2] / [4] from data.jsx — saffron M / forest Q
-// / oxblood D. Hardcoded for visual stability; same lift-PR-8 path as
-// SAMPLE_HERO_BOOKS in src/app/page.tsx.
-const SHELF_COVERS: readonly BookCoverData[] = [
-  {
-    title: "Marketing Operations Playbook",
-    glyph: "M",
-    palette: "saffron",
-    domain: "Marketing Ops",
-    vol: "Vol. 01",
-    version: "v2.3",
-    author: "Etumos",
-  },
-  {
-    title: "Agentic Quality Assurance",
-    glyph: "Q",
-    palette: "forest",
-    domain: "Agent QA",
-    vol: "Vol. 01",
-    version: "v2",
-    author: "M. Vasquez",
-  },
-  {
-    title: "Developer Churn",
-    glyph: "D",
-    palette: "oxblood",
-    domain: "Eng Leadership",
-    vol: "Vol. 02",
-    version: "v1",
-    author: "J. Park",
-  },
-];
+export const dynamic = "force-dynamic";
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  // Defensive: if the catalog query fails, render the page without the
+  // shelf strip rather than 500. The Google sign-in CTA stays.
+  let shelf: BookCoverData[] = [];
+  try {
+    const rows = await topRecentBooks(3);
+    shelf = rows.map((b) => ({
+      title: b.title,
+      glyph: b.glyph,
+      palette: b.palette,
+      // BookCover requires `domain` for the top imprint bar text; use
+      // the slug's first segment as a passable substitute when we
+      // didn't fetch domain. (topRecentBooks selects only the cover-
+      // critical fields — passing slug-first-segment keeps the cover
+      // editorially complete without adding a domain column to the
+      // query.)
+      domain: b.slug.split("-")[0] ?? "bkstr",
+      vol: "Vol. 01",
+      // Real version + author would require an extra query; the cover
+      // SVG handles missing values without breaking. v1 is a safe
+      // floor since every ACTIVE book has at least one BookVersion.
+      version: "v1",
+      author: "—",
+    }));
+  } catch (err) {
+    console.error("[login] topRecentBooks failed; rendering without shelf strip:", err);
+  }
+
   return (
     <AuthShell
       side={
         <div>
-          <Eyebrow>FROM THE EDITORS</Eyebrow>
-          <blockquote className="m-0 mt-5 font-serif italic text-[30px] leading-[1.25] text-ink tracking-tight">
-            &ldquo;We stopped pasting playbooks into prompts. The agent just{" "}
-            <em className="italic text-saffron">fetches the book</em> now — and
-            our routing exceptions dropped by a third in a week.&rdquo;
-          </blockquote>
-          <div className="flex items-center gap-3 mt-7">
-            <span
-              aria-hidden
-              className="w-9 h-9 rounded-full bg-ink text-paper flex items-center justify-center font-serif italic text-lg"
-            >
-              L
-            </span>
+          {/* redesign(10)/4 — pull-quote ("Lena Park, Northpoint") removed.
+              The fabricated testimonial + fabricated byline don't belong
+              on the login page. The shelf row below is the live
+              replacement (operator decision 7.7 option A). */}
+          {shelf.length > 0 ? (
             <div>
-              <div className="font-serif text-[15px] text-ink">Lena Park</div>
-              <Eyebrow>DIRECTOR · GROWTH OPS · NORTHPOINT</Eyebrow>
+              <Eyebrow>TODAY ON THE SHELF</Eyebrow>
+              <div className="flex gap-3.5 mt-3.5">
+                {shelf.map((book, i) => (
+                  // BookCover.key on glyph is fragile when two recent
+                  // books share a first letter; use index for uniqueness
+                  // in the small N=3 case.
+                  <BookCover key={`${book.glyph}-${i}`} book={book} size="sm" flat />
+                ))}
+              </div>
+              <p className="font-serif italic text-ink-3 text-sm leading-[1.55] mt-5 max-w-[40ch]">
+                Three recent additions to the catalog. Browse the full shelf
+                once you&apos;re signed in.
+              </p>
             </div>
-          </div>
-
-          <div className="mt-12 pt-6 border-t border-rule">
-            <Eyebrow>ON THE SHELF · THIS WEEK</Eyebrow>
-            <div className="flex gap-3.5 mt-3.5">
-              {SHELF_COVERS.map((book) => (
-                <BookCover key={book.glyph} book={book} size="sm" flat />
-              ))}
+          ) : (
+            // Fallback when catalog is empty (or query failed). Keep the
+            // left rail from collapsing; surface a minimal editorial line.
+            <div>
+              <Eyebrow>WELCOME BACK</Eyebrow>
+              <p className="font-serif italic text-ink-2 text-base leading-[1.55] mt-3.5 max-w-[42ch]">
+                Sign in to pick up where your agents left off — manage API
+                keys, review fetch logs, or buy your next volume.
+              </p>
             </div>
-          </div>
+          )}
         </div>
       }
     >

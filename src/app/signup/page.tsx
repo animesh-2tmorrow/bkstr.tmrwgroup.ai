@@ -1,15 +1,15 @@
 import Link from "next/link";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { AuthShell, Eyebrow } from "@/components/design";
+import { getLandingStats } from "@/lib/dashboard/queries";
 
 // bkstr redesign PR 2 — /signup.
 //
 // Editorial two-column layout per HANDOFF.md page-by-page §/signup.
-// Left column: marketing pitch headline, prose, 2×2 stat grid, tenant
-// logos row. Right column: serif heading, Google sign-up, terms note,
-// cross-link to /login.
+// Left column: marketing pitch + 2-stat grid + tenant logos row.
+// Right column: serif heading, Google sign-up, terms note, cross-link.
 //
-// SUBSCRIPTION COPY REMOVED PER HANDOFF.MD PRICING-CRITICAL:
+// SUBSCRIPTION COPY REMOVED PER HANDOFF.MD PRICING-CRITICAL (PR 2):
 //   "One subscription. Whole shelves of expertise." (reference auth.jsx:132)
 //   -> "Sign up free. Own the books you buy." (one-time-per-book framing)
 // "14-day free trial" (was on the old signup) -> "Free to join. Pay per book."
@@ -17,29 +17,51 @@ import { AuthShell, Eyebrow } from "@/components/design";
 //
 // AUTH SURFACE UNCHANGED: only Google OAuth. The reference's 2-step
 // onboarding form (account → role/fleet/shelf) is intentionally omitted
-// — those fields don't have backend persistence today and adding inputs
-// without a write path would be misleading. See PR 2 commit message for
-// the carry-forward note.
+// — those fields don't have backend persistence today.
+//
+// redesign(10)/4 — honesty pass:
+//   - STATS grid: hardcoded AVG LIFT +27% / EDGE P95 84ms / TITLES IN PRINT 10
+//     / AGENTS SUBSCRIBED 1.2k → REPLACED with live values where available.
+//     AVG LIFT (no telemetry table) + AGENTS SUBSCRIBED (small adoption
+//     number) both REMOVED. Only TITLES IN PRINT + EDGE P95 remain; P95
+//     is hidden when the filter returns null (no qualifying samples in 30d).
+//   - TENANT_LOGOS row removed entirely (4 fabricated tenant names).
+//   - Page becomes an async server component to fetch the live stats.
 
 export const metadata = {
   title: "Sign up | bkstr",
 };
 
-const STATS = [
-  { value: "+27%", label: "AVG LIFT, ALL TITLES" },
-  { value: "84ms", label: "EDGE P95 LATENCY" },
-  { value: "10", label: "TITLES IN PRINT" },
-  { value: "1.2k", label: "AGENTS SUBSCRIBED" },
-];
+export const dynamic = "force-dynamic";
 
-const TENANT_LOGOS: { name: string; cls: string }[] = [
-  { name: "Etumos", cls: "font-serif italic text-[18px] text-ink-2" },
-  { name: "Northpoint", cls: "font-sans font-bold text-[18px] text-ink-2" },
-  { name: "Plait", cls: "font-mono text-sm text-ink-2 tracking-[0.04em]" },
-  { name: "Helmsley", cls: "font-serif text-[18px] text-ink-2" },
-];
+export default async function SignupPage() {
+  // Defensive: if the stats query fails (Prisma error, DB unreachable), render
+  // the page without the stats grid rather than 500. The signup is the
+  // load-bearing CTA on this page — auth surface stays even when telemetry
+  // is offline.
+  let titlesInPrint: number | null = null;
+  let fetchP95Ms: number | null = null;
+  try {
+    const stats = await getLandingStats();
+    titlesInPrint = stats.titlesInPrint;
+    fetchP95Ms = stats.fetchP95Ms;
+  } catch (err) {
+    console.error("[signup] getLandingStats failed; rendering without stats grid:", err);
+  }
 
-export default function SignupPage() {
+  // Compose only the stat tiles that have live values. With 0 or 1 real
+  // tiles the grid would look awkward; we only render the grid block when
+  // at least one tile materialized.
+  const tiles: Array<{ value: string; label: string }> = [];
+  if (titlesInPrint !== null) {
+    tiles.push({ value: String(titlesInPrint), label: "TITLES IN PRINT" });
+  }
+  if (fetchP95Ms !== null) {
+    // Round to integer ms for the display; sub-second resolution is below
+    // the noise floor for a marketing surface.
+    tiles.push({ value: `${Math.round(fetchP95Ms)}ms`, label: "EDGE P95 LATENCY · 30D" });
+  }
+
   return (
     <AuthShell
       side={
@@ -56,29 +78,30 @@ export default function SignupPage() {
             — no subscriptions, no seat math.
           </p>
 
-          {/* 2×2 stat grid */}
-          <div className="mt-10 grid grid-cols-2 gap-4">
-            {STATS.map((s) => (
-              <div key={s.label} className="border-t border-rule pt-3">
-                <div className="font-serif text-[32px] leading-none tracking-display num">
-                  {s.value}
+          {/* Live stat tiles — rendered only when at least one materialized.
+              Tailwind needs literal classnames for tree-shaking, so the
+              column count is a ternary rather than a template literal. */}
+          {tiles.length > 0 && (
+            <div
+              className={
+                tiles.length >= 2
+                  ? "mt-10 grid grid-cols-2 gap-4"
+                  : "mt-10 grid grid-cols-1 gap-4"
+              }
+            >
+              {tiles.map((t) => (
+                <div key={t.label} className="border-t border-rule pt-3">
+                  <div className="font-serif text-[32px] leading-none tracking-display num">
+                    {t.value}
+                  </div>
+                  <Eyebrow className="mt-1.5 block">{t.label}</Eyebrow>
                 </div>
-                <Eyebrow className="mt-1.5 block">{s.label}</Eyebrow>
-              </div>
-            ))}
-          </div>
-
-          {/* Tenant logos row */}
-          <div className="mt-10 pt-5 border-t border-rule">
-            <Eyebrow className="mb-3.5 block">TRUSTED BY</Eyebrow>
-            <div className="flex gap-6 flex-wrap items-baseline">
-              {TENANT_LOGOS.map((l) => (
-                <span key={l.name} className={l.cls}>
-                  {l.name}
-                </span>
               ))}
             </div>
-          </div>
+          )}
+
+          {/* redesign(10)/4 — fabricated tenant-logo row removed. Will reinstate
+              when real partner logos exist with permission to display. */}
         </div>
       }
     >

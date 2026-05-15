@@ -23,6 +23,7 @@ import {
   BookCover,
 } from '@/components/design';
 import type { BookCoverData, BookCoverPalette } from '@/components/design/book-cover';
+import { getLandingStats } from '@/lib/dashboard/queries';
 
 // Sample covers for the hero stack when the DB has fewer than 3 books
 // (e.g., a fresh dev environment, or pre-launch state). These mirror the
@@ -123,6 +124,27 @@ export default async function HomePage() {
       `[home/books] prisma.book.findMany failed (code=${code}); rendering landing without book covers. Detail: ${message}`,
     );
   }
+  // redesign(10)/4 — fetch live landing stats. Defensive: if Prisma errors
+  // out for any reason, render with null stats (UI omits the affected
+  // tiles rather than showing fake values or 0s).
+  let stats: { titlesInPrint: number | null; fetchP95Ms: number | null } = {
+    titlesInPrint: null,
+    fetchP95Ms: null,
+  };
+  try {
+    const s = await getLandingStats();
+    stats = { titlesInPrint: s.titlesInPrint, fetchP95Ms: s.fetchP95Ms };
+  } catch (err) {
+    const code =
+      err && typeof err === 'object' && 'code' in err
+        ? (err as { code: string }).code
+        : 'unknown';
+    console.error(
+      `[home/stats] getLandingStats failed (code=${code}); rendering landing without live stats.`,
+    );
+  }
+  const titlesDisplay = stats.titlesInPrint ?? books.length;
+
   // Hero stack always renders 3 covers — real books if 3+ are available,
   // sample covers otherwise. This keeps the landing's visual demo stable
   // for anonymous visitors regardless of catalog size, and gives local
@@ -157,15 +179,16 @@ export default async function HomePage() {
               <span>Vol. 01 / Iss. 03 · 2026</span>
             </div>
             <div className="flex items-center gap-6">
+              {/* redesign(10)/4 — Catalog count uses live titlesInPrint
+                  (books + skills), falling back to books.length when the
+                  stats query is unavailable. "Active agents" + "Tokens
+                  served (30d)" tiles removed — both were hardcoded fakes
+                  and the real numbers are small enough that surfacing
+                  them tells an adoption story we don't want on the
+                  masthead yet. */}
               <span>
                 Catalog:{' '}
-                <span className="num text-ink">{books.length} titles</span>
-              </span>
-              <span className="hidden md:inline">
-                Active agents: <span className="num text-ink">1,284</span>
-              </span>
-              <span className="hidden lg:inline">
-                Tokens served (30d): <span className="num text-ink">14.8M</span>
+                <span className="num text-ink">{titlesDisplay} titles</span>
               </span>
             </div>
           </>
@@ -197,13 +220,20 @@ export default async function HomePage() {
                 Sign up free
               </Button>
             </div>
-            <div className="flex gap-8 mt-12 items-baseline flex-wrap">
-              <HeroStat label="AVG. TASK LIFT" value="+27%" />
-              <span aria-hidden className="w-px h-11 bg-rule" />
-              <HeroStat label="CONTEXT SAVED" value="0.47×" />
-              <span aria-hidden className="w-px h-11 bg-rule" />
-              <HeroStat label="FETCH P95" value="84" valueSuffix="ms" />
-            </div>
+            {/* redesign(10)/4 — hero stat row: AVG. TASK LIFT (+27%) and
+                CONTEXT SAVED (0.47×) removed (no telemetry tables back
+                them). FETCH P95 reads from live `getLandingStats()`; the
+                whole row is omitted when P95 is null so we don't render
+                an empty divider/eyebrow shell. */}
+            {stats.fetchP95Ms !== null ? (
+              <div className="flex gap-8 mt-12 items-baseline flex-wrap">
+                <HeroStat
+                  label="FETCH P95 · 30D"
+                  value={String(Math.round(stats.fetchP95Ms))}
+                  valueSuffix="ms"
+                />
+              </div>
+            ) : null}
           </div>
 
           {/* Hero cover stack — three covers rotated, only renders on lg+.
@@ -264,14 +294,9 @@ export default async function HomePage() {
                 the context spent. That&apos;s what a well-edited agent-book
                 delivers across an entire domain.
               </p>
-              <blockquote className="mt-7 pt-7 border-t border-rule font-serif italic text-[22px] text-ink-2 leading-[1.45] m-0">
-                &ldquo;A marketing-ops agent loaded with the Etumos playbook
-                closed 34% more routing exceptions than the same agent reading
-                our internal wiki.&rdquo;
-                <Eyebrow className="mt-4 not-italic" as="div">
-                  HEAD OF GROWTH OPS · NORTHPOINT
-                </Eyebrow>
-              </blockquote>
+              {/* redesign(10)/4 — fabricated pull-quote ("HEAD OF GROWTH
+                  OPS · NORTHPOINT") removed. The surrounding editorial
+                  prose stands without the fake testimonial. */}
             </div>
           </div>
         </div>
@@ -297,30 +322,88 @@ export default async function HomePage() {
           ))}
         </div>
 
-        {/* Inline curl + tool example */}
-        <div className="mt-16 grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-8 items-center bg-paper-2 p-8 border border-rule">
-          <div>
-            <Eyebrow>A SINGLE GET</Eyebrow>
-            <h3 className="font-serif font-normal text-[28px] leading-[1.1] mt-3 mb-3.5 tracking-display">
-              Drop one line into the agent&apos;s tool layer.
-            </h3>
-            <p className="text-ink-3 m-0 leading-[1.55]">
-              No SDK to install. Works with whatever framework you&apos;re
-              shipping today — LangChain, Mastra, Inngest, or your own. Return
-              value is plain markdown with a token-efficient frontmatter index.
-            </p>
-          </div>
-          <pre className="font-mono text-[13px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] m-0">
-{`# Fetch the Marketing Ops Playbook v2.3
-$ curl -H "Authorization: Bearer $BKSTR_KEY" \\
-       https://api.bkstr.tmrwgroup.ai/v1/books/marketing-ops
+        {/* redesign(10)/4 — replaced the fictional "A SINGLE GET" block.
+            The old example pointed at api.bkstr.tmrwgroup.ai/v1/books/...
+            which is NXDOMAIN and a fake GET shape. The replacement is a
+            real 3-step onboarding flow with a real curl against the real
+            host. Operator decision 7.3 / option B: editorial copy, no
+            catalog count in the framing (small number undercuts).
+            Operator decision 7.2 / both: this surface + /dashboard/docs
+            both surface the Q&A endpoint; here it's a footnote pointing
+            at the docs. */}
+        <div className="mt-16 bg-paper-2 p-8 border border-rule">
+          <Eyebrow>HOW TO GET STARTED · 3 STEPS</Eyebrow>
+          <h3 className="font-serif font-normal text-[28px] leading-[1.1] mt-3 mb-6 tracking-display">
+            Three steps from sign-up to your agent reading the book.
+          </h3>
 
-`}<span className="text-ink-4">{`# In an agent's tool definition:
-`}</span>{`tools.add({
-  name: "fetch_book",
-  fetch: (slug) => bkstr.get(slug, { version: "latest" })
-})`}
+          <ol className="grid grid-cols-1 md:grid-cols-3 gap-6 list-none p-0 m-0">
+            <li>
+              <div className="font-mono text-[11px] uppercase tracking-wider text-ink-3 mb-2">
+                01 · SIGN UP
+              </div>
+              <p className="text-ink-2 m-0 leading-[1.55]">
+                Pick a book or skill from the catalog and complete checkout.
+                <br />
+                <span className="text-ink-3 text-[13px]">
+                  (Currently sandbox cards only.)
+                </span>
+              </p>
+              <Link
+                href="/signup"
+                className="inline-block mt-3 text-ink underline underline-offset-4 decoration-rule hover:decoration-ink"
+              >
+                Sign up free →
+              </Link>
+            </li>
+
+            <li>
+              <div className="font-mono text-[11px] uppercase tracking-wider text-ink-3 mb-2">
+                02 · GET A KEY
+              </div>
+              <p className="text-ink-2 m-0 leading-[1.55]">
+                Generate one API key per agent. Copy the{' '}
+                <code className="font-mono text-[13px]">bks_…</code> value
+                when shown — it&apos;s hash-stored and never shown again.
+              </p>
+              <Link
+                href="/dashboard/api-keys"
+                className="inline-block mt-3 text-ink underline underline-offset-4 decoration-rule hover:decoration-ink"
+              >
+                Generate an API key →
+              </Link>
+            </li>
+
+            <li>
+              <div className="font-mono text-[11px] uppercase tracking-wider text-ink-3 mb-2">
+                03 · FETCH THE FILES
+              </div>
+              <p className="text-ink-2 m-0 leading-[1.55]">
+                One real GET. Returns JSON with file paths + content. Write
+                to disk; install per your agent&apos;s docs.
+              </p>
+            </li>
+          </ol>
+
+          <pre className="font-mono text-[13px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] mt-6 mb-0">
+{`# Fetch a book's raw files (JSON)
+$ curl -H "Authorization: Bearer $BKSTR_KEY" \\
+       https://bkstr.tmrwgroup.ai/api/books/<slug>/files
+
+# Returns: { "book": {...}, "files": [{"path","content","sha256"}, ...] }`}
           </pre>
+
+          <p className="text-ink-3 text-[13px] mt-4 mb-0">
+            For Q&amp;A access against book content (Bedrock-generated
+            answers), see{' '}
+            <Link
+              href="/dashboard/docs"
+              className="underline decoration-rule hover:decoration-ink"
+            >
+              /dashboard/docs
+            </Link>{' '}
+            — the agent-fetch endpoint is the advanced path.
+          </p>
         </div>
       </section>
 
@@ -336,7 +419,10 @@ $ curl -H "Authorization: Bearer $BKSTR_KEY" \\
               href="/storefront"
               className="font-mono text-[11px] tracking-section uppercase text-ink underline"
             >
-              BROWSE ALL {books.length} →
+              {/* Use the live catalog total (books + skills) when available,
+                  fall back to books.length for the dev-DB / catastrophic-
+                  failure case. */}
+              BROWSE ALL {titlesDisplay} →
             </Link>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-12 mt-6">
@@ -369,55 +455,50 @@ $ curl -H "Authorization: Bearer $BKSTR_KEY" \\
         </section>
       ) : null}
 
-      {/* DARK IMPRINT BAND */}
+      {/* DARK IMPRINT BAND
+          redesign(10)/4 — operator decision recommendation B: drop the
+          6-tile stat grid (only 2 of 6 had real DB-backed sources) and
+          the tenant-logo strip (all 6 fabricated). Keep the editorial
+          framing on the dark surface. The two real numbers (titlesInPrint
+          + fetchP95Ms) get rendered as inline data in the eyebrow line so
+          they keep signaling without forcing a 2-tile grid. */}
       <section className="bg-ink text-paper py-16">
         <div className="max-w-[1280px] mx-auto px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
-            <div>
-              <Eyebrow className="text-paper-3">FROM THE IMPRINT</Eyebrow>
-              <h2 className="font-serif text-[clamp(40px,5.5vw,64px)] leading-[1.08] tracking-display text-paper mt-4 mb-4">
-                Edited like
-                <br />
-                <em className="italic text-saffron">The Atlantic.</em>
-                <br />
-                Indexed like
-                <br />
-                <em className="italic text-saffron">Stripe Docs.</em>
-              </h2>
-              <p className="text-paper-3 text-base leading-relaxed max-w-[44ch]">
-                Every volume on bkstr is run through the house style:
-                chapter-level lift testing, token budgeting, decision-tree
-                extraction, and a final pass with a human editor who&apos;s
-                shipped the work.
-              </p>
+          <Eyebrow className="text-paper-3">FROM THE IMPRINT</Eyebrow>
+          <h2 className="font-serif text-[clamp(40px,5.5vw,64px)] leading-[1.08] tracking-display text-paper mt-4 mb-4 max-w-[20ch]">
+            Edited like
+            <br />
+            <em className="italic text-saffron">The Atlantic.</em>
+            <br />
+            Indexed like
+            <br />
+            <em className="italic text-saffron">Stripe Docs.</em>
+          </h2>
+          <p className="text-paper-3 text-base leading-relaxed max-w-[60ch]">
+            Every volume on bkstr is run through the house style:
+            chapter-level lift testing, token budgeting, decision-tree
+            extraction, and a final pass with a human editor who&apos;s
+            shipped the work.
+          </p>
+          {/* Real-numbers eyebrow — only renders when the live values
+              materialized. The titles count is always >=1 (we own at
+              least one book), so this line surfaces under nearly any
+              non-disaster state. */}
+          {stats.titlesInPrint !== null || stats.fetchP95Ms !== null ? (
+            <div className="mt-10 pt-7 border-t border-paper/20">
+              <Eyebrow className="text-paper-3 block">
+                {stats.titlesInPrint !== null
+                  ? `${stats.titlesInPrint} TITLES IN PRINT`
+                  : null}
+                {stats.titlesInPrint !== null && stats.fetchP95Ms !== null
+                  ? " · "
+                  : null}
+                {stats.fetchP95Ms !== null
+                  ? `${Math.round(stats.fetchP95Ms)}MS P95 FETCH · 30D`
+                  : null}
+              </Eyebrow>
             </div>
-            <div className="grid grid-cols-2 gap-px bg-rule">
-              {STATS.map((s) => (
-                <div key={s.label} className="bg-ink p-6">
-                  <div className="font-serif text-[40px] leading-none text-saffron tracking-display num">
-                    {s.value}
-                  </div>
-                  <Eyebrow className="mt-2.5 block text-paper-3">
-                    {s.label}
-                  </Eyebrow>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Tenant logos — pure-text "logos" per HANDOFF (no images) */}
-          <div className="mt-14 pt-7 border-t border-paper/20">
-            <Eyebrow className="text-paper-3 mb-4 block">
-              TRUSTED BY TEAMS RUNNING AGENTS AT
-            </Eyebrow>
-            <div className="flex flex-wrap gap-x-14 gap-y-8 items-center opacity-85">
-              {TENANT_LOGOS.map((l) => (
-                <span key={l.name} className={l.cls}>
-                  {l.name}
-                </span>
-              ))}
-            </div>
-          </div>
+          ) : null}
         </div>
       </section>
 
@@ -462,50 +543,28 @@ $ curl -H "Authorization: Bearer $BKSTR_KEY" \\
             </div>
           </div>
 
-          {/* Sample receipt */}
-          <div className="bg-paper-2 border border-rule p-7">
-            <div className="flex justify-between items-baseline">
-              <Eyebrow>SAMPLE RECEIPT · STRIPE</Eyebrow>
-              <span className="font-mono text-[11px] text-ink-3">
-                rcpt_4xK9b21
-              </span>
-            </div>
-            <div className="mt-4 font-serif text-[24px] tracking-tight">
-              Northpoint, Inc.
-              <span className="text-ink-3 text-sm font-sans not-italic ml-2.5">
-                · May 12, 2026
-              </span>
-            </div>
-            <div className="mt-5 border-t border-rule">
-              {RECEIPT.map((r) => (
-                <div
-                  key={r.t}
-                  className="py-2.5 flex items-baseline text-sm gap-2"
-                >
-                  <span className="font-serif">
-                    {r.t}{' '}
-                    <span className="font-mono text-[11px] text-ink-3 ml-1.5">
-                      {r.v}
-                    </span>
-                  </span>
-                  <span className="flex-1 border-b border-dotted border-rule -mt-1" />
-                  <span className="num font-mono text-[13px]">${r.p}.00</span>
-                </div>
-              ))}
-              <div className="py-4 pb-1 flex items-baseline text-base border-t border-rule mt-2 gap-2 font-serif">
-                <strong>Total · paid once</strong>
-                <span className="flex-1 border-b border-dotted border-rule -mt-1" />
-                <strong className="num">$37.00</strong>
-              </div>
-              <div className="mt-4 pt-3 border-t border-dashed border-rule flex justify-between font-mono text-[11px] text-ink-3 tracking-[1px]">
-                <span>FETCHES MONTH-TO-DATE</span>
-                <span>2,164</span>
-              </div>
-              <div className="flex justify-between font-mono text-[11px] text-ink-3 tracking-[1px] mt-1">
-                <span>EFFECTIVE COST / FETCH</span>
-                <span>$0.017</span>
-              </div>
-            </div>
+          {/* redesign(10)/4 — fabricated Stripe receipt (Northpoint, Inc.
+              / 4 hardcoded book line-items / $37 total / "2,164 fetches
+              month-to-date") removed. Replaced with editorial copy on
+              the same panel chrome so the 2-col layout doesn't collapse.
+              Real receipts live in /dashboard/billing for buyers. */}
+          <div className="bg-paper-2 border border-rule p-7 self-start">
+            <Eyebrow>BILLED VIA STRIPE</Eyebrow>
+            <h3 className="font-serif text-[28px] leading-[1.1] tracking-display mt-3 mb-4">
+              One receipt per purchase. No metering.
+            </h3>
+            <p className="text-ink-2 text-base leading-[1.65] m-0">
+              Checkout runs on Stripe&apos;s hosted page — we never touch
+              your card data. Each volume produces one receipt; lifetime
+              spend, refund window, and Stripe payment IDs live in your
+              billing dashboard.
+            </p>
+            <Link
+              href="/dashboard/billing"
+              className="inline-block mt-5 font-mono text-[11px] tracking-eyebrow uppercase text-ink underline underline-offset-4 decoration-rule hover:decoration-ink"
+            >
+              View billing dashboard →
+            </Link>
           </div>
         </div>
       </section>
@@ -549,12 +608,19 @@ function HeroStat({
   value: string;
   valueSuffix?: string;
 }) {
+  // redesign(10)/4 — the +-prefix was wired in for "+27%" style values
+  // (the AVG TASK LIFT tile, now removed). The only remaining caller is
+  // FETCH P95 which renders as "84ms" with no leading sign. Drop the
+  // hardcoded "+" prefix; preserve the strip-leading-+ behavior for any
+  // future caller that wants to pass "+N%".
+  const display = value.startsWith('+') ? value.slice(1) : value;
+  const showPlus = value.startsWith('+');
   return (
     <div>
       <Eyebrow>{label}</Eyebrow>
       <div className="font-serif italic text-[28px] tracking-display text-forest num mt-1">
-        <span className="not-italic text-saffron">+</span>
-        {value.startsWith('+') ? value.slice(1) : value}
+        {showPlus ? <span className="not-italic text-saffron">+</span> : null}
+        {display}
         {valueSuffix ? (
           <span className="not-italic text-ink-3 text-lg">{valueSuffix}</span>
         ) : null}
@@ -586,34 +652,21 @@ const STEPS = [
   },
 ];
 
-const STATS = [
-  { value: '10', label: 'TITLES IN PRINT' },
-  { value: '1,284', label: 'AGENTS SUBSCRIBED' },
-  { value: '14.8M', label: 'TOKENS SERVED, 30D' },
-  { value: '84ms', label: 'EDGE P95 LATENCY' },
-  { value: '+27%', label: 'AVG. LIFT SCORE' },
-  { value: '9', label: 'PUBLISHING HOUSES' },
-];
-
-const TENANT_LOGOS: { name: string; cls: string }[] = [
-  { name: 'Etumos', cls: 'font-serif italic text-[22px] text-paper tracking-tight' },
-  { name: 'Northpoint', cls: 'font-sans font-bold text-[22px] text-paper tracking-tight' },
-  { name: 'Plait', cls: 'font-mono text-base text-paper tracking-[0.04em]' },
-  { name: 'Helmsley', cls: 'font-serif text-[22px] text-paper tracking-tight' },
-  { name: 'Sunday Studio', cls: 'font-serif italic text-[22px] text-paper tracking-tight' },
-  { name: 'Tribune Labs', cls: 'font-sans font-bold text-[22px] text-paper tracking-tight' },
-];
+// redesign(10)/4 — STATS / TENANT_LOGOS / RECEIPT arrays removed.
+//   - STATS: 6 dark-imprint tiles, only 2 of 6 had real DB sources;
+//     replaced with an inline-data eyebrow.
+//   - TENANT_LOGOS: 6 fabricated tenant names ("TRUSTED BY TEAMS RUNNING
+//     AGENTS AT") — no permission to display, no real partners. Strip
+//     removed entirely.
+//   - RECEIPT: fabricated 4-line $37 Stripe receipt with "Northpoint, Inc."
+//     buyer. Replaced with editorial copy in the pricing section that
+//     points buyers at /dashboard/billing for their real receipts.
+//
+// PRICING_FACTS stays — editorial framing without verifiable claims.
 
 const PRICING_FACTS = [
   { included: true,  note: 'Unlimited fetches across your fleet' },
   { included: true,  note: 'Free minor & patch updates' },
   { included: true,  note: '14-day refund, no questions' },
   { included: false, note: 'Recurring fees, seat math, or quotas' },
-];
-
-const RECEIPT = [
-  { t: 'Marketing Operations Playbook', v: 'v2.3', p: 12 },
-  { t: 'Agentic Quality Assurance', v: 'v2', p: 12 },
-  { t: 'CI Diagnostics', v: 'v1', p: 5 },
-  { t: 'Hermes Dogfood', v: 'v1', p: 8 },
 ];
