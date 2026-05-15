@@ -1,5 +1,10 @@
 import { Prisma, Role, type GrantSource } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
+// redesign(10) Phase 1 — used by the new unified-catalog query helpers
+// appended at the bottom of this file. Import-at-top keeps ES module
+// semantics happy (mid-file imports are syntax errors).
+import type { BookCoverPalette } from "@/components/design/book-cover";
+import type { StorefrontKind } from "@/lib/storefront/resolve-slug";
 
 export type BookWithMetrics = {
   id: string;
@@ -822,4 +827,372 @@ export async function getAdminGrants(opts: {
     revokedAt: g.revokedAt,
     expiresAt: g.expiresAt,
   }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// redesign(10) Phase 1 — unified catalog queries (books + skills).
+//
+// These are net-new exports that Phases 2–5 will wire into the merged
+// storefront UI. Existing books-only helpers (getBooksWithMetrics,
+// getBooksForLibrary, getBookAccessStates) STAY in this file — Phase 3
+// migrates callers off them before any deletion. Don't break the existing
+// surface during Phase 1.
+//
+// Imports for BookCoverPalette + StorefrontKind live at the top of the file
+// (ES modules require imports at module scope) — see the import block at
+// lines 1-7.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Landing-page stats (real-DB-backed, replaces hardcoded marketing nums) ──
+
+export type LandingStats = {
+  /** ACTIVE books + ACTIVE skills. */
+  titlesInPrint: number;
+  /** Distinct fetch_logs.api_key_id over the last 30 days, source=agent_fetch. */
+  activeAgents30d: number;
+  /** SUM(output_tokens) over the last 30 days, source=agent_fetch. */
+  tokensServed30d: number;
+  /** P95 latency_ms over the last 30 days, source=agent_fetch, status=success.
+   *  null when no rows are in the window — UI must handle the null case
+   *  (Phase 4 will render "—" or similar). */
+  fetchP95Ms: number | null;
+};
+
+// Single-round-trip CTE over titles + fetch metrics. Two CTEs are evaluated
+// independently; the final SELECT cross-joins them (both produce exactly one
+// row). PERCENTILE_CONT can't be expressed through Prisma's typed query
+// builder so the whole thing is $queryRaw.
+//
+// Type-casting notes:
+//   - COUNT(...) returns BIGINT in Postgres; cast to INT for JS-safe numbers
+//     (all counts here are well within INT range).
+//   - SUM(output_tokens) is BIGINT — we cast to BIGINT explicitly and convert
+//     to Number on the JS side. A 30-day token total above 2^53 is implausible
+//     (would require ~30k tokens/sec sustained for a month).
+//   - PERCENTILE_CONT returns DOUBLE PRECISION which Prisma marshals as
+//     `number | null` (null when the filter excludes every row).
+export async function getLandingStats(): Promise<LandingStats> {
+  type Row = {
+    titles_in_print: number;
+    active_agents_30d: number;
+    tokens_served_30d: bigint | number;
+    fetch_p95_ms: number | null;
+  };
+  const rows = await prisma.$queryRaw<Row[]>(Prisma.sql`
+    WITH
+      titles AS (
+        SELECT
+          (SELECT COUNT(*)::int FROM books  WHERE status = 'ACTIVE')
+          + (SELECT COUNT(*)::int FROM skills WHERE status = 'ACTIVE')
+            AS titles_in_print
+      ),
+      fetch_30d AS (
+        SELECT
+          COUNT(DISTINCT api_key_id) FILTER (WHERE api_key_id IS NOT NULL)::int
+            AS active_agents_30d,
+          COALESCE(SUM(output_tokens), 0)::bigint
+            AS tokens_served_30d,
+          PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
+            FILTER (WHERE latency_ms IS NOT NULL AND status = 'success')
+            AS fetch_p95_ms
+        FROM fetch_logs
+        WHERE created_at > NOW() - INTERVAL '30 days'
+          AND source = 'agent_fetch'
+      )
+    SELECT
+      titles.titles_in_print          AS titles_in_print,
+      fetch_30d.active_agents_30d     AS active_agents_30d,
+      fetch_30d.tokens_served_30d     AS tokens_served_30d,
+      fetch_30d.fetch_p95_ms          AS fetch_p95_ms
+    FROM titles, fetch_30d
+  `);
+  const r = rows[0];
+  if (!r) {
+    // Defensive — the CTE always produces one row, but if for some reason
+    // Prisma returns an empty result the UI shouldn't blow up.
+    return {
+      titlesInPrint: 0,
+      activeAgents30d: 0,
+      tokensServed30d: 0,
+      fetchP95Ms: null,
+    };
+  }
+  return {
+    titlesInPrint: r.titles_in_print,
+    activeAgents30d: r.active_agents_30d,
+    // Prisma marshals BIGINT to JS BigInt by default; coerce to Number for
+    // ergonomics. Values well below 2^53 in practice.
+    tokensServed30d:
+      typeof r.tokens_served_30d === "bigint"
+        ? Number(r.tokens_served_30d)
+        : r.tokens_served_30d,
+    fetchP95Ms:
+      r.fetch_p95_ms === null
+        ? null
+        : Math.round(r.fetch_p95_ms),
+  };
+}
+
+// ─── Unified library catalog (books + skills) ───────────────────────────────
+
+export type LibraryItem = {
+  kind: StorefrontKind;
+  id: string;
+  slug: string;
+  displayName: string;          // book.title OR skill.name
+  description: string | null;
+  // Book-only; null for skills (no domain/palette/glyph on skills per HANDOFF Q4).
+  domain: string | null;
+  palette: BookCoverPalette | null;
+  glyph: string | null;
+  publisherName: string;        // publisherUser.name fallback to publisher.name
+  publisherUserName: string | null;
+  latestVersion: number;        // 0 if no version exists yet
+  createdAt: Date;
+};
+
+// Books + skills in one merged list, ACTIVE-only, ordered by createdAt DESC.
+// Two parallel findMany calls + JS-side merge — avoids the cross-table union
+// SQL gymnastics and keeps the type-safe Prisma client paths. The merge
+// preserves chronological order across both tables.
+export async function getCatalogForLibrary(): Promise<LibraryItem[]> {
+  const [books, skills] = await Promise.all([
+    prisma.book.findMany({
+      where: { status: "ACTIVE" },
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        description: true,
+        domain: true,
+        palette: true,
+        glyph: true,
+        createdAt: true,
+        publisher: { select: { name: true } },
+        publisherUser: { select: { name: true } },
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          select: { version: true },
+        },
+      },
+    }),
+    prisma.skill.findMany({
+      where: { status: "ACTIVE" },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        description: true,
+        createdAt: true,
+        publisher: { select: { name: true } },
+        publisherUser: { select: { name: true } },
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          select: { version: true },
+        },
+      },
+    }),
+  ]);
+
+  const bookItems: LibraryItem[] = books.map((b) => {
+    const userName =
+      b.publisherUser?.name && b.publisherUser.name.trim().length > 0
+        ? b.publisherUser.name
+        : null;
+    return {
+      kind: "book",
+      id: b.id,
+      slug: b.slug,
+      displayName: b.title,
+      description: b.description,
+      domain: b.domain,
+      palette: b.palette as BookCoverPalette,
+      glyph: b.glyph,
+      publisherName: userName ?? b.publisher.name,
+      publisherUserName: userName,
+      latestVersion: b.versions[0]?.version ?? 0,
+      createdAt: b.createdAt,
+    };
+  });
+
+  const skillItems: LibraryItem[] = skills.map((s) => {
+    // Skill.publisherUser is NOT NULL in the schema (Stream L D18.1) so this
+    // always populates; still defensively coalesce to handle the unlikely
+    // Prisma-stale-cache case.
+    const userName =
+      s.publisherUser?.name && s.publisherUser.name.trim().length > 0
+        ? s.publisherUser.name
+        : null;
+    return {
+      kind: "skill",
+      id: s.id,
+      slug: s.slug,
+      displayName: s.name,
+      description: s.description,
+      domain: null,
+      palette: null,
+      glyph: null,
+      publisherName: userName ?? s.publisher.name,
+      publisherUserName: userName,
+      latestVersion: s.versions[0]?.version ?? 0,
+      createdAt: s.createdAt,
+    };
+  });
+
+  return [...bookItems, ...skillItems].sort(
+    (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+  );
+}
+
+// ─── Unified per-subscriber access map (books + skills) ──────────────────────
+
+export type AccessState = "granted" | "for_sale" | "not_for_sale";
+
+export type CatalogAccessEntry = {
+  kind: StorefrontKind;
+  id: string;
+  state: AccessState;
+  unitAmountCents: number | null;
+  stripePriceId: string | null;
+  grantSource: GrantSource | null;
+};
+
+// Returns a Map keyed by `${kind}:${id}` so callers can look up both books
+// and skills through one access surface. Internally splits the query along
+// the XOR seam (separate book and skill grant queries with explicit
+// bookId/skillId NOT NULL filters) — relies on the partial unique indexes
+// added in the D18.1 skill migration. Mirrors getBookAccessStates' state
+// machine: active grant → "granted"; price + stripePriceId → "for_sale";
+// else "not_for_sale". The legacy getBookAccessStates STAYS unchanged for
+// now; Phase 3 migrates its callers to this function.
+export async function getAccessStatesForCatalog(
+  subscriberId: string,
+): Promise<Map<string, CatalogAccessEntry>> {
+  const [books, skills, bookPrices, skillPrices, bookGrants, skillGrants] =
+    await Promise.all([
+      prisma.book.findMany({
+        where: { status: "ACTIVE" },
+        select: { id: true },
+      }),
+      prisma.skill.findMany({
+        where: { status: "ACTIVE" },
+        select: { id: true },
+      }),
+      prisma.bookPrice.findMany({
+        where: { currency: "USD" },
+        select: { bookId: true, unitAmountCents: true, stripePriceId: true },
+      }),
+      prisma.skillPrice.findMany({
+        where: { currency: "USD" },
+        select: { skillId: true, unitAmountCents: true, stripePriceId: true },
+      }),
+      prisma.accessGrant.findMany({
+        where: {
+          subscriberId,
+          bookId: { not: null },
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        select: { bookId: true, source: true },
+      }),
+      prisma.accessGrant.findMany({
+        where: {
+          subscriberId,
+          skillId: { not: null },
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        select: { skillId: true, source: true },
+      }),
+    ]);
+
+  const priceByBook = new Map(
+    bookPrices.map((p) => [p.bookId, p]),
+  );
+  const priceBySkill = new Map(
+    skillPrices.map((p) => [p.skillId, p]),
+  );
+  // After the bookId/skillId-NOT-NULL filters above, the non-null assertion
+  // is type-narrowing only — Prisma still types these as nullable because
+  // the column is nullable at the schema level (XOR partner is on skillId).
+  const grantByBook = new Map(
+    bookGrants.map((g) => [g.bookId!, g]),
+  );
+  const grantBySkill = new Map(
+    skillGrants.map((g) => [g.skillId!, g]),
+  );
+
+  const out = new Map<string, CatalogAccessEntry>();
+
+  for (const b of books) {
+    const grant = grantByBook.get(b.id);
+    const price = priceByBook.get(b.id);
+    const key = `book:${b.id}`;
+    if (grant) {
+      out.set(key, {
+        kind: "book",
+        id: b.id,
+        state: "granted",
+        unitAmountCents: price?.unitAmountCents ?? null,
+        stripePriceId: price?.stripePriceId ?? null,
+        grantSource: grant.source,
+      });
+    } else if (price && price.stripePriceId) {
+      out.set(key, {
+        kind: "book",
+        id: b.id,
+        state: "for_sale",
+        unitAmountCents: price.unitAmountCents,
+        stripePriceId: price.stripePriceId,
+        grantSource: null,
+      });
+    } else {
+      out.set(key, {
+        kind: "book",
+        id: b.id,
+        state: "not_for_sale",
+        unitAmountCents: price?.unitAmountCents ?? null,
+        stripePriceId: price?.stripePriceId ?? null,
+        grantSource: null,
+      });
+    }
+  }
+
+  for (const s of skills) {
+    const grant = grantBySkill.get(s.id);
+    const price = priceBySkill.get(s.id);
+    const key = `skill:${s.id}`;
+    if (grant) {
+      out.set(key, {
+        kind: "skill",
+        id: s.id,
+        state: "granted",
+        unitAmountCents: price?.unitAmountCents ?? null,
+        stripePriceId: price?.stripePriceId ?? null,
+        grantSource: grant.source,
+      });
+    } else if (price && price.stripePriceId) {
+      out.set(key, {
+        kind: "skill",
+        id: s.id,
+        state: "for_sale",
+        unitAmountCents: price.unitAmountCents,
+        stripePriceId: price.stripePriceId,
+        grantSource: null,
+      });
+    } else {
+      out.set(key, {
+        kind: "skill",
+        id: s.id,
+        state: "not_for_sale",
+        unitAmountCents: price?.unitAmountCents ?? null,
+        stripePriceId: price?.stripePriceId ?? null,
+        grantSource: null,
+      });
+    }
+  }
+
+  return out;
 }
