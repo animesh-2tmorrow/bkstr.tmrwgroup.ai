@@ -116,7 +116,11 @@ type ItemDef = {
 const PRIMARY: ItemDef[] = [
   { href: '/dashboard', label: 'Active Books', icon: Icon.shelf },
   { href: '/dashboard/library', label: 'Library', icon: Icon.lib },
-  { href: '/skills', label: 'Skills', icon: Icon.skill },
+  // redesign(10)/3 — Skills sidebar entry removed. The /dashboard/library
+  // surface now shows books + skills together, so a separate Skills
+  // entry would double-link the same content. The /skills route is a
+  // 308 redirect to /storefront from this phase forward. Icon.skill is
+  // retained in this file (unused) for cleanup in Phase 5.
   { href: '/dashboard/api-keys', label: 'API Keys', icon: Icon.key },
   { href: '/dashboard/fetch-logs', label: 'Fetch Logs', icon: Icon.log },
   { href: '/dashboard/billing', label: 'Billing', icon: Icon.dollar },

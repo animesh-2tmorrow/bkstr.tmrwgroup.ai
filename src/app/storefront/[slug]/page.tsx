@@ -64,9 +64,9 @@ export async function generateMetadata({
 const MASTHEAD_NAV = [
   { label: "Home", href: "/" },
   { label: "Catalog", href: "/storefront", active: true },
-  // Skills nav entry retained during Phase 2 — Phase 3 removes it when
-  // /skills routes become redirects.
-  { label: "Skills", href: "/skills" },
+  // redesign(10)/3 — Skills entry removed. /skills is a 308 redirect
+  // to /storefront from this phase forward. Books + skills share the
+  // unified catalog.
   { label: "Docs", href: "/dashboard/docs" },
   { label: "Log in", href: "/login" },
 ];

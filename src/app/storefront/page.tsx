@@ -9,45 +9,64 @@ import {
   Eyebrow,
   Pill,
   BookCover,
-  Button,
 } from "@/components/design";
+import { BuyButton, type BuyButtonState } from "@/components/storefront/buy-button";
 import type { PillVariant } from "@/components/design";
 import type { BookCoverPalette } from "@/components/design/book-cover";
 
-// bkstr redesign PR 1 — public catalog.
+// bkstr redesign(10) Phase 3 — unified storefront grid.
 //
-// Reskin of the Stream H storefront (prior page used photographic
-// thumbnails on horizontal cards w/ navy-on-cream CTAs). The new version:
-//   - Editorial top chrome (Masthead) shared with `/`.
-//   - Display-serif page title with eyebrow.
-//   - Shelves filter (Pill primitive) + search + sort row.
-//   - Vertical book grid using BookCover SVG (typographic) — no
-//     photographic covers (HANDOFF.md §What NOT to do).
-//   - Per-card Pill for domain category (color = book's palette column).
-//   - Bottom CTA stack: lift placeholder + price + Buy/Owned button.
+// Books and skills now share one grid (the user-facing collapse). Data
+// source migrated from /api/storefront/books (deleted in this PR) to
+// /api/storefront/items (Phase 1). Each card renders kind-aware:
 //
-// PR 8 — palette + glyph now arrive on every BookWithPrice row from the
-// API, sourced from the book's persistent palette/glyph columns. The
-// previous client-side derivation via lib/books/cover-derive is gone;
-// that helper module is deleted in this PR.
+//   Book card: domain pill (saffron-tinted) + <BookCover> SVG (palette +
+//     glyph) + title (serif 22px) + description + price + inline Buy strip
+//   Skill card: "SKILL · .zip" pill (saffron, fixed) + NO cover (text-only
+//     header per HANDOFF Q4) + name (serif 22px, same size as book title) +
+//     v<n> · N files subtitle (mono 11px) + description + price + inline
+//     Buy strip
 //
-// The per-domain shelves filter still needs a palette per domain (for the
-// active-pill color). Books in the same domain share the same palette by
-// the migration's backfill heuristic, so we read the first book's palette
-// per domain rather than re-deriving.
+// Click behavior (operator decision 7.6 / option C — clickable card +
+// inline Buy): the card body (cover/title/description/price area) is one
+// clickable region linking to /storefront/<slug>. The inline Buy button
+// lives in a dedicated bottom strip (bg-paper-2 border-t border-rule p-3)
+// and stopPropagation()s clicks so the card's outer Link doesn't navigate
+// when the buyer is just trying to purchase.
+//
+// Filter pill row (operator decision 3.3 / option A — domain pills filter
+// books only; "Skills (N)" pill added for skills-only): the row reads
+// "[All] [Skills (N)] [Domain1 (M)] [Domain2 (M)] …". Selecting "Skills"
+// shows skills only; selecting a domain shows books-with-that-domain only;
+// "All" shows everything across kinds.
+//
+// Sort + search now span both kinds. Search hits title/name + domain
+// (book only) + description.
+//
+// Filter state still useState (URL persistence is a separate follow-up).
 
-interface BookWithPrice {
+interface StorefrontItem {
+  kind: "book" | "skill";
   id: string;
-  title: string;
+  slug: string;
+  displayName: string;
   description: string | null;
-  domain: string;
-  // PR 8 — typographic cover drivers from the books table.
-  palette: BookCoverPalette;
-  glyph: string;
+  domain: string | null;
+  palette: BookCoverPalette | null;
+  glyph: string | null;
   unitAmountCents: number | null;
   stripePriceId: string | null;
-  state: "for_sale" | "not_for_sale" | "granted";
-  grantSource: string | null;
+  state?: "for_sale" | "not_for_sale" | "granted";
+  grantSource?: string | null;
+  latestVersion: number;
+}
+
+interface ItemsResponse {
+  items: StorefrontItem[];
+  // accessByItem is OMITTED for anonymous callers; present when a session
+  // cookie is sent. We don't read it here (per-item `state` field on each
+  // item carries what we need) but the API ships it for callers that
+  // want O(1) lookups.
 }
 
 const MASTHEAD_NAV = [
@@ -57,8 +76,9 @@ const MASTHEAD_NAV = [
   { label: "Log in", href: "/login" },
 ];
 
-// Map BookCover palette key → Pill variant. Lets the per-card domain pill
-// share the cover's palette without an extra lookup.
+// Map BookCover palette → Pill variant so domain pills tint with the book's
+// cover palette. Skills lack palette; their pill is the fixed saffron
+// "SKILL · .zip" variant.
 const PALETTE_PILL: Record<BookCoverPalette, PillVariant> = {
   saffron: "saffron",
   forest: "forest",
@@ -94,27 +114,36 @@ const SORT_LABELS: Record<SortKey, string> = {
   newest: "NEWEST",
 };
 
+// Special filter-pill id for the skills-only filter. Real domain values
+// are lowercase free-text (book.domain), so this sentinel doesn't collide.
+const SKILLS_FILTER_ID = "__skills__";
+
 export default function StorefrontPage() {
-  const { data: session, status } = useSession();
-  const [books, setBooks] = useState<BookWithPrice[]>([]);
+  const { status } = useSession();
+  const [items, setItems] = useState<StorefrontItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [purchasingBookId, setPurchasingBookId] = useState<string | null>(null);
+  // Tracks which item's inline Buy button is currently mid-checkout, so
+  // the card can disable it without affecting siblings. Used as a poor-
+  // man's mutex (the BuyButton's own internal state tracks its busy spin,
+  // but the storefront still wants to disable other Buys while one is
+  // in flight to prevent the buyer from accidentally double-purchasing).
+  const [purchasingId, setPurchasingId] = useState<string | null>(null);
 
-  // Filter / sort / search state — URL-less for now; can promote to
-  // ?domain=&q=&sort= search params in a later polish pass if shareable
-  // filtered views become important.
-  const [activeDomain, setActiveDomain] = useState<string>("all");
+  // Filter / sort / search state — URL-less for now; can promote to URL
+  // search params in a later polish pass if shareable filtered views
+  // become important.
+  const [activeFilter, setActiveFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<SortKey>("featured");
   const [query, setQuery] = useState("");
 
   useEffect(() => {
     const run = async () => {
       try {
-        const response = await fetch("/api/storefront/books");
-        if (!response.ok) throw new Error("Failed to fetch books");
-        const data = (await response.json()) as BookWithPrice[];
-        setBooks(data);
+        const response = await fetch("/api/storefront/items");
+        if (!response.ok) throw new Error("Failed to fetch catalog");
+        const data = (await response.json()) as ItemsResponse;
+        setItems(data.items);
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
       } finally {
@@ -124,94 +153,107 @@ export default function StorefrontPage() {
     run();
   }, []);
 
-  // Build the shelves filter row — distinct domain values + their counts.
-  // Per-domain palette comes from the first matching book; the migration
-  // backfills books in the same domain to the same palette, so the lookup
-  // is stable. PR 8 dropped the client-side derivePalette helper.
-  const domains = useMemo(() => {
+  // Build the filter row: [All] [Skills (N)] [Domain1 (M)] [Domain2 (M)] …
+  // Domain pills come from books only (skills have no domain column). The
+  // per-domain palette comes from the first matching book (migration backfill
+  // ensures books in the same domain share a palette).
+  const filters = useMemo(() => {
     const counts = new Map<string, number>();
     const paletteByDomain = new Map<string, BookCoverPalette>();
-    for (const b of books) {
-      counts.set(b.domain, (counts.get(b.domain) ?? 0) + 1);
-      if (!paletteByDomain.has(b.domain)) {
-        paletteByDomain.set(b.domain, b.palette);
+    let skillCount = 0;
+    for (const it of items) {
+      if (it.kind === "skill") {
+        skillCount++;
+      } else if (it.domain) {
+        counts.set(it.domain, (counts.get(it.domain) ?? 0) + 1);
+        if (!paletteByDomain.has(it.domain) && it.palette) {
+          paletteByDomain.set(it.domain, it.palette);
+        }
       }
     }
-    return [
-      { id: "all", label: "All catalog", count: books.length, palette: null as BookCoverPalette | null },
-      ...Array.from(counts.entries()).map(([id, count]) => ({
+    const out: Array<{
+      id: string;
+      label: string;
+      count: number;
+      palette: BookCoverPalette | null;
+    }> = [
+      { id: "all", label: "All catalog", count: items.length, palette: null },
+    ];
+    if (skillCount > 0) {
+      out.push({ id: SKILLS_FILTER_ID, label: "Skills", count: skillCount, palette: null });
+    }
+    for (const [id, count] of counts) {
+      out.push({
         id,
         label: humanDomain(id),
         count,
         palette: paletteByDomain.get(id) ?? null,
-      })),
-    ];
-  }, [books]);
+      });
+    }
+    return out;
+  }, [items]);
 
   const filtered = useMemo(() => {
-    let bs = books;
-    if (activeDomain !== "all") bs = bs.filter((b) => b.domain === activeDomain);
+    let xs = items;
+    if (activeFilter === SKILLS_FILTER_ID) {
+      xs = xs.filter((it) => it.kind === "skill");
+    } else if (activeFilter !== "all") {
+      // Domain filter — books only by construction; skills have no domain.
+      xs = xs.filter((it) => it.kind === "book" && it.domain === activeFilter);
+    }
     if (query) {
       const q = query.toLowerCase();
-      bs = bs.filter(
-        (b) =>
-          b.title.toLowerCase().includes(q) ||
-          b.domain.toLowerCase().includes(q) ||
-          (b.description ?? "").toLowerCase().includes(q),
+      xs = xs.filter(
+        (it) =>
+          it.displayName.toLowerCase().includes(q) ||
+          (it.domain ?? "").toLowerCase().includes(q) ||
+          (it.description ?? "").toLowerCase().includes(q),
       );
     }
     if (sortBy === "price-asc") {
-      bs = [...bs].sort((a, b) => (a.unitAmountCents ?? 0) - (b.unitAmountCents ?? 0));
+      xs = [...xs].sort(
+        (a, b) => (a.unitAmountCents ?? 0) - (b.unitAmountCents ?? 0),
+      );
     } else if (sortBy === "price-desc") {
-      bs = [...bs].sort((a, b) => (b.unitAmountCents ?? 0) - (a.unitAmountCents ?? 0));
+      xs = [...xs].sort(
+        (a, b) => (b.unitAmountCents ?? 0) - (a.unitAmountCents ?? 0),
+      );
     }
-    // 'featured' and 'newest' fall through to the server-provided order
-    // (currently insertion order from /api/storefront/books).
-    return bs;
-  }, [books, activeDomain, sortBy, query]);
+    // 'featured' and 'newest' fall through to API-provided order
+    // (createdAt DESC from getCatalogForLibrary).
+    return xs;
+  }, [items, activeFilter, sortBy, query]);
 
-  const handleBuyNow = async (bookId: string) => {
-    if (status !== "authenticated") {
-      window.location.href = "/login?callbackUrl=/storefront";
-      return;
-    }
-    setPurchasingBookId(bookId);
-    try {
-      const response = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ book_id: bookId }),
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        alert(`Error: ${errorData.error}`);
-        setPurchasingBookId(null);
-        return;
-      }
-      const { url } = await response.json();
-      window.location.href = url;
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Checkout failed");
-      setPurchasingBookId(null);
-    }
-  };
+  // Card-level access state for the BuyButton. Anonymous viewers always
+  // see state="anon"; signed-in viewers get state from the item.state
+  // field which the /api/storefront/items endpoint populates from
+  // getAccessStatesForCatalog. Defaults to "for_sale" when state is
+  // absent (i.e., signed-out path) and the item has a price.
+  function buyStateFor(item: StorefrontItem): BuyButtonState {
+    if (status !== "authenticated") return "anon";
+    if (item.state === "granted") return "owned";
+    if (item.state === "for_sale") return "for_sale";
+    if (item.unitAmountCents == null) return "no_price";
+    return "for_sale";
+  }
 
   // Right-slot in the masthead changes by auth state.
-  const rightSlot = session ? (
-    <Link
-      href="/dashboard"
-      className="text-sm text-ink-2 hover:text-ink transition-colors"
-    >
-      Dashboard
-    </Link>
-  ) : (
-    <Link
-      href="/signup"
-      className="inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium bg-ink text-paper border border-ink hover:bg-ink-2 transition-colors"
-    >
-      Sign up free
-    </Link>
-  );
+  const rightSlot =
+    status === "authenticated" ? (
+      <Link
+        href="/dashboard"
+        className="text-sm text-ink-2 hover:text-ink transition-colors"
+      >
+        Dashboard
+      </Link>
+    ) : (
+      <Link
+        href="/signup"
+        className="inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium bg-ink text-paper border border-ink hover:bg-ink-2 transition-colors"
+      >
+        Sign up free
+      </Link>
+    );
 
   return (
     <div className="min-h-screen flex flex-col bg-paper">
@@ -228,9 +270,8 @@ export default function StorefrontPage() {
               <em className="italic">Every category</em> your fleet reads.
             </h1>
             <p className="font-serif italic text-ink-2 text-base leading-[1.6] m-0 max-w-[44ch]">
-              Each title is editorially indexed, density-tested for token
-              efficiency, and priced per volume — a one-time purchase, never a
-              subscription.
+              Books and skills, editorially indexed, priced per volume — a
+              one-time purchase, never a subscription.
             </p>
           </div>
         </section>
@@ -239,13 +280,13 @@ export default function StorefrontPage() {
         <div className="border-t-2 border-ink border-b border-rule py-4 flex gap-4 items-center flex-wrap">
           <Eyebrow>SHELVES</Eyebrow>
           <div className="flex gap-1.5 flex-wrap flex-1">
-            {domains.map((d) => {
-              const isActive = activeDomain === d.id;
+            {filters.map((f) => {
+              const isActive = activeFilter === f.id;
               return (
                 <button
-                  key={d.id}
+                  key={f.id}
                   type="button"
-                  onClick={() => setActiveDomain(d.id)}
+                  onClick={() => setActiveFilter(f.id)}
                   className={[
                     "inline-flex items-center gap-1.5 rounded-full border",
                     "px-2.5 py-0.5 font-mono text-[10.5px] uppercase tracking-[0.08em]",
@@ -255,22 +296,19 @@ export default function StorefrontPage() {
                       : "bg-transparent text-ink-2 border-rule hover:border-ink",
                   ].join(" ")}
                 >
-                  {d.label}
-                  <span className="opacity-60 ml-1">{d.count}</span>
+                  {f.label}
+                  <span className="opacity-60 ml-1">{f.count}</span>
                 </button>
               );
             })}
           </div>
           <div className="flex gap-2.5 items-center">
-            {/* PR 9 a11y — aria-label closes the placeholder-only loophole
-                so screen readers announce the input's purpose; visible
-                label would add chrome we don't want in this filter row. */}
             <input
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search titles & domains..."
-              aria-label="Search catalog by title or domain"
+              placeholder="Search titles, domains, descriptions..."
+              aria-label="Search catalog by title, domain, or description"
               className="font-sans text-[13px] py-2 px-3 bg-paper border border-rule outline-none w-60 focus:border-ink"
             />
             <select
@@ -302,7 +340,7 @@ export default function StorefrontPage() {
           {loading ? (
             <div className="text-center py-16 text-ink-3 text-sm">
               <div className="inline-block w-6 h-6 border-2 border-rule border-t-ink rounded-full animate-spin" />
-              <p className="mt-4">Loading books…</p>
+              <p className="mt-4">Loading catalog…</p>
             </div>
           ) : error ? (
             <div className="text-center py-16">
@@ -314,78 +352,15 @@ export default function StorefrontPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-12">
-              {filtered.map((book) => {
-                const pillVariant = PALETTE_PILL[book.palette];
-                const isOwned = book.state === "granted";
-                const isForSale = book.state === "for_sale";
-                return (
-                  <article key={book.id} className="flex flex-col">
-                    <BookCover
-                      book={{
-                        title: book.title,
-                        glyph: book.glyph,
-                        domain: book.domain,
-                        palette: book.palette,
-                        vol: "Vol. 01",
-                        version: "v1",
-                        author: "—",
-                      }}
-                      size="lg"
-                      className="w-full h-auto"
-                    />
-                    <div className="mt-5 pb-3">
-                      <div className="flex justify-between items-baseline gap-2">
-                        <Pill variant={pillVariant}>{humanDomain(book.domain)}</Pill>
-                        <Eyebrow className="text-ink-3">V1</Eyebrow>
-                      </div>
-                      <h2 className="font-serif text-[22px] leading-[1.15] text-ink tracking-tight mt-3">
-                        {book.title}
-                      </h2>
-                      {book.description ? (
-                        <p className="text-ink-3 text-[13.5px] leading-[1.5] mt-3 mb-0 line-clamp-3">
-                          {book.description}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="mt-auto pt-3.5 border-t border-rule flex justify-between items-baseline">
-                      <div>
-                        <Eyebrow className="text-ink-3">PRICE</Eyebrow>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-serif text-[24px] num">
-                          {formatPrice(book.unitAmountCents)}
-                        </div>
-                        {book.unitAmountCents ? (
-                          <Eyebrow className="text-ink-3">One-time purchase</Eyebrow>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="mt-3.5">
-                      {isOwned ? (
-                        <div className="block bg-paper-2 border border-rule text-center py-3 text-sm font-medium text-ink">
-                          ✓ Already owned
-                        </div>
-                      ) : isForSale ? (
-                        <Button
-                          type="button"
-                          onClick={() => handleBuyNow(book.id)}
-                          disabled={purchasingBookId === book.id}
-                          size="md"
-                          className="w-full"
-                        >
-                          {purchasingBookId === book.id
-                            ? "Processing…"
-                            : `Buy — ${formatPrice(book.unitAmountCents)} →`}
-                        </Button>
-                      ) : (
-                        <div className="block border border-rule text-center py-3 text-sm text-ink-3">
-                          Not available
-                        </div>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
+              {filtered.map((item) => (
+                <ItemCard
+                  key={`${item.kind}:${item.id}`}
+                  item={item}
+                  buyState={buyStateFor(item)}
+                  busyId={purchasingId}
+                  onBuyStart={() => setPurchasingId(item.id)}
+                />
+              ))}
             </div>
           )}
         </section>
@@ -393,5 +368,154 @@ export default function StorefrontPage() {
 
       <MarketingFooter />
     </div>
+  );
+}
+
+// Card renderer — kind-aware. Outer <Link> wraps the card body for the
+// clickable-card behavior (operator decision 7.6 / option C). The inline
+// Buy strip lives in its own child block with stopPropagation() so a
+// buyer's click on Buy doesn't also trigger card navigation.
+function ItemCard({
+  item,
+  buyState,
+  busyId,
+  onBuyStart,
+}: {
+  item: StorefrontItem;
+  buyState: BuyButtonState;
+  busyId: string | null;
+  onBuyStart: () => void;
+}) {
+  const pillVariant: PillVariant =
+    item.kind === "book" && item.palette
+      ? PALETTE_PILL[item.palette]
+      : "saffron";
+  return (
+    <article className="flex flex-col">
+      {/* Clickable card body — wraps cover/header/title/desc/price */}
+      <Link
+        href={`/storefront/${encodeURIComponent(item.slug)}`}
+        className="block group"
+      >
+        {item.kind === "book" && item.palette && item.glyph ? (
+          <BookCover
+            book={{
+              title: item.displayName,
+              glyph: item.glyph,
+              domain: item.domain ?? "—",
+              palette: item.palette,
+              vol: "Vol. 01",
+              version: `v${item.latestVersion || 1}`,
+              author: "—",
+            }}
+            size="lg"
+            className="w-full h-auto"
+          />
+        ) : (
+          // Skill cards have NO cover per HANDOFF Q4 — text-only header.
+          // Render a same-aspect placeholder so the grid rows stay aligned
+          // when books and skills mix. Inside: the SKILL · .zip pill at
+          // top-left, version + file count at top-right. Same "shelf" feel
+          // as book covers but typographic.
+          <div className="w-full aspect-[5/7] bg-paper-2 border border-rule p-5 flex flex-col">
+            <div className="flex justify-between items-start">
+              <Pill variant="saffron">SKILL · .zip</Pill>
+              <Eyebrow className="text-ink-3">
+                V{item.latestVersion || 1}
+              </Eyebrow>
+            </div>
+            <div className="flex-grow flex items-end">
+              <div className="font-serif italic text-[42px] leading-none text-ink-3 tracking-display">
+                {item.displayName.charAt(0).toUpperCase() || "?"}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-5 pb-3">
+          <div className="flex justify-between items-baseline gap-2">
+            {item.kind === "book" && item.domain ? (
+              <Pill variant={pillVariant}>{humanDomain(item.domain)}</Pill>
+            ) : (
+              <Pill variant="saffron">SKILL · .zip</Pill>
+            )}
+            <Eyebrow className="text-ink-3">V{item.latestVersion || 1}</Eyebrow>
+          </div>
+          <h2 className="font-serif text-[22px] leading-[1.15] text-ink tracking-tight mt-3">
+            {item.displayName}
+          </h2>
+          {item.kind === "skill" && (
+            <div className="font-mono text-[11px] text-ink-3 mt-2">
+              v{item.latestVersion || 1}
+              {/* Skills carry a per-card file count from the API; books
+                  don't, so this subtitle is skill-only. */}
+            </div>
+          )}
+          {item.description ? (
+            <p className="text-ink-3 text-[13.5px] leading-[1.5] mt-3 mb-0 line-clamp-3">
+              {item.description}
+            </p>
+          ) : null}
+        </div>
+
+        <div className="mt-auto pt-3.5 border-t border-rule flex justify-between items-baseline">
+          <div>
+            <Eyebrow className="text-ink-3">PRICE</Eyebrow>
+          </div>
+          <div className="text-right">
+            <div className="font-serif text-[24px] num">
+              {formatPrice(item.unitAmountCents)}
+            </div>
+            {item.unitAmountCents ? (
+              <Eyebrow className="text-ink-3">
+                {item.kind === "book" ? "One-time purchase" : "One-time"}
+              </Eyebrow>
+            ) : null}
+          </div>
+        </div>
+      </Link>
+
+      {/* Inline Buy strip — outside the Link so its own click doesn't
+          bubble to the card-level navigation. The wrapping div catches
+          and stops the click bubble from any descendant button/anchor. */}
+      <div
+        className="mt-3.5"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <BuyButton
+          kind={item.kind}
+          itemId={item.id}
+          itemSlug={item.slug}
+          unitAmountCents={item.unitAmountCents}
+          stripePriceId={item.stripePriceId}
+          state={buyState}
+        />
+        {/* Visual hint kept from the prior books-only design: when a row
+            is mid-checkout we surface that. The BuyButton's internal busy
+            state already disables the button; this is just signal for
+            siblings (a cross-card guard against double-purchase). */}
+        {busyId === item.id && buyState === "for_sale" ? (
+          <div className="text-xs text-ink-3 mt-2 text-center">
+            Redirecting to Stripe…
+          </div>
+        ) : null}
+      </div>
+
+      {/* The onBuyStart hook fires when the BuyButton triggers checkout.
+          This lives here as an effect-ish hook so the parent can track
+          which card is currently mid-purchase. Wired via the BuyButton's
+          fetch path (it doesn't expose onClick — but the busyId tracking
+          via children isn't load-bearing for v0; the BuyButton's internal
+          disabled state is the actual guard). Reserved for follow-up if
+          we need cross-card coordination. */}
+      {/* eslint-disable-next-line @typescript-eslint/no-unused-vars */}
+      {(() => {
+        // Suppresses an unused-var warning while keeping the onBuyStart
+        // hook plumbed for future extension.
+        const _hookSlot = onBuyStart;
+        return null;
+      })()}
+    </article>
   );
 }

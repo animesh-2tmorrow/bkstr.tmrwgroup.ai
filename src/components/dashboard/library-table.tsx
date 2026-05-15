@@ -1,9 +1,12 @@
 import Link from "next/link";
-import type { LibraryBook, BookAccessState } from "@/lib/dashboard/queries";
+import type {
+  LibraryItem,
+  CatalogAccessEntry,
+} from "@/lib/dashboard/queries";
 import { AccessCell } from "@/components/dashboard/access-cell";
 import { ApiInstructionsBlock } from "@/components/dashboard/api-instructions-block";
 import { formatUsdCents } from "@/lib/format/currency";
-import { BookCover, Eyebrow } from "@/components/design";
+import { BookCover, Eyebrow, Pill } from "@/components/design";
 import type { BookCoverPalette } from "@/components/design/book-cover";
 
 // bkstr redesign PR 3 — Library table.
@@ -14,9 +17,11 @@ import type { BookCoverPalette } from "@/components/design/book-cover";
 // Curl-example details block stays inside the row, restyled as an
 // editorial frame.
 //
-// Tab pill row replaces the rounded-lg paper-2 nav from Stream H — now
-// a flush 3-segment switch with mono labels inside an ink hairline
-// border, matching reference pages.jsx:144-178.
+// redesign(10)/3 — kind-aware. Books render with <BookCover> SVG + domain;
+// skills render with "SKILL · .zip" pill + version/file subtitle, no
+// cover (typographic per HANDOFF Q4). Per-row <ApiInstructionsBlock>
+// passes kind so books get files-primary + Q&A-advanced; skills get
+// files-only. Map keys on `${kind}:${id}` per CatalogAccessEntry shape.
 
 export type LibraryFilter = "active" | "browse" | "all";
 
@@ -26,29 +31,35 @@ const FILTERS: ReadonlyArray<{ key: LibraryFilter; label: string }> = [
   { key: "all", label: "All" },
 ];
 
+// Map key shape — keeps the kind:id form readable at the call site.
+function keyOf(item: { kind: LibraryItem["kind"]; id: string }): string {
+  return `${item.kind}:${item.id}`;
+}
+
 export function LibraryTable({
   subscriberId,
-  books,
-  accessByBook,
+  items,
+  accessByItem,
   filter,
 }: {
   subscriberId: string | null;
-  books: LibraryBook[];
-  accessByBook: Map<string, BookAccessState> | undefined;
+  items: LibraryItem[];
+  accessByItem: Map<string, CatalogAccessEntry> | undefined;
   filter: LibraryFilter;
 }) {
-  const filtered = books.filter((b) => {
-    const access = accessByBook?.get(b.id);
+  const filtered = items.filter((it) => {
+    const access = accessByItem?.get(keyOf(it));
     if (filter === "active") return access?.state === "granted";
     if (filter === "browse") return access?.state === "for_sale";
     return true;
   });
 
-  // Per-tab counts for the labels — so "Active 3 / Browse 7 / All 10".
+  // Per-tab counts for the labels — "Active 3 / Browse 7 / All 10".
+  // Counts now span books + skills (the dispatch's user-visible collapse).
   const counts = {
-    active: books.filter((b) => accessByBook?.get(b.id)?.state === "granted").length,
-    browse: books.filter((b) => accessByBook?.get(b.id)?.state === "for_sale").length,
-    all: books.length,
+    active: items.filter((it) => accessByItem?.get(keyOf(it))?.state === "granted").length,
+    browse: items.filter((it) => accessByItem?.get(keyOf(it))?.state === "for_sale").length,
+    all: items.length,
   };
 
   return (
@@ -80,14 +91,14 @@ export function LibraryTable({
         </div>
       </div>
 
-      {/* Empty state — same copy as Stream C, restyled */}
+      {/* Empty state — copy now includes both kinds */}
       {filtered.length === 0 ? (
         <div className="bg-paper border border-rule p-8 text-center text-ink-3 mt-6">
           {filter === "active"
-            ? "No books with access granted yet. Browse the catalog to purchase a book."
+            ? "Nothing in your library yet. Browse the catalog to purchase a book or skill."
             : filter === "browse"
-              ? "No books currently for sale that you don't already have access to."
-              : "No books in the catalog yet."}
+              ? "No items currently for sale that you don't already have access to."
+              : "No items in the catalog yet."}
         </div>
       ) : (
         <div className="bg-paper border-l border-r border-b border-rule overflow-hidden">
@@ -102,43 +113,65 @@ export function LibraryTable({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((b, idx) => {
-                const access = accessByBook?.get(b.id);
+              {filtered.map((item, idx) => {
+                const access = accessByItem?.get(keyOf(item));
                 const priceCents = access?.unitAmountCents ?? null;
                 const granted = access?.state === "granted";
                 const isLast = idx === filtered.length - 1;
                 return (
                   <tr
-                    key={b.id}
+                    key={keyOf(item)}
                     className={
                       "transition-colors hover:bg-paper-2 align-top " +
                       (isLast ? "" : "border-b border-rule")
                     }
                   >
+                    {/* Title cell — kind-aware cover/header */}
                     <td className="px-4 py-4">
                       <div className="flex gap-3.5 items-start">
                         <div className="shrink-0">
-                          <BookCover
-                            book={{
-                              title: b.title,
-                              glyph: b.glyph,
-                              domain: b.domain,
-                              palette: b.palette as BookCoverPalette,
-                              vol: "Vol. 01",
-                              version: "v1",
-                              author: "—",
-                            }}
-                            size="xs"
-                            flat
-                          />
+                          {item.kind === "book" && item.palette && item.glyph ? (
+                            <BookCover
+                              book={{
+                                title: item.displayName,
+                                glyph: item.glyph,
+                                domain: item.domain ?? "—",
+                                palette: item.palette as BookCoverPalette,
+                                vol: "Vol. 01",
+                                version: `v${item.latestVersion || 1}`,
+                                author: "—",
+                              }}
+                              size="xs"
+                              flat
+                            />
+                          ) : (
+                            // Skill thumbnail — typographic, no cover.
+                            // Same width as BookCover xs (~48px) so rows
+                            // align. Uses paper-2 background + italic
+                            // first-letter glyph in ink-3 for a typographic
+                            // "shelf placeholder" feel.
+                            <div className="w-12 h-16 bg-paper-2 border border-rule flex items-center justify-center">
+                              <span className="font-serif italic text-[28px] leading-none text-ink-3">
+                                {item.displayName.charAt(0).toUpperCase() || "?"}
+                              </span>
+                            </div>
+                          )}
                         </div>
                         <div className="min-w-0">
                           <div className="font-serif text-[15.5px] tracking-tight text-ink">
-                            {b.title}
+                            {item.displayName}
                           </div>
-                          <div className="font-mono text-[11px] text-ink-3 mt-1">
-                            {b.slug}{" "}
-                            <span className="text-ink-4">·</span> {b.domain}
+                          <div className="font-mono text-[11px] text-ink-3 mt-1 flex items-center gap-2 flex-wrap">
+                            {item.kind === "skill" ? (
+                              <Pill variant="saffron">SKILL · .zip</Pill>
+                            ) : null}
+                            <span>{item.slug}</span>
+                            {item.kind === "book" && item.domain ? (
+                              <>
+                                <span className="text-ink-4">·</span>
+                                <span>{item.domain}</span>
+                              </>
+                            ) : null}
                           </div>
                           {granted && subscriberId && (
                             <details className="mt-3 text-xs">
@@ -147,9 +180,10 @@ export function LibraryTable({
                               </summary>
                               <div className="mt-3 bg-ink p-3 border border-rule overflow-x-auto">
                                 <ApiInstructionsBlock
+                                  kind={item.kind}
+                                  itemId={item.id}
+                                  itemSlug={item.slug}
                                   subscriberId={subscriberId}
-                                  bookId={b.id}
-                                  bookSlug={b.slug}
                                   compact
                                 />
                               </div>
@@ -158,16 +192,19 @@ export function LibraryTable({
                         </div>
                       </div>
                     </td>
+                    {/* Description */}
                     <td className="px-4 py-4 text-ink-2 leading-[1.5]">
-                      {b.description ? (
-                        <span className="line-clamp-3">{b.description}</span>
+                      {item.description ? (
+                        <span className="line-clamp-3">{item.description}</span>
                       ) : (
                         <span className="text-ink-4">—</span>
                       )}
                     </td>
+                    {/* Publisher */}
                     <td className="px-4 py-4">
-                      <div className="text-ink-2">{b.publisherName}</div>
+                      <div className="text-ink-2">{item.publisherName}</div>
                     </td>
+                    {/* Price */}
                     <td className="px-4 py-4 text-right">
                       {priceCents !== null ? (
                         <span className="font-serif text-[18px] text-ink num">
@@ -177,8 +214,15 @@ export function LibraryTable({
                         <span className="text-ink-4">—</span>
                       )}
                     </td>
+                    {/* Access cell — kind-aware View/Download targets */}
                     <td className="px-4 py-4">
-                      <AccessCell bookId={b.id} access={access} showActions />
+                      <AccessCell
+                        kind={item.kind}
+                        itemId={item.id}
+                        itemSlug={item.slug}
+                        access={access}
+                        showActions
+                      />
                     </td>
                   </tr>
                 );
@@ -191,7 +235,7 @@ export function LibraryTable({
       {filtered.length > 0 ? (
         <div className="mt-3 text-ink-3 text-xs flex justify-between items-baseline">
           <Eyebrow>
-            SHOWING {filtered.length} OF {books.length} VOLUMES · YOU OWN{" "}
+            SHOWING {filtered.length} OF {items.length} VOLUMES · YOU OWN{" "}
             {counts.active}
           </Eyebrow>
           <Eyebrow>ALL PRICES USD · 14-DAY REFUND</Eyebrow>

@@ -3,7 +3,10 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { DashShell, Eyebrow } from "@/components/design";
 import { LibraryTable, type LibraryFilter } from "@/components/dashboard/library-table";
-import { getBooksForLibrary, getBookAccessStates } from "@/lib/dashboard/queries";
+import {
+  getCatalogForLibrary,
+  getAccessStatesForCatalog,
+} from "@/lib/dashboard/queries";
 import { buildDashNav } from "@/lib/dashboard/nav-config";
 
 // bkstr redesign PR 3 — Library on the new <DashShell>.
@@ -11,9 +14,10 @@ import { buildDashNav } from "@/lib/dashboard/nav-config";
 // Filter state still URL-driven (?filter=active|browse|all) per Stream C
 // — the view is link-shareable and refresh-stable. No client useState.
 //
-// Per dispatch §6 copy audit (HANDOFF.md pricing-critical): subtitle copy
-// updated to remove subscription/trial framing and emphasize one-time
-// purchase + unlimited fetches.
+// redesign(10)/3 — switched data source from getBooksForLibrary +
+// getBookAccessStates to the kind-aware getCatalogForLibrary +
+// getAccessStatesForCatalog (Phase 1 additions). Library now shows
+// books + skills together, accessByItem keyed `${kind}:${id}`.
 
 export const metadata = { title: "Library | bkstr" };
 export const dynamic = "force-dynamic";
@@ -42,9 +46,9 @@ export default async function LibraryPage({
   const companyName = subscriber?.companyName ?? "Personal";
   const userEmail = session.user.email;
 
-  const [books, accessByBook] = await Promise.all([
-    getBooksForLibrary(),
-    subscriber ? getBookAccessStates(subscriber.id) : Promise.resolve(undefined),
+  const [items, accessByItem] = await Promise.all([
+    getCatalogForLibrary(),
+    subscriber ? getAccessStatesForCatalog(subscriber.id) : Promise.resolve(undefined),
   ]);
 
   return (
@@ -61,9 +65,9 @@ export default async function LibraryPage({
           </h1>
           <p className="text-ink-3 text-sm max-w-[60ch]">
             Browse the catalog, buy a one-time purchase to add a volume to
-            your fleet, or pull up an API access curl for any book you
+            your fleet, or pull up an API-access curl for anything you
             already own. Once you own it, your agents fetch it via your
-            API key — unlimited, no monthly metering.
+            API key — books for grounded Q&A, skills for install-and-run.
           </p>
         </div>
         <a
@@ -76,8 +80,8 @@ export default async function LibraryPage({
 
       <LibraryTable
         subscriberId={subscriber?.id ?? null}
-        books={books}
-        accessByBook={accessByBook}
+        items={items}
+        accessByItem={accessByItem}
         filter={filter}
       />
     </DashShell>

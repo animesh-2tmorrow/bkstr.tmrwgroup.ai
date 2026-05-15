@@ -417,12 +417,18 @@ export function NewBookForm() {
       setSubmitStep("done");
       // Stream L: skill uploads have no /dashboard/library counterpart yet
       // (deferred — future skill-library surface). Redirect skill uploads to
-      // the public /skills/{slug} detail page when a slug was provided/derived
-      // client-side, else to the /skills listing. Book uploads keep the
-      // existing /dashboard/library?book=<id> redirect.
+      // the public /storefront/<slug> detail page when a slug was provided/
+      // derived client-side, else to the /storefront listing. Book uploads
+      // keep the existing /dashboard/library?book=<id> redirect.
+      //
+      // redesign(10)/3 — skill redirect target changed from /skills/<slug>
+      // to /storefront/<slug>: skills now live in the unified catalog.
+      // /skills/<slug> still 308-redirects to /storefront/<slug>, so even
+      // if this client redirect raced the deploy the user would land in
+      // the right place — but the direct route is cleaner.
       if (kind === "skill") {
         const slugTyped = slug.trim().toLowerCase();
-        router.push(slugTyped.length > 0 ? `/skills/${encodeURIComponent(slugTyped)}` : "/skills");
+        router.push(slugTyped.length > 0 ? `/storefront/${encodeURIComponent(slugTyped)}` : "/storefront");
       } else {
         router.push(`/dashboard/library?book=${entityId ?? ""}`);
       }
