@@ -78,6 +78,209 @@ export async function getBooksWithMetrics(): Promise<BookWithMetrics[]> {
   }));
 }
 
+// bkstr redesign PR 3 — per-book daily fetch counts for the Active Books
+// table sparkline column. 14-day window, zero-filled bucket array per book.
+//
+// Returns a Map<bookId, number[]>. Length always 14, index 0 = 13 days ago,
+// index 13 = today. Books with zero fetches in the window aren't in the
+// map — caller should fall back to a zero-array. Book IDs are uuid strings.
+export async function getBooksFetchSparklines(): Promise<Map<string, number[]>> {
+  type Row = { book_id: string; bucket: Date; count: number };
+  const rows = await prisma.$queryRaw<Row[]>(Prisma.sql`
+    SELECT
+      bv.book_id::text                                          AS book_id,
+      DATE_TRUNC('day', fl.created_at)                          AS bucket,
+      COUNT(*)::int                                             AS count
+    FROM fetch_logs fl
+    JOIN book_versions bv ON bv.id = fl.book_version_id
+    WHERE fl.created_at > NOW() - INTERVAL '14 days'
+    GROUP BY bv.book_id, DATE_TRUNC('day', fl.created_at)
+    ORDER BY bv.book_id, bucket
+  `);
+
+  // Bucket-by-day reference: index 0 = 13 days ago, index 13 = today (UTC).
+  // Use UTC to match Postgres DATE_TRUNC's TZ — the dashboard renders
+  // server-side anyway so client TZ doesn't enter the picture.
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const dayMs = 86_400_000;
+  const dayIndex = (d: Date): number => {
+    const dt = new Date(d);
+    dt.setUTCHours(0, 0, 0, 0);
+    return 13 - Math.floor((today.getTime() - dt.getTime()) / dayMs);
+  };
+
+  const result = new Map<string, number[]>();
+  for (const r of rows) {
+    const idx = dayIndex(r.bucket);
+    if (idx < 0 || idx > 13) continue;
+    let bucket = result.get(r.book_id);
+    if (!bucket) {
+      bucket = Array<number>(14).fill(0);
+      result.set(r.book_id, bucket);
+    }
+    bucket[idx] = r.count;
+  }
+  return result;
+}
+
+// bkstr redesign PR 3 — single-row dashboard summary stats for the
+// Active Books page's 4-stat strip. Computed server-side in one
+// round-trip; numbers are scoped to the current subscriber when given.
+//
+// volumesOwned: count of distinct books with an active grant for this
+//   subscriber.
+// fetches30d:   sum of all fetch_logs by THIS subscriber's api keys in
+//   the last 30 days.
+// activeAgents30d: count of distinct subscriber_api_keys.id used in
+//   fetch_logs in the last 30 days. (Distinct, not summed per book —
+//   prevents double-counting across books a single key reads.)
+// tokensServed30d: sum of fetch_logs.output_tokens in the last 30 days.
+//   NULL output_tokens (failed fetches, pre-instrumentation rows) treated
+//   as zero via COALESCE.
+export type DashboardStats = {
+  volumesOwned: number;
+  fetches30d: number;
+  activeAgents30d: number;
+  tokensServed30d: number;
+};
+
+export async function getDashboardStats(
+  subscriberId: string,
+): Promise<DashboardStats> {
+  type StatsRow = {
+    volumes_owned: number;
+    fetches_30d: number;
+    active_agents_30d: number;
+    tokens_served_30d: number;
+  };
+  // Two CTEs joined via cross product into a single row. The CTE shape
+  // keeps each metric's WHERE clause readable; the join is just (1,1).
+  const rows = await prisma.$queryRaw<StatsRow[]>(Prisma.sql`
+    WITH owned AS (
+      SELECT COUNT(DISTINCT book_id)::int AS n
+      FROM access_grants
+      WHERE subscriber_id = ${subscriberId}::uuid
+        AND book_id IS NOT NULL
+        AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > NOW())
+    ),
+    fl_30d AS (
+      SELECT
+        COUNT(*)::int                                                     AS fetches,
+        COUNT(DISTINCT fl.api_key_id)::int                                AS agents,
+        COALESCE(SUM(fl.output_tokens), 0)::int                           AS tokens
+      FROM fetch_logs fl
+      JOIN subscriber_api_keys k ON k.id = fl.api_key_id
+      WHERE k.subscriber_id = ${subscriberId}::uuid
+        AND fl.created_at > NOW() - INTERVAL '30 days'
+    )
+    SELECT
+      owned.n             AS volumes_owned,
+      fl_30d.fetches      AS fetches_30d,
+      fl_30d.agents       AS active_agents_30d,
+      fl_30d.tokens       AS tokens_served_30d
+    FROM owned, fl_30d
+  `);
+  const r = rows[0] ?? {
+    volumes_owned: 0,
+    fetches_30d: 0,
+    active_agents_30d: 0,
+    tokens_served_30d: 0,
+  };
+  return {
+    volumesOwned: r.volumes_owned,
+    fetches30d: r.fetches_30d,
+    activeAgents30d: r.active_agents_30d,
+    tokensServed30d: r.tokens_served_30d,
+  };
+}
+
+// bkstr redesign PR 3 — billing page's 4-stat strip data.
+// All amounts are USD cents (integer) — caller formats. Lifetime spend
+// sums the unit_amount on each PURCHASE grant (joined to BookPrice).
+// Refunds-available approximates "purchased within the last 14 days" per
+// HANDOFF.md pricing-critical: "Refunds within 14 days." Effective per-
+// fetch is lifetime spend / total fetches (NOT 30-day) — caller decides
+// the format and division-by-zero policy.
+export type BillingStats = {
+  volumesOwned: number;
+  lifetimeSpendCents: number;
+  totalFetches: number;
+  refundsAvailableCents: number;
+  refundsAvailableCount: number;
+};
+
+export async function getBillingStats(
+  subscriberId: string,
+): Promise<BillingStats> {
+  type StatsRow = {
+    volumes_owned: number;
+    lifetime_spend_cents: number;
+    total_fetches: number;
+    refunds_available_cents: number;
+    refunds_available_count: number;
+  };
+  // Same CTE pattern as getDashboardStats. Lifetime spend joins
+  // access_grants → book_prices on (book_id, currency='USD'). PURCHASE
+  // source only — operator-issued MANUAL/SEED + PUBLISHER_OWN are not
+  // billable line items.
+  const rows = await prisma.$queryRaw<StatsRow[]>(Prisma.sql`
+    WITH purchases AS (
+      SELECT
+        ag.id,
+        ag.granted_at,
+        bp.unit_amount_cents
+      FROM access_grants ag
+      LEFT JOIN book_prices bp
+        ON bp.book_id = ag.book_id AND bp.currency = 'USD'
+      WHERE ag.subscriber_id = ${subscriberId}::uuid
+        AND ag.source = 'PURCHASE'
+        AND ag.revoked_at IS NULL
+    ),
+    spend AS (
+      SELECT
+        COUNT(*)::int                                          AS volumes_owned,
+        COALESCE(SUM(unit_amount_cents), 0)::int               AS lifetime_spend_cents
+      FROM purchases
+    ),
+    refundable AS (
+      SELECT
+        COALESCE(SUM(unit_amount_cents), 0)::int               AS amount_cents,
+        COUNT(*)::int                                          AS n
+      FROM purchases
+      WHERE granted_at > NOW() - INTERVAL '14 days'
+    ),
+    fetches AS (
+      SELECT COUNT(*)::int AS n
+      FROM fetch_logs fl
+      JOIN subscriber_api_keys k ON k.id = fl.api_key_id
+      WHERE k.subscriber_id = ${subscriberId}::uuid
+    )
+    SELECT
+      spend.volumes_owned                AS volumes_owned,
+      spend.lifetime_spend_cents         AS lifetime_spend_cents,
+      fetches.n                          AS total_fetches,
+      refundable.amount_cents            AS refunds_available_cents,
+      refundable.n                       AS refunds_available_count
+    FROM spend, refundable, fetches
+  `);
+  const r = rows[0] ?? {
+    volumes_owned: 0,
+    lifetime_spend_cents: 0,
+    total_fetches: 0,
+    refunds_available_cents: 0,
+    refunds_available_count: 0,
+  };
+  return {
+    volumesOwned: r.volumes_owned,
+    lifetimeSpendCents: r.lifetime_spend_cents,
+    totalFetches: r.total_fetches,
+    refundsAvailableCents: r.refunds_available_cents,
+    refundsAvailableCount: r.refunds_available_count,
+  };
+}
+
 export type FetchLogRow = {
   id: string;
   createdAt: Date;

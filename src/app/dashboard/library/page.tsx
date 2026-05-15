@@ -1,21 +1,21 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { DashShell, Eyebrow } from "@/components/design";
 import { LibraryTable, type LibraryFilter } from "@/components/dashboard/library-table";
 import { getBooksForLibrary, getBookAccessStates } from "@/lib/dashboard/queries";
+import { buildDashNav } from "@/lib/dashboard/nav-config";
 
-// Phase 4 Stream C — Library route (CC-13).
-// Server-renders the catalog filtered by an Active / Browse / All tab whose
-// state lives in `?filter=…` so the view is link-shareable + refresh-stable.
-// Default filter is "all" (no URL) — the operator's preference is to land
-// every signed-in user on the catalog overview and let them tab to their
-// own granted books. No client useState anywhere on this page.
+// bkstr redesign PR 3 — Library on the new <DashShell>.
+//
+// Filter state still URL-driven (?filter=active|browse|all) per Stream C
+// — the view is link-shareable and refresh-stable. No client useState.
+//
+// Per dispatch §6 copy audit (HANDOFF.md pricing-critical): subtitle copy
+// updated to remove subscription/trial framing and emphasize one-time
+// purchase + unlimited fetches.
 
-export const metadata = {
-  title: "Library | bkstr",
-};
-
+export const metadata = { title: "Library | bkstr" };
 export const dynamic = "force-dynamic";
 
 function parseFilter(raw: string | string[] | undefined): LibraryFilter {
@@ -41,7 +41,6 @@ export default async function LibraryPage({
   });
   const companyName = subscriber?.companyName ?? "Personal";
   const userEmail = session.user.email;
-  const initial = (session.user.name?.[0] ?? userEmail[0] ?? "?").toUpperCase();
 
   const [books, accessByBook] = await Promise.all([
     getBooksForLibrary(),
@@ -49,20 +48,31 @@ export default async function LibraryPage({
   ]);
 
   return (
-    <DashboardShell
-      active="library"
-      companyName={companyName}
-      userEmail={userEmail}
-      initial={initial}
-      role={session.user.role}
+    <DashShell
+      nav={buildDashNav(session.user.role, "/dashboard/library")}
+      brandSubtitle={companyName.toUpperCase()}
+      userBlock={<UserBlock email={userEmail} />}
     >
-      <header className="mb-8">
-        <h1 className="text-2xl font-bold">Library</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Browse the catalog, buy access to a book, or view / download books
-          you already own.
-        </p>
-      </header>
+      <div className="flex justify-between items-end gap-6 mb-8">
+        <div>
+          <Eyebrow>§ LBRRY · BROWSE, BUY, OR FETCH</Eyebrow>
+          <h1 className="font-serif font-normal text-[36px] leading-[1.05] tracking-display text-ink mt-3 mb-2">
+            Library
+          </h1>
+          <p className="text-ink-3 text-sm max-w-[60ch]">
+            Browse the catalog, buy a one-time purchase to add a volume to
+            your fleet, or pull up an API access curl for any book you
+            already own. Once you own it, your agents fetch it via your
+            API key — unlimited, no monthly metering.
+          </p>
+        </div>
+        <a
+          href="/storefront"
+          className="inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium font-sans bg-transparent text-ink border border-ink hover:bg-ink hover:text-paper transition-colors rounded-none"
+        >
+          Public storefront ↗
+        </a>
+      </div>
 
       <LibraryTable
         subscriberId={subscriber?.id ?? null}
@@ -70,6 +80,29 @@ export default async function LibraryPage({
         accessByBook={accessByBook}
         filter={filter}
       />
-    </DashboardShell>
+    </DashShell>
+  );
+}
+
+function UserBlock({ email }: { email: string }) {
+  return (
+    <>
+      <div className="text-ink text-[13px] mb-1 truncate">{email}</div>
+      <div className="flex justify-between items-center text-ink-3">
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="w-1.5 h-1.5 rounded-full bg-status-ok inline-block"
+          />
+          Signed in
+        </span>
+        <a
+          href="/api/auth/signout"
+          className="text-ink-3 hover:text-ink transition-colors"
+        >
+          Log out
+        </a>
+      </div>
+    </>
   );
 }

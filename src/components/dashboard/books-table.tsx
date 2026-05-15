@@ -3,13 +3,21 @@
 import Link from "next/link";
 import type { BookWithMetrics, BookAccessState } from "@/lib/dashboard/queries";
 import { AccessCell } from "@/components/dashboard/access-cell";
+import { BookCover, Eyebrow } from "@/components/design";
+import { bookToCoverData } from "@/lib/books/cover-derive";
 
-// Phase 4 Stream C (CC-12 / D11.12) — the Buy / Granted / Not-for-sale
-// rendering moved to <AccessCell /> so the Library table renders the same
-// states identically. The per-row "View fetches" link and the agent-fleet
-// columns stay here; Active Books is observability-of-fleet, not
-// consumption-of-content. The Library route turns on showActions to surface
-// View + Download links inline.
+// bkstr redesign PR 3 — Active Books table.
+//
+// Restyle of the Stream H/Phase-3 table: design tokens (paper bg, ink
+// borders, mono uppercase headers, no rounded corners), per-row
+// xs-sized BookCover SVG (typographic — coverImageUrl ignored), inline
+// 14-day sparkline. AccessCell preserved verbatim for the buy / granted
+// status column.
+//
+// Sparkline data is OPTIONAL — pages that don't have time-series data
+// pass undefined and the trend column renders "—". The `/dashboard`
+// route's server component fetches sparklines via getBooksFetchSparklines
+// in PR 3.
 
 function relativeTime(d: Date | null): string {
   if (!d) return "Never";
@@ -24,74 +32,185 @@ function relativeTime(d: Date | null): string {
 export function BooksTable({
   books,
   accessByBook,
+  sparklinesByBook,
 }: {
   books: BookWithMetrics[];
-  // Phase 3 Stream 3 — per-row access state. Map keyed by bookId. Optional so
-  // an unauthenticated/no-subscriber render still works (status column shows
-  // a neutral fallback). Computed via getBookAccessStates.
   accessByBook?: Map<string, BookAccessState>;
+  /** Per-book daily fetch counts (14-day window). Books without entries
+   *  render an empty trend column. From getBooksFetchSparklines(). */
+  sparklinesByBook?: Map<string, number[]>;
 }) {
   if (books.length === 0) {
     return (
-      <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-8 text-center text-gray-500">
+      <div className="bg-paper border border-rule p-8 text-center text-ink-3">
         No books yet. The first book will appear here once it&apos;s imported.
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
-            <tr>
-              <th className="px-6 py-4 font-semibold text-gray-600">Title</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Latest version</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Total fetches</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Last 30d</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Active agents (30d)</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Last fetched</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Access</th>
-              <th className="px-6 py-4 font-semibold text-gray-600 text-right">Action</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#E5DCC8]">
-            {books.map((b) => {
-              const access = accessByBook?.get(b.id);
-              return (
-                <tr key={b.id} className="hover:bg-[#F5F0E6] transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="font-bold text-gray-900">{b.title}</div>
-                    <div className="text-xs text-gray-500 font-mono mt-1">
-                      {b.slug} <span className="text-gray-400">·</span> {b.domain}
+    <div className="bg-paper border border-rule overflow-hidden">
+      <table className="w-full text-left text-[13.5px]">
+        <thead>
+          <tr className="border-b border-ink">
+            <Th className="w-[32%]">Title</Th>
+            <Th>Version</Th>
+            <Th className="text-right">30d fetches</Th>
+            <Th>Trend</Th>
+            <Th className="text-right">Agents</Th>
+            <Th>Last fetched</Th>
+            <Th>Access</Th>
+            <Th className="text-right">{""}</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {books.map((b, idx) => {
+            const access = accessByBook?.get(b.id);
+            const sparkData = sparklinesByBook?.get(b.id);
+            const isOwned = access?.state === "granted";
+            const isLast = idx === books.length - 1;
+            return (
+              <tr
+                key={b.id}
+                className={
+                  "transition-colors hover:bg-paper-2 " +
+                  (isLast ? "" : "border-b border-rule")
+                }
+              >
+                <td className="px-4 py-3.5 align-top">
+                  <div className="flex gap-3.5 items-center">
+                    <div className="shrink-0">
+                      <BookCover
+                        book={bookToCoverData({ title: b.title, domain: b.domain })}
+                        size="xs"
+                        flat
+                      />
                     </div>
-                  </td>
-                  <td className="px-6 py-4 font-mono text-xs">v{b.latestVersion}</td>
-                  <td className="px-6 py-4 font-medium compressed-text">{b.totalFetches.toLocaleString()}</td>
-                  <td className="px-6 py-4 font-medium compressed-text">{b.fetches30d.toLocaleString()}</td>
-                  <td className="px-6 py-4 font-medium compressed-text">{b.activeAgents30d.toLocaleString()}</td>
-                  <td className="px-6 py-4">
-                    <span title={b.lastFetchedAt ? b.lastFetchedAt.toLocaleString() : ""}>
-                      {relativeTime(b.lastFetchedAt)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <AccessCell bookId={b.id} access={access} />
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <Link
-                      href={`/dashboard/fetch-logs?book=${b.id}`}
-                      className="text-black font-semibold underline hover:no-underline"
-                    >
-                      View fetches
-                    </Link>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                    <div>
+                      <div className="font-serif text-[15.5px] tracking-tight text-ink">
+                        {b.title}
+                      </div>
+                      <div className="font-mono text-[11px] text-ink-3 mt-1">
+                        {b.slug}{" "}
+                        <span className="text-ink-4">·</span> {b.domain}
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-4 py-3.5 align-top">
+                  <span className="font-mono text-xs text-ink-2">
+                    v{b.latestVersion}
+                  </span>
+                </td>
+                <td className="px-4 py-3.5 text-right num text-ink align-top">
+                  {b.fetches30d.toLocaleString()}
+                </td>
+                <td className="px-4 py-3.5 align-middle">
+                  {sparkData && sparkData.some((n) => n > 0) ? (
+                    <SparkLine
+                      data={sparkData}
+                      color={isOwned ? "var(--status-ok)" : "var(--ink-3)"}
+                    />
+                  ) : (
+                    <span className="text-ink-4 text-sm">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3.5 text-right num text-ink-2 align-top">
+                  {b.activeAgents30d}
+                </td>
+                <td className="px-4 py-3.5 align-top">
+                  <span
+                    className="font-mono text-xs text-ink-3"
+                    title={b.lastFetchedAt ? b.lastFetchedAt.toLocaleString() : ""}
+                  >
+                    {relativeTime(b.lastFetchedAt)}
+                  </span>
+                </td>
+                <td className="px-4 py-3.5 align-top">
+                  <AccessCell bookId={b.id} access={access} />
+                </td>
+                <td className="px-4 py-3.5 text-right align-top">
+                  <Link
+                    href={`/dashboard/fetch-logs?book=${b.id}`}
+                    className="text-saffron-dk text-sm underline hover:no-underline"
+                  >
+                    View fetches
+                  </Link>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
+  );
+}
+
+// Standardised <th> shape — mono uppercase 10.5px tracking, ink-3 color.
+function Th({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={
+        "px-4 py-3 font-mono font-medium text-[10.5px] uppercase tracking-eyebrow text-ink-3 " +
+        className
+      }
+    >
+      {children}
+    </th>
+  );
+}
+
+// Inline SVG sparkline — same shape as src/components/design/stat-card.tsx's
+// SparkLine helper. Co-locating a smaller variant here so the table doesn't
+// need to import StatCard's internals; keeps the table self-contained.
+function SparkLine({
+  data,
+  color,
+  width = 80,
+  height = 22,
+}: {
+  data: number[];
+  color: string;
+  width?: number;
+  height?: number;
+}) {
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const stepX = data.length > 1 ? width / (data.length - 1) : 0;
+  const pts = data
+    .map(
+      (d, i) =>
+        `${i * stepX},${height - ((d - min) / range) * (height - 4) - 2}`,
+    )
+    .join(" L ");
+  const path = `M ${pts}`;
+  const lastX = (data.length - 1) * stepX;
+  const lastY =
+    height - ((data[data.length - 1] - min) / range) * (height - 4) - 2;
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      aria-hidden="true"
+      style={{ color }}
+    >
+      <path
+        d={path}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx={lastX} cy={lastY} r="1.8" fill="currentColor" />
+    </svg>
   );
 }

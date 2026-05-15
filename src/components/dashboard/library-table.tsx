@@ -3,17 +3,20 @@ import type { LibraryBook, BookAccessState } from "@/lib/dashboard/queries";
 import { AccessCell } from "@/components/dashboard/access-cell";
 import { ApiInstructionsBlock } from "@/components/dashboard/api-instructions-block";
 import { formatUsdCents } from "@/lib/format/currency";
+import { BookCover, Eyebrow } from "@/components/design";
+import { bookToCoverData } from "@/lib/books/cover-derive";
 
-// Phase 4 Stream C (CC-12 + CC-13) — server-renderable Library table.
-// Columns are consumption-shaped: Title / Description / Publisher / Price /
-// Access cell (Buy / Granted + View + Download). Filter state lives in URL
-// search params (?filter=active|browse|all) so the view is link-shareable
-// and refresh-stable; the server reads searchParams in page.tsx and passes
-// the filter literal down.
+// bkstr redesign PR 3 — Library table.
 //
-// On granted rows the API instructions block expands into a <details>
-// element so curl + book_id are available without leaving the row. No
-// client JS needed — the disclosure widget is built-in HTML behaviour.
+// Restyled with design tokens; structure unchanged: per-row title (cover
+// + slug + domain), description, publisher, price, AccessCell.
+// Tab switching stays URL-driven (?filter=…) per Stream C / CC-13.
+// Curl-example details block stays inside the row, restyled as an
+// editorial frame.
+//
+// Tab pill row replaces the rounded-lg paper-2 nav from Stream H — now
+// a flush 3-segment switch with mono labels inside an ink hairline
+// border, matching reference pages.jsx:144-178.
 
 export type LibraryFilter = "active" | "browse" | "all";
 
@@ -38,27 +41,48 @@ export function LibraryTable({
     const access = accessByBook?.get(b.id);
     if (filter === "active") return access?.state === "granted";
     if (filter === "browse") return access?.state === "for_sale";
-    return true; // "all"
+    return true;
   });
+
+  // Per-tab counts for the labels — so "Active 3 / Browse 7 / All 10".
+  const counts = {
+    active: books.filter((b) => accessByBook?.get(b.id)?.state === "granted").length,
+    browse: books.filter((b) => accessByBook?.get(b.id)?.state === "for_sale").length,
+    all: books.length,
+  };
 
   return (
     <div>
-      <nav className="mb-6 inline-flex gap-1 p-1 rounded-lg bg-[#EFE8D8] border border-[#E5DCC8]">
-        {FILTERS.map((f) => {
-          const isActive = f.key === filter;
-          const className = isActive
-            ? "px-4 py-1.5 rounded-md text-xs font-bold bg-[#FAF6EC] text-black shadow-sm"
-            : "px-4 py-1.5 rounded-md text-xs font-bold text-gray-600 hover:text-black";
-          return (
-            <Link key={f.key} href={`/dashboard/library?filter=${f.key}`} className={className}>
-              {f.label}
-            </Link>
-          );
-        })}
-      </nav>
+      {/* Tab strip — flush 3-segment switch */}
+      <div className="flex items-center gap-3.5 pb-4 border-b border-rule">
+        <div className="inline-flex border border-rule overflow-hidden">
+          {FILTERS.map((f, i) => {
+            const isActive = f.key === filter;
+            return (
+              <Link
+                key={f.key}
+                href={`/dashboard/library?filter=${f.key}`}
+                className={[
+                  "px-4 py-2 text-[13.5px] font-sans transition-colors",
+                  i < FILTERS.length - 1 ? "border-r border-rule" : "",
+                  isActive
+                    ? "bg-ink text-paper"
+                    : "bg-transparent text-ink-2 hover:bg-paper",
+                ].join(" ")}
+              >
+                {f.label}{" "}
+                <span className="opacity-60 font-mono text-[11px] ml-1">
+                  {counts[f.key]}
+                </span>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
 
+      {/* Empty state — same copy as Stream C, restyled */}
       {filtered.length === 0 ? (
-        <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-8 text-center text-gray-500">
+        <div className="bg-paper border border-rule p-8 text-center text-ink-3 mt-6">
           {filter === "active"
             ? "No books with access granted yet. Browse the catalog to purchase a book."
             : filter === "browse"
@@ -66,61 +90,89 @@ export function LibraryTable({
               : "No books in the catalog yet."}
         </div>
       ) : (
-        <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm overflow-hidden">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
-              <tr>
-                <th className="px-6 py-4 font-semibold text-gray-600">Title</th>
-                <th className="px-6 py-4 font-semibold text-gray-600">Description</th>
-                <th className="px-6 py-4 font-semibold text-gray-600">Publisher</th>
-                <th className="px-6 py-4 font-semibold text-gray-600">Price</th>
-                <th className="px-6 py-4 font-semibold text-gray-600">Access</th>
+        <div className="bg-paper border-l border-r border-b border-rule overflow-hidden">
+          <table className="w-full text-left text-[13.5px]">
+            <thead>
+              <tr className="border-b border-ink">
+                <Th className="w-[26%]">Title</Th>
+                <Th className="w-[34%]">Description</Th>
+                <Th>Publisher</Th>
+                <Th className="text-right">Price</Th>
+                <Th>Access</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#E5DCC8]">
-              {filtered.map((b) => {
+            <tbody>
+              {filtered.map((b, idx) => {
                 const access = accessByBook?.get(b.id);
                 const priceCents = access?.unitAmountCents ?? null;
                 const granted = access?.state === "granted";
+                const isLast = idx === filtered.length - 1;
                 return (
-                  <tr key={b.id} className="hover:bg-[#F5F0E6] transition-colors align-top">
-                    <td className="px-6 py-4">
-                      <div className="font-bold text-gray-900">{b.title}</div>
-                      <div className="text-xs text-gray-500 font-mono mt-1">
-                        {b.slug} <span className="text-gray-400">·</span> {b.domain}
-                      </div>
-                      {granted && subscriberId && (
-                        <details className="mt-3 text-xs">
-                          <summary className="cursor-pointer text-gray-600 hover:text-black font-semibold">
-                            API access
-                          </summary>
-                          <div className="mt-3">
-                            <ApiInstructionsBlock
-                              subscriberId={subscriberId}
-                              bookId={b.id}
-                              bookSlug={b.slug}
-                              compact
-                            />
+                  <tr
+                    key={b.id}
+                    className={
+                      "transition-colors hover:bg-paper-2 align-top " +
+                      (isLast ? "" : "border-b border-rule")
+                    }
+                  >
+                    <td className="px-4 py-4">
+                      <div className="flex gap-3.5 items-start">
+                        <div className="shrink-0">
+                          <BookCover
+                            book={bookToCoverData({
+                              title: b.title,
+                              domain: b.domain,
+                            })}
+                            size="xs"
+                            flat
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-serif text-[15.5px] tracking-tight text-ink">
+                            {b.title}
                           </div>
-                        </details>
-                      )}
+                          <div className="font-mono text-[11px] text-ink-3 mt-1">
+                            {b.slug}{" "}
+                            <span className="text-ink-4">·</span> {b.domain}
+                          </div>
+                          {granted && subscriberId && (
+                            <details className="mt-3 text-xs">
+                              <summary className="cursor-pointer text-ink-3 hover:text-ink font-mono uppercase tracking-eyebrow text-[11px]">
+                                ▸ API access
+                              </summary>
+                              <div className="mt-3 bg-ink p-3 border border-rule overflow-x-auto">
+                                <ApiInstructionsBlock
+                                  subscriberId={subscriberId}
+                                  bookId={b.id}
+                                  bookSlug={b.slug}
+                                  compact
+                                />
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-6 py-4 max-w-md">
+                    <td className="px-4 py-4 text-ink-2 leading-[1.5]">
                       {b.description ? (
-                        <span className="text-gray-700 line-clamp-3">{b.description}</span>
+                        <span className="line-clamp-3">{b.description}</span>
                       ) : (
-                        <span className="text-gray-400">—</span>
+                        <span className="text-ink-4">—</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-gray-700">{b.publisherName}</td>
-                    <td className="px-6 py-4 font-medium">
+                    <td className="px-4 py-4">
+                      <div className="text-ink-2">{b.publisherName}</div>
+                    </td>
+                    <td className="px-4 py-4 text-right">
                       {priceCents !== null ? (
-                        formatUsdCents(priceCents)
+                        <span className="font-serif text-[18px] text-ink num">
+                          {formatUsdCents(priceCents)}
+                        </span>
                       ) : (
-                        <span className="text-gray-400">—</span>
+                        <span className="text-ink-4">—</span>
                       )}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <AccessCell bookId={b.id} access={access} showActions />
                     </td>
                   </tr>
@@ -130,6 +182,35 @@ export function LibraryTable({
           </table>
         </div>
       )}
+
+      {filtered.length > 0 ? (
+        <div className="mt-3 text-ink-3 text-xs flex justify-between items-baseline">
+          <Eyebrow>
+            SHOWING {filtered.length} OF {books.length} VOLUMES · YOU OWN{" "}
+            {counts.active}
+          </Eyebrow>
+          <Eyebrow>ALL PRICES USD · 14-DAY REFUND</Eyebrow>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function Th({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={
+        "px-4 py-3 font-mono font-medium text-[10.5px] uppercase tracking-eyebrow text-ink-3 " +
+        className
+      }
+    >
+      {children}
+    </th>
   );
 }
