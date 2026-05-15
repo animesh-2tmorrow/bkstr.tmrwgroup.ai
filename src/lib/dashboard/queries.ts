@@ -365,6 +365,19 @@ export async function getRecentFetchLogs(opts: {
 // row set). Active grants short-circuit to "granted" regardless of source;
 // otherwise BookPrice presence + a non-null stripePriceId determines whether
 // the row is purchasable.
+//
+/**
+ * @deprecated redesign(10)/5 — use `getAccessStatesForCatalog(subscriberId)`
+ *   instead. That function returns a kind-aware map keyed by `${kind}:${id}`
+ *   covering both books and skills, replacing this books-only helper.
+ *
+ *   This helper is kept (not deleted) because `/dashboard/page.tsx`
+ *   (Active Books) still calls it, and Active Books is intentionally
+ *   books-only (the fleet-fetch telemetry it surfaces doesn't apply to
+ *   skills). When Active Books either retires or grows skill support,
+ *   switch the call site to `getAccessStatesForCatalog` and delete this
+ *   function. Verified Phase 5: only one live caller.
+ */
 export async function getBookAccessStates(subscriberId: string): Promise<Map<string, BookAccessState>> {
   const [books, prices, grants] = await Promise.all([
     prisma.book.findMany({ select: { id: true } }),
@@ -628,6 +641,18 @@ export async function getAdminUsers(opts: {
   }));
 }
 
+/**
+ * @deprecated redesign(10)/5 — use `getCatalogForLibrary()` instead. That
+ *   function returns a kind-aware `LibraryItem[]` covering both books and
+ *   skills, replacing this books-only helper.
+ *
+ *   This helper is kept (not deleted) because it lives in the same legacy
+ *   pair as `getBookAccessStates`, which `/dashboard/page.tsx` still calls.
+ *   Verified Phase 5: zero live callers of THIS function (the Library page
+ *   migrated to `getCatalogForLibrary` in Phase 3), but the deprecation
+ *   note pairs it with its sibling so a future cleanup deletes both
+ *   together.
+ */
 export async function getBooksForLibrary(): Promise<LibraryBook[]> {
   const rows = await prisma.book.findMany({
     where: { status: "ACTIVE" },

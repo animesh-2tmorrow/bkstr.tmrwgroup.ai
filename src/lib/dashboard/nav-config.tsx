@@ -40,12 +40,10 @@ const Icon = {
       <path d="M2 3v10M14 3v10M2 3h12M2 13h12M5 13v-7M8 13v-7M11 13v-7" />
     </svg>
   ),
-  skill: (
-    <svg {...ICON_PROPS}>
-      <circle cx="8" cy="8" r="5" />
-      <path d="M8 3v10M3 8h10" />
-    </svg>
-  ),
+  // redesign(10)/5 — `Icon.skill` removed. Phase 3 deleted the Skills
+  // sidebar entry (skills now live in /dashboard/library alongside books);
+  // this icon was the only consumer. Removed in Phase 5 cleanup. Grep
+  // confirmed zero callers outside this file before deletion.
   key: (
     <svg {...ICON_PROPS}>
       <circle cx="6" cy="8" r="3" />

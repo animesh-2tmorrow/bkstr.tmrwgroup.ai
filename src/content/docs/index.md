@@ -4,9 +4,11 @@ Welcome to bkstr. This page contains operational guidance for using the platform
 
 ## Getting started
 
-bkstr is an internal marketplace for markdown books. The model is simple: **publishers** put books up for sale, **subscribers** buy access. Once you own a book, you can read it inline, download a watermarked copy, or query its content via an authenticated API endpoint — useful when you want an agent to ground its answers in book content rather than its training data.
+bkstr is an internal marketplace for two content classes: **books** (compressed markdown knowledge artifacts) and **skills** (bundled instruction sets — `.zip` archives containing a `SKILL.md` plus supporting files). The model is simple: **publishers** put books or skills up for sale, **subscribers** buy access. Once you own something, you can fetch the raw files via an authenticated API endpoint — your agent installs from those files. Books additionally support an optional Q&A endpoint that grounds Bedrock-generated answers in book content.
 
-You're signed in. That means a user row exists for you, and a subscribers row was auto-created on first signin. Your role was assigned at signin based on your email — there are three: **SUBSCRIBER** (default, can buy and use books), **PUBLISHER** (can also publish books), **ADMIN** (can also manage users, books, grants, and audit logs).
+**The catalog lives at `/storefront`** — that's the unified surface where books and skills appear together. (The old `/skills` URLs `308`-redirect to `/storefront` for compatibility with any links that pointed at them before the merge.)
+
+You're signed in. That means a user row exists for you, and a subscribers row was auto-created on first signin. Your role was assigned at signin based on your email — there are three: **SUBSCRIBER** (default, can buy and use books + skills), **PUBLISHER** (can also publish books + skills), **ADMIN** (can also manage users, books, grants, and audit logs).
 
 The sidebar on the left is your map. Items visible depend on your role. Everyone sees Active Books, Library, API Keys, Fetch Logs, Billing, Docs, Usage Metrics, and Team Access. Publishers additionally see New Book and Pricing. Admins additionally see Admin · Users, Admin · Books, and Admin · Grants.
 
@@ -20,35 +22,80 @@ If you hit something this docs page doesn't cover, ping the platform operator (a
 
 ## For subscribers
 
-This section walks you through everything a subscriber does on bkstr: finding books, buying access, reading them, and querying them programmatically.
+This section walks you through everything a subscriber does on bkstr: finding books and skills, buying access, fetching the files, and (optionally for books) querying them programmatically.
 
-### Finding a book
+### Finding a book or skill
 
-Go to **Library** in the sidebar. You'll see three tabs: **Active** (books you already own), **Browse** (books you don't own yet), and **All** (everything in the catalog).
+Go to **Library** in the sidebar. You'll see three tabs: **Active** (everything you own), **Browse** (everything you don't), and **All** (the full catalog).
 
-Each book row shows the title, slug, domain tag, description, publisher, price, and your current access state. If a book has a green "Access granted" pill, you already own it — open the API access disclosure under the title to see how to query it, or click View / Download.
+The Library shows both books and skills in one table. Books carry the typographic `BookCover` SVG thumbnail with palette + glyph; skills carry a `SKILL · .zip` pill and a text-only header. Both kinds show the title, slug, description, publisher, price, and your current access state.
 
-If a book shows a "Buy — $X.XX" button, you don't own it yet. Click the button to start a purchase.
+- A green **Access granted** pill means you already own it — open the **▸ API access** disclosure under the title to see the curl, or click **View** / **Download**.
+- A **Buy — $X.XX** button means you don't own it yet. Click to start a purchase.
 
-### Buying a book
+For the public-facing catalog (anonymous viewers + buyers browsing pre-purchase), go to `/storefront`. Same kind-aware grid, with a `Skills (N)` filter pill that scopes the grid to skills only.
+
+### Buying a book or skill
 
 Clicking Buy redirects you to Stripe Checkout. (Note: payments currently run on Stripe sandbox — only test cards work. Real payment processing turns on once a separate platform decision lands, but everything else about the flow is production-ready.)
 
-Pay with a card. On success, you're redirected back to bkstr with an API instructions block — a short curl recipe showing how to query the book you just bought. Save the API key shown there, or grab it later from the API Keys section in the sidebar.
+Pay with a card. On success, you're redirected back to bkstr with an API instructions block — a short curl recipe showing how to fetch the files you just bought. Save the API key shown there, or grab it later from the API Keys section in the sidebar.
 
 Behind the scenes, your purchase writes an access grant linked to your Stripe payment intent ID. The grant is permanent unless an admin revokes it (which would only happen for cases like accidental purchases or refunds).
 
-### Reading a book
+### Reading a book or installing a skill
 
-Once you own a book, you have three ways to consume it:
+Once you own something, you have a few ways to consume it. The primary path is the **files endpoint** — same shape for both books and skills.
 
-**View** — renders the book's markdown inline in the dashboard. Open it from the Library row or from Active Books. Headings, code blocks, tables, lists all render. Good for browsing or copying snippets.
+#### Fetching raw files (primary)
 
-**Download** — gives you a watermarked `.md` file. The watermark identifies you as the licensed reader and is embedded as a comment in the markdown source — it doesn't show up in rendered output, but it's there if anyone shares the file. Downloads are rate-limited to 5 per day per book per subscriber. If you hit that limit, you're not locked out of the book — just out of fresh downloads for the day.
+The files endpoint returns JSON: each file carries its `path`, `content` (raw markdown for book chapters; raw text/code for skill files), and a `sha256` hash. Your agent writes these to disk and installs from there.
 
-**API query** — the most powerful option. Send an authenticated request to the agent endpoint, include the book slug, and ask a question in natural language. The server fetches the book content, hands it to Bedrock with your question as context, and streams back a grounded answer. This is what makes bkstr useful as agent infrastructure rather than just a content shop. Your agents can call this in a loop without hallucinating, because the answer is anchored to actual book text.
+```bash
+# Generate an API key first at /dashboard/api-keys, then:
+export BKSTR_KEY=bks_...
 
-Every API query is recorded in **Fetch Logs** with a timestamp, the book queried, and the answer length. Useful for debugging what your agents have been asking, or auditing usage on a per-book basis.
+# For a book — returns chapters[]
+curl -H "Authorization: Bearer $BKSTR_KEY" \
+     https://bkstr.tmrwgroup.ai/api/books/<slug>/files
+
+# For a skill — returns files[]
+curl -H "Authorization: Bearer $BKSTR_KEY" \
+     https://bkstr.tmrwgroup.ai/api/skills/<slug>/files
+```
+
+Both endpoints require an active access grant on the matching `book_id` or `skill_id` for your subscriber row. The response shape is identical between kinds — same field names, same `sha256` discipline. The same curl shape appears on the homepage's **How to Get Started** section.
+
+For skills, there's also `GET /api/skills/<slug>/download` which returns a `.zip` archive (re-built on demand from the stored files); useful when the consumer tooling wants a single artifact rather than per-file JSON.
+
+#### Q&A endpoint (advanced, books only)
+
+When you want a Bedrock-generated grounded answer rather than raw chapters, hit the agent-fetch endpoint:
+
+```bash
+curl -N -X POST https://bkstr.tmrwgroup.ai/api/agent/fetch \
+  -H "Authorization: Bearer $BKSTR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "book_id": "<uuid>",
+    "query": "<your question about this book>"
+  }'
+```
+
+The server fetches the book content, hands it to Bedrock with your question as context, and streams back a grounded answer. Useful when you want Q&A semantics anchored to actual book text rather than the agent's training data. **Skills don't have a Q&A endpoint** — they ship as installable file bundles, not as queryable knowledge.
+
+Caveats on the Q&A path:
+- Latency is dominated by Bedrock; expect multi-second p95
+- The `book_id` here is a UUID (not a slug — the slug-based form isn't supported on this endpoint)
+- Every request is recorded in **Fetch Logs** with a timestamp, the book queried, and the answer length
+
+#### Browser surfaces (UI-only)
+
+**View** — renders a book's markdown inline in the dashboard. Open it from the Library row or from Active Books. Headings, code blocks, tables, lists all render. Good for browsing or copying snippets. Skills don't have an inline View surface; the storefront detail page at `/storefront/<slug>` shows the file manifest (paths + sizes, contents behind purchase).
+
+**Download** — for books, gives you a watermarked `.md` file. The watermark identifies you as the licensed reader and is embedded as a comment in the markdown source — it doesn't show up in rendered output, but it's there if anyone shares the file. Rate-limited to 5 per day per book per subscriber. For skills, the same Download link returns the `.zip`.
+
+Every API query is recorded in **Fetch Logs**. Useful for debugging what your agents have been asking, or auditing usage on a per-item basis.
 
 ### Managing access
 
@@ -147,9 +194,11 @@ Switch the **Kind** toggle at the top of `/dashboard/books/new` to **Skill**. Th
 - Total uncompressed: 20 MB
 - Maximum file count: 500
 
-**What buyers get.** A buyer who purchases your skill gets a single `.zip` download via `/api/skills/{slug}/download` — re-archived on demand from the stored `skill_files` rows, so the layout matches your upload (modulo the wrapping directory, which was stripped on ingest). No per-file API today — that's tracked as a follow-up (`#122`, JSON-shaped agent-consumption API).
+**What buyers get.** A buyer who purchases your skill has two consumption paths:
+- `GET /api/skills/{slug}/files` — JSON with per-file `path` + `content` + `sha256`. The recommended agent-install path. (Shipped as follow-up #122; same shape as the books-side `/api/books/{slug}/files`.)
+- `GET /api/skills/{slug}/download` — single `.zip` re-archived on demand from the stored `skill_files` rows, layout-matching your upload (modulo the wrapping directory, stripped on ingest). Useful when the consumer wants one artifact.
 
-**Discoverability.** Your skill appears at `/skills` (public listing) and `/skills/{slug}` (detail). The detail page renders the manifest of file paths and sizes; file CONTENTS are behind purchase.
+**Discoverability.** Your skill appears at `/storefront` (the unified public catalog) and `/storefront/{slug}` (detail page). The detail page renders the manifest of file paths and sizes; file CONTENTS are behind purchase. Old `/skills` and `/skills/{slug}` URLs `308`-redirect to the same destinations.
 
 ### ⚠️ Three sharp edges to know before you click submit
 
