@@ -11,7 +11,7 @@ import {
 } from "@/components/design";
 import { buildDashNav } from "@/lib/dashboard/nav-config";
 import { getBillingStats } from "@/lib/dashboard/queries";
-import { bookToCoverData } from "@/lib/books/cover-derive";
+import type { BookCoverPalette } from "@/components/design/book-cover";
 
 // bkstr redesign PR 3 — Billing on the new <DashShell>.
 //
@@ -80,6 +80,9 @@ export default async function BillingPage() {
                 title: true,
                 slug: true,
                 domain: true,
+                // PR 8 — palette + glyph drive the per-row BookCover SVG.
+                palette: true,
+                glyph: true,
                 prices: {
                   where: { currency: "USD" },
                   select: { unitAmountCents: true },
@@ -235,13 +238,18 @@ export default async function BillingPage() {
                 >
                   <td className="px-4 py-4">
                     <div className="flex gap-3.5 items-start">
-                      {targetDomain ? (
+                      {targetDomain && g.book ? (
                         <div className="shrink-0">
                           <BookCover
-                            book={bookToCoverData({
+                            book={{
                               title: targetTitle,
+                              glyph: g.book.glyph,
                               domain: targetDomain,
-                            })}
+                              palette: g.book.palette as BookCoverPalette,
+                              vol: "Vol. 01",
+                              version: "v1",
+                              author: "—",
+                            }}
                             size="xs"
                             flat
                           />

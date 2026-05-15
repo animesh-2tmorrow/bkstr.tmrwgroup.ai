@@ -106,7 +106,27 @@ type ValidatedInput = {
   description: string | null;
   content: string;
   priceUsdCents: number;
+  // PR 8 — typographic cover drivers. Optional in the API contract; the
+  // Book columns have NOT NULL DB-side defaults ('indigo' / '?') so an
+  // unspecified pair still inserts cleanly (see migration 20260515090000).
+  // The new-book form always supplies both, but the route stays permissive
+  // for programmatic callers (scripts/import-book.ts, etc.).
+  palette: string | null;
+  glyph: string | null;
 };
+
+// PR 8 — palette + glyph validation. Palette is one of 6 fixed keys
+// (must match BookCoverPalette in src/components/design/book-cover.tsx).
+// Glyph is a single uppercase ASCII letter or '?'.
+const VALID_PALETTES = new Set([
+  "saffron",
+  "forest",
+  "oxblood",
+  "indigo",
+  "plum",
+  "slate",
+]);
+const GLYPH_REGEX = /^[A-Z?]$/;
 
 function validateInput(body: unknown): ValidatedInput | { error: string } {
   if (!body || typeof body !== "object") return { error: "Body must be a JSON object" };
@@ -157,7 +177,32 @@ function validateInput(body: unknown): ValidatedInput | { error: string } {
     };
   }
 
-  return { title, slug, domain, description, content, priceUsdCents: priceRaw };
+  // PR 8 — palette/glyph are optional. Empty/missing → null → DB default
+  // applies on insert. Typed values are validated against the
+  // BookCoverPalette enum and the single-uppercase-letter glyph shape.
+  let palette: string | null = null;
+  if (typeof b.palette === "string" && b.palette.length > 0) {
+    if (!VALID_PALETTES.has(b.palette)) {
+      return {
+        error: `palette must be one of ${[...VALID_PALETTES].join("|")}`,
+      };
+    }
+    palette = b.palette;
+  } else if (b.palette !== undefined && b.palette !== null) {
+    return { error: "palette must be a string when provided" };
+  }
+  let glyph: string | null = null;
+  if (typeof b.glyph === "string" && b.glyph.length > 0) {
+    const upper = b.glyph.toUpperCase();
+    if (!GLYPH_REGEX.test(upper)) {
+      return { error: "glyph must be a single uppercase ASCII letter or '?'" };
+    }
+    glyph = upper;
+  } else if (b.glyph !== undefined && b.glyph !== null) {
+    return { error: "glyph must be a string when provided" };
+  }
+
+  return { title, slug, domain, description, content, priceUsdCents: priceRaw, palette, glyph };
 }
 
 export async function POST(request: Request) {
@@ -190,7 +235,7 @@ export async function POST(request: Request) {
   if ("error" in validated) {
     return NextResponse.json({ error: validated.error }, { status: 400 });
   }
-  const { title, slug, domain, description, content, priceUsdCents } = validated;
+  const { title, slug, domain, description, content, priceUsdCents, palette, glyph } = validated;
 
   // Step 3 — resolve tmrwgroup Publisher row. Phase 4 §0.1 "publishers
   // internal-only" — all books map to this single row regardless of which
@@ -296,6 +341,12 @@ export async function POST(request: Request) {
           title,
           description,
           domain,
+          // PR 8 — only specify palette/glyph when the caller supplied
+          // them; otherwise let the DB-side defaults apply ('indigo' / '?').
+          // The new-book form always supplies both; programmatic callers
+          // (scripts/import-book.ts) may omit them.
+          ...(palette !== null ? { palette } : {}),
+          ...(glyph !== null ? { glyph } : {}),
           status: BookStatus.ACTIVE,
         },
       }),

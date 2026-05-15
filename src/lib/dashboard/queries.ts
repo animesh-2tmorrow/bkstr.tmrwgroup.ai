@@ -6,6 +6,13 @@ export type BookWithMetrics = {
   title: string;
   slug: string;
   domain: string;
+  // PR 8 — typographic cover drivers. `palette` is one of
+  // saffron|forest|oxblood|indigo|plum|slate; `glyph` is a single
+  // uppercase ASCII letter ('?' for non-alpha titles). Threaded through
+  // to the books-table SVG cover render. See prisma/schema.prisma Book
+  // model for the columns and migration 20260515090000 for the backfill.
+  palette: string;
+  glyph: string;
   latestVersion: number;
   totalFetches: number;
   fetches30d: number;
@@ -41,18 +48,25 @@ export async function getBooksWithMetrics(): Promise<BookWithMetrics[]> {
     title: string;
     slug: string;
     domain: string;
+    palette: string;
+    glyph: string;
     latest_version: number;
     total_fetches: number;
     fetches_30d: number;
     active_agents_30d: number;
     last_fetched_at: Date | null;
   };
+  // PR 8 — palette + glyph join the SELECT and the GROUP BY. Both are
+  // scalar columns on `books`, not aggregated, so they appear in GROUP BY
+  // for Postgres's "every non-aggregate must be in GROUP BY" rule.
   const rows = await prisma.$queryRaw<Row[]>(Prisma.sql`
     SELECT
       b.id::text                                                                          AS id,
       b.title                                                                             AS title,
       b.slug                                                                              AS slug,
       b.domain                                                                            AS domain,
+      b.palette                                                                           AS palette,
+      b.glyph                                                                             AS glyph,
       COALESCE(MAX(bv.version), 0)::int                                                   AS latest_version,
       COUNT(fl.id)::int                                                                   AS total_fetches,
       COUNT(fl.id) FILTER (WHERE fl.created_at > NOW() - INTERVAL '30 days')::int         AS fetches_30d,
@@ -62,7 +76,7 @@ export async function getBooksWithMetrics(): Promise<BookWithMetrics[]> {
     FROM books b
     LEFT JOIN book_versions bv ON bv.book_id = b.id
     LEFT JOIN fetch_logs fl    ON fl.book_version_id = bv.id
-    GROUP BY b.id, b.title, b.slug, b.domain
+    GROUP BY b.id, b.title, b.slug, b.domain, b.palette, b.glyph
     ORDER BY b.title
   `);
   return rows.map((r) => ({
@@ -70,6 +84,8 @@ export async function getBooksWithMetrics(): Promise<BookWithMetrics[]> {
     title: r.title,
     slug: r.slug,
     domain: r.domain,
+    palette: r.palette,
+    glyph: r.glyph,
     latestVersion: r.latest_version,
     totalFetches: r.total_fetches,
     fetches30d: r.fetches_30d,
@@ -495,6 +511,9 @@ export type LibraryBook = {
   title: string;
   slug: string;
   domain: string;
+  // PR 8 — typographic cover drivers, threaded through to library-table.
+  palette: string;
+  glyph: string;
   description: string | null;
   publisherName: string;
 };
@@ -613,6 +632,8 @@ export async function getBooksForLibrary(): Promise<LibraryBook[]> {
       title: true,
       slug: true,
       domain: true,
+      palette: true,
+      glyph: true,
       description: true,
       publisher: { select: { name: true } },
       publisherUser: { select: { name: true } },
@@ -623,6 +644,8 @@ export async function getBooksForLibrary(): Promise<LibraryBook[]> {
     title: b.title,
     slug: b.slug,
     domain: b.domain,
+    palette: b.palette,
+    glyph: b.glyph,
     description: b.description,
     // Per-user attribution wins when present; tenant Publisher name is the
     // staged-NULL fallback. Edge case: publisherUser.name itself may be NULL

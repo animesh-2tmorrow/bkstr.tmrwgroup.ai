@@ -87,13 +87,26 @@ model Book {
   // on new-book creation; existing 5 books backfill as NULL.
   description     String?    @db.Text
   // Phase 5 Stream H (D15.6) — publisher-uploaded cover image stored in S3.
-  // Nullable: existing books have no cover; storefront renders a domain-initial
-  // placeholder tile when null. Written by /api/books/[id]/cover upload handler.
-  // Bucket policy on bkstr-tmrw-prod allows public reads on book-covers/* so
-  // next/image can render without signed URLs. See docs/operations.md for the
-  // bucket policy JSON + env-staging runbook.
+  // Nullable: existing books have no cover.
+  //
+  // bkstr redesign PR 8 — column hidden from UI but kept in schema for one
+  // cycle per the original PR plan. No surface reads it after PR 8 ships
+  // (typographic <BookCover> uses the new palette + glyph columns
+  // exclusively); the upload endpoint at /api/books/[id]/cover and this
+  // column drop on a future cycle once we confirm zero in-flight references.
   coverImageUrl   String?    @map("cover_image_url") @db.Text
   domain          String     @db.VarChar(64)
+  // bkstr redesign PR 8 — typographic cover SVG drivers.
+  //   `palette` — one of saffron|forest|oxblood|indigo|plum|slate.
+  //   `glyph`   — single uppercase ASCII letter; '?' for non-alpha titles.
+  // NOT NULL with DB-side defaults for co-deploy safety: old code paths
+  // that don't supply these fields still INSERT successfully during the
+  // ~3.5min deploy window when migration has run but pm2 reload hasn't
+  // (see migration 20260515090000 comment block for the full rationale).
+  // Backfill heuristic for the 5 production books is documented in the
+  // same migration file.
+  palette         String     @default("indigo") @db.VarChar(16)
+  glyph           String     @default("?") @db.Char(1)
   status          BookStatus @default(DRAFT)
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")

@@ -22,8 +22,7 @@ import {
   Button,
   BookCover,
 } from '@/components/design';
-import type { BookCoverData } from '@/components/design/book-cover';
-import { bookToCoverData } from '@/lib/books/cover-derive';
+import type { BookCoverData, BookCoverPalette } from '@/components/design/book-cover';
 
 // Sample covers for the hero stack when the DB has fewer than 3 books
 // (e.g., a fresh dev environment, or pre-launch state). These mirror the
@@ -85,11 +84,28 @@ export default async function HomePage() {
   // The rest of the page is content-static and doesn't depend on real
   // data — the page still gives the visitor everything except the live
   // book renders.
-  let books: { id: string; slug: string; title: string; domain: string }[] = [];
+  // PR 8 — palette + glyph join the SELECT so the hero stack + featured
+  // shelf render with the same persisted typographic data the rest of the
+  // app uses. The shape stays minimal — covers + slug for the link target.
+  let books: {
+    id: string;
+    slug: string;
+    title: string;
+    domain: string;
+    palette: string;
+    glyph: string;
+  }[] = [];
   try {
     books = await prisma.book.findMany({
       where: { status: 'ACTIVE' },
-      select: { id: true, slug: true, title: true, domain: true },
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        domain: true,
+        palette: true,
+        glyph: true,
+      },
       orderBy: { createdAt: 'desc' },
       take: 6,
     });
@@ -112,7 +128,19 @@ export default async function HomePage() {
   // for anonymous visitors regardless of catalog size, and gives local
   // dev environments a working preview without a seeded DB.
   const heroBookCovers: BookCoverData[] =
-    books.length >= 3 ? books.slice(0, 3).map(bookToCoverData) : [...SAMPLE_HERO_BOOKS];
+    books.length >= 3
+      ? books.slice(0, 3).map(
+          (b): BookCoverData => ({
+            title: b.title,
+            glyph: b.glyph,
+            domain: b.domain,
+            palette: b.palette as BookCoverPalette,
+            vol: 'Vol. 01',
+            version: 'v1',
+            author: '—',
+          }),
+        )
+      : [...SAMPLE_HERO_BOOKS];
   // "On the shelf" only renders when real catalog data exists. We don't
   // pad with samples here — the section's headline ("BROWSE ALL N →")
   // is meaningless against fake data.
@@ -312,7 +340,15 @@ $ curl -H "Authorization: Bearer $BKSTR_KEY" \\
             {shelfBooks.map((b) => (
               <Link key={b.id} href="/storefront" className="block group">
                 <BookCover
-                  book={bookToCoverData(b)}
+                  book={{
+                    title: b.title,
+                    glyph: b.glyph,
+                    domain: b.domain,
+                    palette: b.palette as BookCoverPalette,
+                    vol: 'Vol. 01',
+                    version: 'v1',
+                    author: '—',
+                  }}
                   size="lg"
                   className="w-full h-auto"
                 />

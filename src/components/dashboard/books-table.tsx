@@ -4,15 +4,19 @@ import Link from "next/link";
 import type { BookWithMetrics, BookAccessState } from "@/lib/dashboard/queries";
 import { AccessCell } from "@/components/dashboard/access-cell";
 import { BookCover, Eyebrow } from "@/components/design";
-import { bookToCoverData } from "@/lib/books/cover-derive";
+import type { BookCoverPalette } from "@/components/design/book-cover";
 
 // bkstr redesign PR 3 — Active Books table.
 //
 // Restyle of the Stream H/Phase-3 table: design tokens (paper bg, ink
 // borders, mono uppercase headers, no rounded corners), per-row
-// xs-sized BookCover SVG (typographic — coverImageUrl ignored), inline
-// 14-day sparkline. AccessCell preserved verbatim for the buy / granted
-// status column.
+// xs-sized BookCover SVG (typographic — palette + glyph from columns).
+// Inline 14-day sparkline. AccessCell preserved verbatim for the buy /
+// granted status column.
+//
+// PR 8 — palette + glyph now flow from BookWithMetrics (sourced from
+// the `books.palette` / `books.glyph` columns). Replaces the prior
+// client-side bookToCoverData derivation.
 //
 // Sparkline data is OPTIONAL — pages that don't have time-series data
 // pass undefined and the trend column renders "—". The `/dashboard`
@@ -81,7 +85,15 @@ export function BooksTable({
                   <div className="flex gap-3.5 items-center">
                     <div className="shrink-0">
                       <BookCover
-                        book={bookToCoverData({ title: b.title, domain: b.domain })}
+                        book={{
+                          title: b.title,
+                          glyph: b.glyph,
+                          domain: b.domain,
+                          palette: b.palette as BookCoverPalette,
+                          vol: "Vol. 01",
+                          version: `v${b.latestVersion}`,
+                          author: "—",
+                        }}
                         size="xs"
                         flat
                       />

@@ -19,7 +19,13 @@ export async function GET(request: Request) {
       subscriberId = subscriber?.id ?? null;
     }
 
-    // Fetch all active books with their latest version and pricing
+    // Fetch all active books with their latest version and pricing.
+    //
+    // PR 8 — palette + glyph replace coverImageUrl in the response shape.
+    // The storefront now renders typographic <BookCover> SVGs (no
+    // photographic covers per HANDOFF.md "imagery on books is forbidden").
+    // The cover_image_url column survives in the DB for one cycle but is
+    // intentionally NOT selected here — no consumer reads it.
     const books = await prisma.book.findMany({
       where: { status: "ACTIVE" },
       select: {
@@ -27,7 +33,8 @@ export async function GET(request: Request) {
         title: true,
         description: true,
         domain: true,
-        coverImageUrl: true,
+        palette: true,
+        glyph: true,
         prices: {
           where: { currency: "USD" },
           select: {
@@ -79,7 +86,8 @@ export async function GET(request: Request) {
         title: book.title,
         description: book.description,
         domain: book.domain,
-        coverImageUrl: book.coverImageUrl ?? null,
+        palette: book.palette,
+        glyph: book.glyph,
         unitAmountCents: price?.unitAmountCents ?? null,
         stripePriceId: price?.stripePriceId ?? null,
         state,

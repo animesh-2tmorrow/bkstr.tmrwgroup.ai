@@ -11,10 +11,6 @@ import {
   BookCover,
   Button,
 } from "@/components/design";
-import {
-  bookToCoverData,
-  derivePalette,
-} from "@/lib/books/cover-derive";
 import type { PillVariant } from "@/components/design";
 import type { BookCoverPalette } from "@/components/design/book-cover";
 
@@ -27,23 +23,27 @@ import type { BookCoverPalette } from "@/components/design/book-cover";
 //   - Shelves filter (Pill primitive) + search + sort row.
 //   - Vertical book grid using BookCover SVG (typographic) — no
 //     photographic covers (HANDOFF.md §What NOT to do).
-//   - Per-card Pill for domain category (color derived from `palette`).
+//   - Per-card Pill for domain category (color = book's palette column).
 //   - Bottom CTA stack: lift placeholder + price + Buy/Owned button.
 //
-// Data shape from /api/storefront/books is unchanged — dispatch §constraint
-// is "Keep all existing data fetching and state — just swap the markup
-// and classes." The session-aware Buy / Already-Owned / Not-Available
-// states are preserved.
+// PR 8 — palette + glyph now arrive on every BookWithPrice row from the
+// API, sourced from the book's persistent palette/glyph columns. The
+// previous client-side derivation via lib/books/cover-derive is gone;
+// that helper module is deleted in this PR.
 //
-// `palette` and `glyph` are derived locally via lib/books/cover-derive
-// until PR 8 adds real columns.
+// The per-domain shelves filter still needs a palette per domain (for the
+// active-pill color). Books in the same domain share the same palette by
+// the migration's backfill heuristic, so we read the first book's palette
+// per domain rather than re-deriving.
 
 interface BookWithPrice {
   id: string;
   title: string;
   description: string | null;
   domain: string;
-  coverImageUrl: string | null;
+  // PR 8 — typographic cover drivers from the books table.
+  palette: BookCoverPalette;
+  glyph: string;
   unitAmountCents: number | null;
   stripePriceId: string | null;
   state: "for_sale" | "not_for_sale" | "granted";
@@ -125,10 +125,17 @@ export default function StorefrontPage() {
   }, []);
 
   // Build the shelves filter row — distinct domain values + their counts.
+  // Per-domain palette comes from the first matching book; the migration
+  // backfills books in the same domain to the same palette, so the lookup
+  // is stable. PR 8 dropped the client-side derivePalette helper.
   const domains = useMemo(() => {
     const counts = new Map<string, number>();
+    const paletteByDomain = new Map<string, BookCoverPalette>();
     for (const b of books) {
       counts.set(b.domain, (counts.get(b.domain) ?? 0) + 1);
+      if (!paletteByDomain.has(b.domain)) {
+        paletteByDomain.set(b.domain, b.palette);
+      }
     }
     return [
       { id: "all", label: "All catalog", count: books.length, palette: null as BookCoverPalette | null },
@@ -136,7 +143,7 @@ export default function StorefrontPage() {
         id,
         label: humanDomain(id),
         count,
-        palette: derivePalette(id),
+        palette: paletteByDomain.get(id) ?? null,
       })),
     ];
   }, [books]);
@@ -302,14 +309,21 @@ export default function StorefrontPage() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-12">
               {filtered.map((book) => {
-                const palette = derivePalette(book.domain);
-                const pillVariant = PALETTE_PILL[palette];
+                const pillVariant = PALETTE_PILL[book.palette];
                 const isOwned = book.state === "granted";
                 const isForSale = book.state === "for_sale";
                 return (
                   <article key={book.id} className="flex flex-col">
                     <BookCover
-                      book={bookToCoverData({ title: book.title, domain: book.domain })}
+                      book={{
+                        title: book.title,
+                        glyph: book.glyph,
+                        domain: book.domain,
+                        palette: book.palette,
+                        vol: "Vol. 01",
+                        version: "v1",
+                        author: "—",
+                      }}
                       size="lg"
                       className="w-full h-auto"
                     />

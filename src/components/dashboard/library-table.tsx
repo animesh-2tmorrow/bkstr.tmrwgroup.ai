@@ -4,7 +4,7 @@ import { AccessCell } from "@/components/dashboard/access-cell";
 import { ApiInstructionsBlock } from "@/components/dashboard/api-instructions-block";
 import { formatUsdCents } from "@/lib/format/currency";
 import { BookCover, Eyebrow } from "@/components/design";
-import { bookToCoverData } from "@/lib/books/cover-derive";
+import type { BookCoverPalette } from "@/components/design/book-cover";
 
 // bkstr redesign PR 3 — Library table.
 //
@@ -119,10 +119,15 @@ export function LibraryTable({
                       <div className="flex gap-3.5 items-start">
                         <div className="shrink-0">
                           <BookCover
-                            book={bookToCoverData({
+                            book={{
                               title: b.title,
+                              glyph: b.glyph,
                               domain: b.domain,
-                            })}
+                              palette: b.palette as BookCoverPalette,
+                              vol: "Vol. 01",
+                              version: "v1",
+                              author: "—",
+                            }}
                             size="xs"
                             flat
                           />
