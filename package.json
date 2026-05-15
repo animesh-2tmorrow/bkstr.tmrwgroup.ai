@@ -9,7 +9,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "import-book": "tsx scripts/import-book.ts",
-    "migrate-content-to-s3": "tsx scripts/migrate-content-to-s3.ts"
+    "migrate-content-to-s3": "tsx scripts/migrate-content-to-s3.ts",
+    "screenshots:auth-setup": "playwright test --config=scripts/screenshots/playwright.config.ts --project=auth-setup",
+    "screenshots:public": "playwright test --config=scripts/screenshots/playwright.config.ts --project=public",
+    "screenshots:authed": "playwright test --config=scripts/screenshots/playwright.config.ts --project=authed",
+    "screenshots": "npm run screenshots:public && npm run screenshots:authed"
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "0.29.1",
@@ -34,6 +38,7 @@
     "yaml": "2.9.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/adm-zip": "0.5.7",
     "@types/node": "^20.19.40",
     "@types/nodemailer": "7.0.11",

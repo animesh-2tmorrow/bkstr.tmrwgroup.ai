@@ -47,3 +47,10 @@ next-env.d.ts
 # Imported via `npm run import-book` per-environment; never bundled with code.
 /seed-content/*.md
 /seed-content/**/*.md
+
+# get-started Phase B — Playwright screenshot capture (get-started/phase-b-screenshots).
+# storage-state.json holds a live __Secure-next-auth.session-token cookie
+# (animesh@2tmorrow.com); leaking it grants full account access. The results
+# dir is per-run noise (traces, videos, html reports). Both regenerate.
+/scripts/screenshots/storage-state.json
+/.playwright-results/
