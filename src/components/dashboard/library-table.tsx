@@ -126,16 +126,21 @@ export function LibraryTable({
                       (isLast ? "" : "border-b border-rule")
                     }
                   >
-                    {/* Title cell — kind-aware cover/header */}
+                    {/* Title cell — single <BookCover> render for both
+                        kinds (redesign(10)/6). Skills pass "SKILL" as the
+                        imprint-bar domain; books pass their actual
+                        domain. The kind-aware "SKILL · .zip" pill below
+                        in the subtitle row stays — pill discriminates
+                        kind, cover unifies. */}
                     <td className="px-4 py-4">
                       <div className="flex gap-3.5 items-start">
                         <div className="shrink-0">
-                          {item.kind === "book" && item.palette && item.glyph ? (
+                          {item.palette && item.glyph ? (
                             <BookCover
                               book={{
                                 title: item.displayName,
                                 glyph: item.glyph,
-                                domain: item.domain ?? "—",
+                                domain: item.domain ?? "SKILL",
                                 palette: item.palette as BookCoverPalette,
                                 vol: "Vol. 01",
                                 version: `v${item.latestVersion || 1}`,
@@ -144,18 +149,7 @@ export function LibraryTable({
                               size="xs"
                               flat
                             />
-                          ) : (
-                            // Skill thumbnail — typographic, no cover.
-                            // Same width as BookCover xs (~48px) so rows
-                            // align. Uses paper-2 background + italic
-                            // first-letter glyph in ink-3 for a typographic
-                            // "shelf placeholder" feel.
-                            <div className="w-12 h-16 bg-paper-2 border border-rule flex items-center justify-center">
-                              <span className="font-serif italic text-[28px] leading-none text-ink-3">
-                                {item.displayName.charAt(0).toUpperCase() || "?"}
-                              </span>
-                            </div>
-                          )}
+                          ) : null}
                         </div>
                         <div className="min-w-0">
                           <div className="font-serif text-[15.5px] tracking-tight text-ink">

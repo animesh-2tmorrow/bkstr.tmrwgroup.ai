@@ -386,10 +386,15 @@ function ItemCard({
   busyId: string | null;
   onBuyStart: () => void;
 }) {
-  const pillVariant: PillVariant =
-    item.kind === "book" && item.palette
-      ? PALETTE_PILL[item.palette]
-      : "saffron";
+  // redesign(10)/6 — pillVariant now resolves for both kinds. Books use
+  // their persisted palette → matching pill tint; skills use the derived
+  // palette from resolveSlug() / getCatalogForLibrary so the pill color
+  // matches the cover color on the card. (The pill TEXT still
+  // discriminates kind — "BOOK · <domain>" vs "SKILL · .zip" — but the
+  // tint is unified to the cover.)
+  const pillVariant: PillVariant = item.palette
+    ? PALETTE_PILL[item.palette]
+    : "saffron";
   return (
     <article className="flex flex-col">
       {/* Clickable card body — wraps cover/header/title/desc/price */}
@@ -397,12 +402,19 @@ function ItemCard({
         href={`/storefront/${encodeURIComponent(item.slug)}`}
         className="block group"
       >
-        {item.kind === "book" && item.palette && item.glyph ? (
+        {/* redesign(10)/6 — single <BookCover> render for both kinds. The
+            old skill-side text-only placeholder is gone (HANDOFF Q4
+            "typographic-mono for skills" stance reversed; visual parity
+            with books wins). Skills pass "SKILL" as the imprint-bar
+            domain so the top reads "BKSTR — SKILL"; books pass their
+            actual domain. The gate drops the `kind === "book"` clause
+            because palette/glyph are now non-null for both kinds. */}
+        {item.palette && item.glyph ? (
           <BookCover
             book={{
               title: item.displayName,
               glyph: item.glyph,
-              domain: item.domain ?? "—",
+              domain: item.domain ?? "SKILL",
               palette: item.palette,
               vol: "Vol. 01",
               version: `v${item.latestVersion || 1}`,
@@ -411,26 +423,7 @@ function ItemCard({
             size="lg"
             className="w-full h-auto"
           />
-        ) : (
-          // Skill cards have NO cover per HANDOFF Q4 — text-only header.
-          // Render a same-aspect placeholder so the grid rows stay aligned
-          // when books and skills mix. Inside: the SKILL · .zip pill at
-          // top-left, version + file count at top-right. Same "shelf" feel
-          // as book covers but typographic.
-          <div className="w-full aspect-[5/7] bg-paper-2 border border-rule p-5 flex flex-col">
-            <div className="flex justify-between items-start">
-              <Pill variant="saffron">SKILL · .zip</Pill>
-              <Eyebrow className="text-ink-3">
-                V{item.latestVersion || 1}
-              </Eyebrow>
-            </div>
-            <div className="flex-grow flex items-end">
-              <div className="font-serif italic text-[42px] leading-none text-ink-3 tracking-display">
-                {item.displayName.charAt(0).toUpperCase() || "?"}
-              </div>
-            </div>
-          </div>
-        )}
+        ) : null}
 
         <div className="mt-5 pb-3">
           <div className="flex justify-between items-baseline gap-2">

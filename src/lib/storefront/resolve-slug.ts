@@ -17,6 +17,7 @@
 
 import { prisma } from "@/lib/db";
 import type { BookCoverPalette } from "@/components/design/book-cover";
+import { deriveSkillCover } from "./skill-cover";
 
 export type StorefrontKind = "book" | "skill";
 
@@ -181,6 +182,14 @@ export async function resolveSlug(slug: string): Promise<ResolvedItem | null> {
   if (skill) {
     const latest = skill.versions[0];
     const price = skill.price ?? null;
+    // redesign(10)/6 — derive a (palette, glyph) pair deterministically
+    // from (slug, name) so the skill renders through the same <BookCover>
+    // SVG as books. Domain stays null because skills don't have a domain
+    // column; the cover-side code uses a "SKILL" literal for the imprint
+    // bar at render time. The HANDOFF Q4 "typographic-mono" stance for
+    // skills was reversed in this phase — visual parity beats the
+    // mono-only treatment now that books + skills live in one grid.
+    const derived = deriveSkillCover(skill.slug, skill.name);
     return {
       kind: "skill",
       id: skill.id,
@@ -188,12 +197,12 @@ export async function resolveSlug(slug: string): Promise<ResolvedItem | null> {
       displayName: skill.name,
       description: skill.description,
       status: skill.status,
-      // Skills have no domain / palette / glyph (typographic-mono treatment
-      // per HANDOFF Q4). Explicit null so the unified detail page can branch
-      // on these for the cover render.
+      // Skills still lack a domain column; the storefront / detail page
+      // substitute a "SKILL" literal in the BookCover's `domain` prop at
+      // render time so the imprint bar reads "BKSTR — SKILL".
       domain: null,
-      palette: null,
-      glyph: null,
+      palette: derived.palette,
+      glyph: derived.glyph,
       unitAmountCents: price?.unitAmountCents ?? null,
       stripePriceId: price?.stripePriceId ?? null,
       latestVersion: latest?.version ?? 0,

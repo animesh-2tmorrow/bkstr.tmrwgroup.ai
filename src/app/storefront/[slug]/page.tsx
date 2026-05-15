@@ -168,16 +168,21 @@ export default async function StorefrontDetailPage({
               </Pill>
             )}
 
-            {/* Books carry a BookCover SVG above the title for visual
-                richness (per HANDOFF.md typographic-cover treatment).
-                Skills are typographic-mono per Q4 — no cover element. */}
-            {item.kind === "book" && item.palette && item.glyph && (
+            {/* redesign(10)/6 — BookCover renders for both kinds. Skills
+                pass "SKILL" as the imprint-bar domain since they don't
+                carry one; books pass their actual domain. Gate dropped
+                the `kind === "book"` clause because palette+glyph are
+                now non-null for both kinds (derived deterministically
+                for skills via deriveSkillCover(slug, name)). The HANDOFF
+                Q4 "typographic-mono" treatment for skills was reversed
+                in this phase. */}
+            {item.palette && item.glyph && (
               <div className="float-right ml-8 mb-4 hidden md:block">
                 <BookCover
                   book={{
                     title: item.displayName,
                     glyph: item.glyph,
-                    domain: item.domain ?? "—",
+                    domain: item.domain ?? "SKILL",
                     palette: item.palette as BookCoverPalette,
                     vol: "Vol. 01",
                     version: `v${item.latestVersion}`,

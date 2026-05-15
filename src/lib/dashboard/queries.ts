@@ -5,6 +5,10 @@ import { prisma } from "@/lib/db";
 // semantics happy (mid-file imports are syntax errors).
 import type { BookCoverPalette } from "@/components/design/book-cover";
 import type { StorefrontKind } from "@/lib/storefront/resolve-slug";
+// redesign(10)/6 — skill cover derivation for getCatalogForLibrary's
+// skill branch. Same helper resolve-slug.ts uses; output is deterministic
+// across both call sites.
+import { deriveSkillCover } from "@/lib/storefront/skill-cover";
 
 export type BookWithMetrics = {
   id: string;
@@ -1063,15 +1067,22 @@ export async function getCatalogForLibrary(): Promise<LibraryItem[]> {
       s.publisherUser?.name && s.publisherUser.name.trim().length > 0
         ? s.publisherUser.name
         : null;
+    // redesign(10)/6 — derived cover for the storefront/library grid.
+    // Same (palette, glyph) the resolver returns for the same skill;
+    // determinism guaranteed by the shared helper.
+    const derived = deriveSkillCover(s.slug, s.name);
     return {
       kind: "skill",
       id: s.id,
       slug: s.slug,
       displayName: s.name,
       description: s.description,
+      // domain stays null — skill schema has no domain column. The
+      // storefront grid + detail page substitute a "SKILL" literal for
+      // the cover's imprint bar at render time.
       domain: null,
-      palette: null,
-      glyph: null,
+      palette: derived.palette,
+      glyph: derived.glyph,
       publisherName: userName ?? s.publisher.name,
       publisherUserName: userName,
       latestVersion: s.versions[0]?.version ?? 0,
