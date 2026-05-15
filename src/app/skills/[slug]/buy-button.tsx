@@ -1,8 +1,17 @@
 "use client";
 
-// Phase 6 Stream L (D18.1) — skill Buy/Download/Sign-in CTA. Client component
-// because Buy posts to /api/checkout and follows the Stripe redirect, and
-// because we render different button states based on session + grant.
+// bkstr redesign PR 4 — skill Buy/Download/Sign-in CTA, restyled.
+//
+// Three terminal states (per Stream L D18.1 design):
+//   - signedIn=false              -> "Sign in to buy"  (links to /login)
+//   - alreadyOwns=true            -> "Download (.zip)" (anchor to download endpoint)
+//   - signedIn=true && for sale   -> "Buy now — $X.XX" (POST /api/checkout, Stripe redirect)
+//   - priceCents=null             -> "Not available — pricing not configured"
+//
+// All four states render as a full-width inline-flex bar at the bottom of
+// the detail card. Square corners, design-system ink-on-paper for primary,
+// muted ink-3 for the not-configured state, status-err inline for the
+// error toast.
 
 import { useState } from "react";
 
@@ -25,10 +34,10 @@ export function SkillBuyButton({
   if (!signedIn) {
     return (
       <a
-        href="/login"
-        className="block bg-[#0D1B2A] hover:bg-[#051B2A] text-white text-center py-3.5 text-sm font-bold"
+        href={`/login?callbackUrl=/skills/${encodeURIComponent(slug)}`}
+        className={ROW + " " + PRIMARY}
       >
-        Sign in to buy
+        Sign in to buy →
       </a>
     );
   }
@@ -37,16 +46,19 @@ export function SkillBuyButton({
     return (
       <a
         href={`/api/skills/${encodeURIComponent(slug)}/download`}
-        className="block bg-[#0D1B2A] hover:bg-[#051B2A] text-white text-center py-3.5 text-sm font-bold"
+        className={ROW + " " + PRIMARY}
       >
-        Download (.zip)
+        ↓ Download (.zip)
       </a>
     );
   }
 
   if (priceCents == null) {
     return (
-      <div className="block bg-gray-200 text-gray-500 text-center py-3.5 text-sm font-bold">
+      <div
+        className={ROW + " bg-paper-2 text-ink-3"}
+        aria-disabled="true"
+      >
         Not available — pricing not configured
       </div>
     );
@@ -61,7 +73,10 @@ export function SkillBuyButton({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ skill_id: skillId }),
       });
-      const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      const body = (await res.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+      };
       if (!res.ok || !body.url) {
         throw new Error(body.error ?? `Checkout failed (HTTP ${res.status})`);
       }
@@ -78,13 +93,23 @@ export function SkillBuyButton({
         type="button"
         onClick={onBuy}
         disabled={busy}
-        className="block w-full bg-[#0D1B2A] hover:bg-[#051B2A] disabled:opacity-50 text-white py-3.5 text-sm font-bold"
+        className={ROW + " " + PRIMARY + " disabled:opacity-50 cursor-pointer"}
       >
-        {busy ? "Redirecting to Stripe…" : `Buy now — $${(priceCents / 100).toFixed(2)}`}
+        {busy
+          ? "Redirecting to Stripe…"
+          : `Buy now — $${(priceCents / 100).toFixed(2)} →`}
       </button>
       {error && (
-        <p className="px-8 py-3 text-xs text-red-600 bg-red-50 border-t border-red-100">{error}</p>
+        <p className="px-8 py-3 text-xs text-status-err bg-paper-2 border-t border-rule">
+          {error}
+        </p>
       )}
     </>
   );
 }
+
+// Shared bar shape across all four states — keeps padding/typography
+// identical so the visual height doesn't jump when the state flips.
+const ROW =
+  "block w-full text-center py-4 text-sm font-sans font-medium tracking-tight transition-colors";
+const PRIMARY = "bg-ink text-paper hover:bg-ink-2";

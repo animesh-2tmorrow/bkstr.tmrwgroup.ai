@@ -1,87 +1,158 @@
-// Phase 6 Stream L (D18.1) — public skills listing, thin analog of /storefront
-// for books. Server component, direct prisma access (matches the dashboard
-// pattern; /storefront itself is client-side for now because of the bigger
-// per-card interactions — the L MVP is simpler).
+// bkstr redesign PR 4 — public skills listing.
+//
+// Reskin of the Stream L L-MVP listing (rounded-card grid + navy CTAs).
+// New look: editorial Masthead chrome shared with /storefront, eyebrow +
+// display-serif heading, 2-up card grid with mono-style title, expandable
+// file list, design-system Button. Marketing footer at the bottom.
+//
+// Skills don't have palette/glyph (operator Q4: books-only) — cards stay
+// typographic-mono with no <BookCover> SVG. Per-card metadata is limited
+// to what production schema actually carries today (name, description,
+// price, version, file count). Author/fetches/deps from the reference's
+// data.jsx are NOT in production today; flagged as a future enrichment
+// (fetch tracking is partially blocked on follow-up #128's fetch_logs
+// polymorphism).
 
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import {
+  Masthead,
+  MarketingFooter,
+  Eyebrow,
+  Pill,
+  Button,
+} from "@/components/design";
+import { SkillFilesDetails } from "@/components/skills/skill-files-details";
 
 export const metadata = { title: "Skills | bkstr" };
 export const dynamic = "force-dynamic";
 
+const MASTHEAD_NAV = [
+  { label: "Home", href: "/" },
+  { label: "Catalog", href: "/storefront" },
+  { label: "Skills", href: "/skills", active: true },
+  { label: "Docs", href: "/dashboard/docs" },
+  { label: "Log in", href: "/login" },
+];
+
+function formatPrice(cents: number | null): string {
+  if (cents == null) return "—";
+  return `$${(cents / 100).toFixed(0)}`;
+}
+
 export default async function SkillsListingPage() {
-  const skills = await prisma.skill.findMany({
-    where: { status: "ACTIVE" },
-    select: {
-      id: true,
-      slug: true,
-      name: true,
-      description: true,
-      price: { select: { unitAmountCents: true } },
-    },
-    orderBy: { name: "asc" },
-  });
+  const skills = await prisma.skill
+    .findMany({
+      where: { status: "ACTIVE" },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        description: true,
+        price: { select: { unitAmountCents: true } },
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          select: {
+            version: true,
+            createdAt: true,
+            files: {
+              orderBy: { order: "asc" },
+              select: { path: true, extension: true, byteSize: true },
+            },
+          },
+        },
+      },
+      orderBy: { name: "asc" },
+    })
+    .catch(() => []);
 
   return (
-    <div className="min-h-screen bg-[#FAF6EC] text-gray-900">
-      <header className="border-b border-[#E5DCC8] px-6 py-5">
-        <div className="max-w-7xl mx-auto flex justify-between items-baseline">
-          <Link href="/" className="text-xl font-bold italic text-gray-900">
-            bkstr.tmrwgroup.ai
-          </Link>
-          <nav className="text-sm flex gap-4 text-gray-500">
-            <Link href="/storefront" className="hover:text-gray-900">Books</Link>
-            <Link href="/skills" className="text-gray-900 font-semibold">Skills</Link>
-            <Link href="/about" className="hover:text-gray-900">About</Link>
-            <Link href="/login" className="hover:text-gray-900">Log in</Link>
-          </nav>
-        </div>
-      </header>
+    <div className="min-h-screen flex flex-col bg-paper">
+      <Masthead navItems={MASTHEAD_NAV} />
 
-      <main className="max-w-7xl mx-auto px-6 py-10">
-        <section className="mb-8">
-          <h1 className="text-3xl font-serif font-bold tracking-tight">Skills</h1>
-          <p className="text-sm text-gray-600 mt-2 max-w-2xl">
-            Bundled instruction sets your agents install once and use to consume bkstr content.
-            Each skill ships as a <code>.zip</code> containing a <code>SKILL.md</code> + supporting files.
+      <main className="flex-grow max-w-[1280px] mx-auto px-8 w-full pt-14 pb-14">
+        <section className="mb-12 max-w-[72ch]">
+          <Eyebrow>§ SKLLS · BUNDLED INSTRUCTION SETS</Eyebrow>
+          <h1 className="font-serif text-[clamp(36px,4.4vw,56px)] leading-[1.05] tracking-display m-0 mt-3">
+            Skills
+          </h1>
+          <p className="text-ink-3 text-base leading-[1.6] mt-4">
+            Bundled instruction sets your agents install once and use to
+            consume bkstr content. Each skill ships as a{" "}
+            <code className="font-mono bg-paper-2 px-1.5 py-0.5 border border-rule text-saffron-dk">
+              .zip
+            </code>{" "}
+            containing a{" "}
+            <code className="font-mono bg-paper-2 px-1.5 py-0.5 border border-rule text-saffron-dk">
+              SKILL.md
+            </code>{" "}
+            + supporting files. Buy once, install per agent, no recurring cost.
           </p>
         </section>
 
         {skills.length === 0 ? (
-          <div className="rounded-lg border border-[#E5DCC8] bg-white p-8 text-center text-sm text-gray-500">
-            No skills published yet.{" "}
-            <Link href="/dashboard/books/new" className="font-semibold underline text-gray-900">
-              Publishers: upload one.
-            </Link>
+          <div className="bg-paper border border-rule p-10 text-center">
+            <p className="text-ink-3 text-sm">
+              No skills published yet.{" "}
+              <Link
+                href="/dashboard/books/new"
+                className="text-ink underline hover:no-underline"
+              >
+                Publishers: upload one →
+              </Link>
+            </p>
           </div>
         ) : (
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {skills.map((s) => {
               const priceCents = s.price?.unitAmountCents ?? null;
-              const priceLabel =
-                priceCents != null ? `$${(priceCents / 100).toFixed(2)}` : "—";
+              const latest = s.versions[0];
+              const fileCount = latest?.files.length ?? 0;
               return (
                 <article
                   key={s.id}
-                  className="rounded-lg border border-[#E5DCC8] bg-white overflow-hidden flex flex-col"
+                  className="bg-paper border border-rule p-6 flex flex-col gap-4"
                 >
-                  <div className="p-6 flex-1">
-                    <div className="text-[10px] uppercase tracking-wide text-gray-500 bg-[#EAE2D0] inline-block px-1.5 py-0.5 rounded mb-2">
-                      Skill
+                  {/* Top row: pill + price */}
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="flex flex-col gap-2 min-w-0">
+                      <Pill variant="saffron" className="self-start">
+                        SKILL · .zip
+                      </Pill>
+                      <h2 className="font-serif text-[26px] tracking-tight text-ink m-0 truncate">
+                        {s.name}
+                      </h2>
+                      <div className="font-mono text-[11px] text-ink-3">
+                        v{latest?.version ?? "?"} · {fileCount}{" "}
+                        {fileCount === 1 ? "file" : "files"}
+                      </div>
                     </div>
-                    <h2 className="font-serif font-bold text-lg text-gray-900">{s.name}</h2>
-                    <p className="text-sm text-gray-600 mt-2 line-clamp-3">
-                      {s.description || "No description yet."}
-                    </p>
-                    <p className="text-sm font-bold text-gray-900 mt-4">{priceLabel}</p>
-                    <p className="text-xs text-gray-500">One-time purchase</p>
+                    <div className="text-right shrink-0">
+                      <div className="font-serif text-[26px] text-ink num">
+                        {formatPrice(priceCents)}
+                        <span className="text-ink-3 text-xs">.00</span>
+                      </div>
+                      <Eyebrow>ONE-TIME</Eyebrow>
+                    </div>
                   </div>
-                  <Link
-                    href={`/skills/${encodeURIComponent(s.slug)}`}
-                    className="block bg-[#0D1B2A] hover:bg-[#051B2A] text-white text-center py-3 text-sm font-bold"
-                  >
-                    View details
-                  </Link>
+
+                  <p className="text-ink-2 text-sm leading-[1.55] m-0 line-clamp-3">
+                    {s.description || "No description yet."}
+                  </p>
+
+                  {/* Expandable file list — server-rendered <details>; no
+                      client JS needed. Component encapsulates the disclosure
+                      shape so it's reusable on the detail page. */}
+                  {fileCount > 0 ? (
+                    <SkillFilesDetails files={latest!.files} />
+                  ) : null}
+
+                  <div className="flex gap-2.5 mt-auto">
+                    <Button as="a" href={`/skills/${encodeURIComponent(s.slug)}`} className="flex-1">
+                      View details →
+                    </Button>
+                  </div>
                 </article>
               );
             })}
@@ -89,11 +160,7 @@ export default async function SkillsListingPage() {
         )}
       </main>
 
-      <footer className="border-t border-[#E5DCC8] py-8 px-6 mt-12">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-400">
-          <span>&copy; 2026 Tmrwgroup. All rights reserved.</span>
-        </div>
-      </footer>
+      <MarketingFooter />
     </div>
   );
 }

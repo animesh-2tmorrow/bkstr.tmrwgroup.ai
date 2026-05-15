@@ -1,12 +1,25 @@
-// Phase 6 Stream L (D18.1) — public skill detail page. Renders name + description
-// + file list (paths only — file CONTENTS are behind purchase, only delivered via
-// /api/skills/[slug]/download) + price + Buy/Already-owned/Sign-in CTA.
+// bkstr redesign PR 4 — public skill detail page.
+//
+// Reskin of Stream L's L-MVP detail (rounded white card + navy CTA).
+// New look: Masthead chrome, eyebrow + display-serif name, paper card
+// with description + price + file manifest (defaultOpen) + buy CTA.
+//
+// File contents stay behind purchase — only paths + sizes render here;
+// downloads land via /api/skills/[slug]/download (Stream L) authenticated
+// by the existing AccessGrant lookup.
 
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { SkillBuyButton } from "./buy-button";
+import { SkillFilesDetails } from "@/components/skills/skill-files-details";
+import {
+  Masthead,
+  MarketingFooter,
+  Eyebrow,
+  Pill,
+} from "@/components/design";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +32,19 @@ export async function generateMetadata({
   return { title: `${slug} | Skills | bkstr` };
 }
 
+const MASTHEAD_NAV = [
+  { label: "Home", href: "/" },
+  { label: "Catalog", href: "/storefront" },
+  { label: "Skills", href: "/skills", active: true },
+  { label: "Docs", href: "/dashboard/docs" },
+  { label: "Log in", href: "/login" },
+];
+
+function formatPrice(cents: number | null): string {
+  if (cents == null) return "—";
+  return `$${(cents / 100).toFixed(0)}`;
+}
+
 export default async function SkillDetailPage({
   params,
 }: {
@@ -26,9 +52,6 @@ export default async function SkillDetailPage({
 }) {
   const { slug } = await params;
 
-  // Resolve the skill by slug, including its latest version's file paths
-  // (paths only — we never render content on the public detail page; that's
-  // behind purchase via /api/skills/[slug]/download).
   const skill = await prisma.skill.findFirst({
     where: { slug, status: "ACTIVE" },
     select: {
@@ -42,6 +65,7 @@ export default async function SkillDetailPage({
         take: 1,
         select: {
           version: true,
+          createdAt: true,
           files: {
             orderBy: { order: "asc" },
             select: { path: true, extension: true, byteSize: true },
@@ -53,12 +77,11 @@ export default async function SkillDetailPage({
   if (!skill) notFound();
 
   const priceCents = skill.price?.unitAmountCents ?? null;
-  const priceLabel = priceCents != null ? `$${(priceCents / 100).toFixed(2)}` : "—";
   const latestVersion = skill.versions[0];
+  const fileCount = latestVersion?.files.length ?? 0;
 
-  // Check whether the current viewer already owns this skill — if so, show
-  // "Download" instead of "Buy" (purchase flow is gated by an existing-grant
-  // check anyway, but the UI should reflect ownership state proactively).
+  // Already-owns check — shows Download instead of Buy when the viewer
+  // has an active AccessGrant for this skill.
   const session = await auth();
   let alreadyOwns = false;
   if (session?.user?.email) {
@@ -81,66 +104,92 @@ export default async function SkillDetailPage({
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF6EC] text-gray-900">
-      <header className="border-b border-[#E5DCC8] px-6 py-5">
-        <div className="max-w-7xl mx-auto flex justify-between items-baseline">
-          <Link href="/" className="text-xl font-bold italic text-gray-900">
-            bkstr.tmrwgroup.ai
-          </Link>
-          <nav className="text-sm flex gap-4 text-gray-500">
-            <Link href="/storefront" className="hover:text-gray-900">Books</Link>
-            <Link href="/skills" className="hover:text-gray-900">Skills</Link>
-            <Link href="/about" className="hover:text-gray-900">About</Link>
-            <Link href="/login" className="hover:text-gray-900">Log in</Link>
-          </nav>
-        </div>
-      </header>
+    <div className="min-h-screen flex flex-col bg-paper">
+      <Masthead navItems={MASTHEAD_NAV} />
 
-      <main className="max-w-4xl mx-auto px-6 py-10">
-        <Link href="/skills" className="text-sm text-gray-500 hover:text-gray-900">
+      <main className="flex-grow max-w-4xl mx-auto px-8 w-full pt-10 pb-14">
+        <Link
+          href="/skills"
+          className="font-mono text-[11px] uppercase tracking-eyebrow text-ink-3 hover:text-ink"
+        >
           ← All skills
         </Link>
 
-        <article className="mt-4 rounded-lg border border-[#E5DCC8] bg-white overflow-hidden">
-          <div className="p-8">
-            <div className="text-[10px] uppercase tracking-wide text-gray-500 bg-[#EAE2D0] inline-block px-1.5 py-0.5 rounded mb-2">
-              Skill
-            </div>
-            <h1 className="font-serif font-bold text-3xl text-gray-900">{skill.name}</h1>
-            <p className="text-base text-gray-700 mt-3 leading-relaxed">
+        <article className="mt-6 bg-paper border border-rule">
+          {/* Header pane */}
+          <div className="p-10">
+            <Pill variant="saffron" className="mb-3">
+              SKILL · .zip
+            </Pill>
+            <h1 className="font-serif text-[clamp(36px,5vw,48px)] leading-[1.05] tracking-display text-ink m-0">
+              {skill.name}
+            </h1>
+            <p className="text-base text-ink-2 mt-4 leading-[1.65]">
               {skill.description || "No description yet."}
             </p>
-            <p className="text-lg font-bold text-gray-900 mt-6">{priceLabel}</p>
-            <p className="text-xs text-gray-500">One-time purchase</p>
+            <div className="flex items-baseline gap-6 mt-8">
+              <div>
+                <div className="font-serif text-[34px] tracking-display text-ink num leading-none">
+                  {formatPrice(priceCents)}
+                  <span className="text-ink-3 text-base">.00</span>
+                </div>
+                <Eyebrow className="mt-2 block">ONE-TIME PURCHASE</Eyebrow>
+              </div>
+              <div aria-hidden className="w-px h-12 bg-rule" />
+              <div>
+                <div className="font-mono text-[15px] text-ink-2 num">
+                  v{latestVersion?.version ?? "?"}
+                </div>
+                <Eyebrow className="mt-2 block">LATEST VERSION</Eyebrow>
+              </div>
+              <div aria-hidden className="w-px h-12 bg-rule" />
+              <div>
+                <div className="font-mono text-[15px] text-ink-2 num">
+                  {fileCount}
+                </div>
+                <Eyebrow className="mt-2 block">
+                  {fileCount === 1 ? "FILE" : "FILES"}
+                </Eyebrow>
+              </div>
+            </div>
           </div>
 
-          <div className="border-t border-[#E5DCC8] p-8 bg-[#F5F0E4]">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">
-              Files (v{latestVersion?.version ?? "?"})
-            </h2>
-            <p className="text-xs text-gray-500 mb-3">
-              File contents are delivered as a single <code>.zip</code> after purchase. The list
+          {/* File manifest pane — paths + sizes only; contents are behind
+              purchase per Stream L. defaultOpen=true so the manifest is
+              the visual centerpiece on the detail page. */}
+          <div className="border-t border-rule p-10 bg-paper-2">
+            <Eyebrow className="block mb-2">
+              § FILES (V{latestVersion?.version ?? "?"})
+            </Eyebrow>
+            <p className="text-xs text-ink-3 mb-4 max-w-[60ch]">
+              File contents are delivered as a single{" "}
+              <code className="font-mono">.zip</code> after purchase. The list
               below is the manifest — paths and sizes only.
             </p>
-            <ul className="text-sm font-mono space-y-1">
-              {latestVersion?.files.map((f) => (
-                <li key={f.path} className="flex justify-between text-gray-700">
-                  <span>{f.path}</span>
-                  <span className="text-gray-400 text-xs">{(f.byteSize / 1024).toFixed(1)} KB</span>
-                </li>
-              ))}
-            </ul>
+            {fileCount > 0 ? (
+              <SkillFilesDetails
+                files={latestVersion!.files}
+                defaultOpen
+              />
+            ) : (
+              <p className="text-ink-3 text-sm">No files in this version.</p>
+            )}
           </div>
 
-          <SkillBuyButton
-            skillId={skill.id}
-            slug={skill.slug}
-            priceCents={priceCents}
-            alreadyOwns={alreadyOwns}
-            signedIn={session?.user?.email != null}
-          />
+          {/* CTA — buy / download / sign-in (client component). */}
+          <div className="border-t border-rule">
+            <SkillBuyButton
+              skillId={skill.id}
+              slug={skill.slug}
+              priceCents={priceCents}
+              alreadyOwns={alreadyOwns}
+              signedIn={session?.user?.email != null}
+            />
+          </div>
         </article>
       </main>
+
+      <MarketingFooter />
     </div>
   );
 }
