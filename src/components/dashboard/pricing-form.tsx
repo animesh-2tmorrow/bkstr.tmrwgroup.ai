@@ -12,8 +12,10 @@ import { ArchiveBookButton } from "@/components/dashboard/admin/archive-book-mod
 //
 // Phase 5 Stream E (D15.5) — `status` is included so the per-row Archive /
 // Unarchive button renders the right state. Pricing surface is the v1
-// archive button placement (Q2). Price-edit stays visible on ARCHIVED
-// rows (Q9) so publishers may adjust price before unarchiving.
+// archive button placement. Price-edit stays visible on ARCHIVED
+// rows so publishers may adjust price before unarchiving.
+//
+// bkstr redesign PR 6 — restyled with design tokens.
 type BookRow = {
   id: string;
   title: string;
@@ -87,17 +89,17 @@ export function PricingForm({
     <div className="space-y-8">
       <form
         onSubmit={handleSubmit}
-        className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-6 space-y-4"
+        className="bg-paper border border-rule p-6 space-y-5"
       >
         <div>
-          <label htmlFor="book" className="block text-sm font-semibold text-gray-700 mb-1">
+          <label htmlFor="book" className="block font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 mb-1.5">
             Book
           </label>
           <select
             id="book"
             value={selectedBookId}
             onChange={(e) => setSelectedBookId(e.target.value)}
-            className="w-full px-3 py-2 border border-[#E5DCC8] rounded-lg bg-white text-sm"
+            className="w-full px-3 py-2 border border-rule bg-paper text-sm text-ink focus:outline-none focus:border-ink"
             disabled={books.length === 0 || submitting}
           >
             {books.length === 0 ? (
@@ -117,11 +119,11 @@ export function PricingForm({
           </select>
         </div>
         <div>
-          <label htmlFor="price" className="block text-sm font-semibold text-gray-700 mb-1">
+          <label htmlFor="price" className="block font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 mb-1.5">
             Price (USD)
           </label>
           <div className="flex items-center gap-2">
-            <span className="text-gray-500">$</span>
+            <span className="text-ink-3 font-mono">$</span>
             <input
               id="price"
               type="number"
@@ -130,51 +132,51 @@ export function PricingForm({
               value={priceDollars}
               onChange={(e) => setPriceDollars(e.target.value)}
               placeholder="9.99"
-              className="flex-grow px-3 py-2 border border-[#E5DCC8] rounded-lg bg-white text-sm"
+              className="flex-grow px-3 py-2 border border-rule bg-paper text-sm text-ink num tabular-nums focus:outline-none focus:border-ink"
               disabled={submitting || books.length === 0}
               required
             />
           </div>
-          <p className="text-xs text-gray-500 mt-1">
-            Submitting creates a new Stripe Price. The previous Price stays in Stripe (immutable);
-            only this book&apos;s active pointer changes.
+          <p className="font-mono text-[11px] text-ink-3 mt-1.5">
+            Submitting creates a new Stripe Price. The previous Price stays in
+            Stripe (immutable); only this book&apos;s active pointer changes.
           </p>
         </div>
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3 rounded-lg">
+          <div className="bg-status-err/10 border border-status-err/30 text-status-err text-sm px-4 py-3">
             {error}
           </div>
         )}
         {successMessage && (
-          <div className="bg-green-50 border border-green-200 text-green-800 text-sm px-4 py-3 rounded-lg">
+          <div className="bg-status-ok/10 border border-status-ok/30 text-status-ok text-sm px-4 py-3">
             {successMessage}
           </div>
         )}
         <button
           type="submit"
           disabled={submitting || books.length === 0}
-          className="bg-black text-[#FAF6EC] px-4 py-2 rounded-lg text-sm font-bold hover:bg-black shadow-sm disabled:opacity-50"
+          className="bg-ink text-paper px-4 py-2 font-mono text-[11px] tracking-eyebrow uppercase hover:bg-ink-2 transition-colors disabled:opacity-50"
         >
           {submitting ? "Saving…" : "Save price"}
         </button>
       </form>
 
-      <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-paper border border-rule overflow-hidden">
         <table className="w-full text-left text-sm">
-          <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
-            <tr>
-              <th className="px-6 py-4 font-semibold text-gray-600">Book</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Status</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Current price</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Stripe Price ID</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Last updated</th>
-              <th className="px-6 py-4 font-semibold text-gray-600 text-right">Action</th>
+          <thead>
+            <tr className="border-b border-ink">
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Book</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Status</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Current price</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Stripe Price ID</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Last updated</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal text-right">Action</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#E5DCC8]">
+          <tbody>
             {books.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-6 py-8 text-center text-ink-3 text-sm">
                   {isPublisher
                     ? "No books yet. Create one at /dashboard/books/new."
                     : "No books yet. Import one with `npm run import-book` first."}
@@ -182,27 +184,27 @@ export function PricingForm({
               </tr>
             )}
             {books.map((b) => (
-              <tr key={b.id}>
+              <tr key={b.id} className="border-b border-rule hover:bg-paper-2 transition-colors">
                 <td className="px-6 py-4">
-                  <div className="font-medium text-gray-900">{b.title}</div>
-                  <div className="text-xs text-gray-500 font-mono mt-1">
-                    {b.slug} <span className="text-gray-400">·</span> {b.domain}
+                  <div className="font-serif text-ink">{b.title}</div>
+                  <div className="font-mono text-[11px] text-ink-3 mt-1">
+                    {b.slug} <span className="text-ink-4">·</span> {b.domain}
                   </div>
                 </td>
-                <td className="px-6 py-4 font-mono text-xs uppercase">
+                <td className="px-6 py-4 font-mono text-[11px] tracking-eyebrow uppercase text-ink-2">
                   {b.status ?? "—"}
                 </td>
-                <td className="px-6 py-4 font-medium">
+                <td className="px-6 py-4 font-mono text-[13px] text-ink num tabular-nums">
                   {b.unitAmountCents !== null ? (
                     formatUsdCents(b.unitAmountCents)
                   ) : (
-                    <span className="text-gray-400 italic">Not for sale</span>
+                    <span className="text-ink-4 italic font-serif">Not for sale</span>
                   )}
                 </td>
-                <td className="px-6 py-4 font-mono text-xs text-gray-700">
-                  {b.stripePriceId ?? <span className="text-gray-400">—</span>}
+                <td className="px-6 py-4 font-mono text-[11px] text-ink-2 truncate max-w-[200px]">
+                  {b.stripePriceId ?? <span className="text-ink-4">—</span>}
                 </td>
-                <td className="px-6 py-4 text-xs text-gray-600">
+                <td className="px-6 py-4 font-mono text-[11px] text-ink-3">
                   {/* Stream H.1 — stable ISO date avoids React #418 hydration mismatch */}
                   {b.updatedAt ? new Date(b.updatedAt).toISOString().slice(0, 16).replace("T", " ") : "—"}
                 </td>
@@ -212,7 +214,7 @@ export function PricingForm({
                       book={{ id: b.id, slug: b.slug, title: b.title, status: b.status }}
                     />
                   ) : (
-                    <span className="text-xs text-gray-400">—</span>
+                    <span className="text-ink-4 text-xs">—</span>
                   )}
                 </td>
               </tr>

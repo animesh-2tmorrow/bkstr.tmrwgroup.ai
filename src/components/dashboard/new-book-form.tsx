@@ -14,15 +14,14 @@ import { MAX_ZIP_BYTES } from "@/lib/zip/limits";
 // Phase 4 Stream B / Phase 5 Stream I / Phase 6 Stream K — client form for
 // /dashboard/books/new. Three upload modes:
 //
-//   - "paste"     (default; T5 sub-decision): paste markdown into the Content
-//                 textarea; POST application/json to /api/books/new — the
-//                 Stream B/I single-blob path. Slug-collision is a hard 409.
+//   - "paste"     (default): paste markdown into the Content textarea; POST
+//                 application/json to /api/books/new — the single-blob path.
+//                 Slug-collision is a hard 409.
 //   - "md-file":  MarkdownFileInput populates the Content textarea via
-//                 client-side FileReader (Stream I, D15.13); same JSON POST as
-//                 paste mode.
+//                 client-side FileReader (D15.13); same JSON POST as paste.
 //   - "zip-file": multipart/form-data POST carries a .zip; the route dispatches
-//                 to handleZipUpload (Stream K, D17.1) which parses manifest.yaml
-//                 if present or falls back to filename sort, writes multi-chapter
+//                 to handleZipUpload (D17.1) which parses manifest.yaml if
+//                 present or falls back to filename sort, writes multi-chapter
 //                 content into book_chapters, and is idempotent on re-upload.
 //                 In zip mode title/slug/domain are CLIENT-OPTIONAL — the server
 //                 uses manifest first, form fallback, and returns 400 if neither
@@ -32,14 +31,19 @@ import { MAX_ZIP_BYTES } from "@/lib/zip/limits";
 //                 locks the price field for new-version uploads.
 //
 // Cover upload stays a separate POST /api/books/[id]/cover step regardless of
-// mode (Stream H two-request flow preserved, T4).
+// mode (two-request flow preserved, T4).
+//
+// bkstr redesign PR 6 — restyled with design tokens. The 🖼️ / 🗂️ emoji are
+// replaced with mono "COVER" / "ZIP" labels per HANDOFF.md ("no emoji in
+// product copy"). The fieldset/legend chrome is dropped in favour of
+// section-rule headers + design-system spacing.
 
 type UploadMode = "paste" | "md-file" | "zip-file";
 
 // Phase 6 Stream L (D18.1) — kind toggle at top of the form. Book mode is
-// the existing Stream B/I/K/K.1 behavior unchanged. Skill mode forces the
-// upload mode to "zip-file" (skills are inherently multi-file zip uploads),
-// hides title/domain/description/cover (manifest-from-SKILL.md-frontmatter
+// the existing behavior unchanged. Skill mode forces the upload mode to
+// "zip-file" (skills are inherently multi-file zip uploads), hides
+// title/domain/description/cover (manifest-from-SKILL.md-frontmatter
 // supplies title and description; domain doesn't apply; cover deferred to
 // follow-up #123), and posts to /api/skills/new instead of /api/books/new.
 type Kind = "book" | "skill";
@@ -62,7 +66,13 @@ function slugify(input: string): string {
 const SLUG_REGEX = /^[a-z0-9-]+$/;
 const MAX_COVER_BYTES = 5 * 1024 * 1024; // 5MB
 const ALLOWED_COVER_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
-// MAX_ZIP_BYTES is imported from @/lib/zip/limits (Stream L / #116 close).
+// MAX_ZIP_BYTES is imported from @/lib/zip/limits.
+
+// Shared token-styled className blocks reused across inputs.
+const LABEL = "block font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 mb-1.5";
+const INPUT =
+  "w-full px-3 py-2 border border-rule bg-paper text-sm text-ink focus:outline-none focus:border-ink disabled:opacity-50 placeholder:text-ink-4";
+const HELP = "font-mono text-[11px] text-ink-3 mt-1.5";
 
 export function NewBookForm() {
   const router = useRouter();
@@ -460,19 +470,19 @@ export function NewBookForm() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-6 space-y-5"
+      className="bg-paper border border-rule p-8 space-y-6 max-w-3xl"
     >
       {/* Kind selector — Stream L (D18.1). Book vs Skill is the top-level
           content-class toggle. Skill mode forces zip upload and hides the
           book-only fields. */}
-      <fieldset className="border border-[#E5DCC8] rounded-lg p-3 bg-white">
-        <legend className="px-2 text-sm font-semibold text-gray-700">Kind</legend>
-        <div className="flex flex-col sm:flex-row sm:gap-4 gap-2">
+      <section className="border-b border-rule pb-5">
+        <div className={LABEL}>Kind</div>
+        <div className="flex flex-col sm:flex-row sm:gap-6 gap-2">
           {([
             ["book", "Book"],
             ["skill", "Skill"],
           ] as const).map(([value, label]) => (
-            <label key={value} className="inline-flex items-center gap-2 text-sm text-gray-700">
+            <label key={value} className="inline-flex items-center gap-2 text-sm text-ink-2 cursor-pointer">
               <input
                 type="radio"
                 name="content-kind"
@@ -480,32 +490,35 @@ export function NewBookForm() {
                 checked={kind === value}
                 onChange={() => onKindChange(value)}
                 disabled={submitting}
+                className="accent-ink"
               />
-              {label}
+              <span className="font-serif">{label}</span>
             </label>
           ))}
         </div>
         {kind === "skill" && (
-          <p className="mt-2 text-xs text-gray-500">
-            Skills upload as <code>.zip</code> with <code>SKILL.md</code> at the root carrying YAML
-            frontmatter (<code>name</code>, <code>description</code>). The form below shows the
-            skill-specific fields only.
+          <p className={HELP}>
+            Skills upload as <code className="text-ink-2">.zip</code> with{" "}
+            <code className="text-ink-2">SKILL.md</code> at the root carrying
+            YAML frontmatter (<code className="text-ink-2">name</code>,{" "}
+            <code className="text-ink-2">description</code>). The form below
+            shows the skill-specific fields only.
           </p>
         )}
-      </fieldset>
+      </section>
 
       {/* Mode selector — Stream K (D17.1, T5 default = paste). Hidden in skill
           mode (skills are always zip uploads). */}
       {kind === "book" && (
-        <fieldset className="border border-[#E5DCC8] rounded-lg p-3 bg-white">
-          <legend className="px-2 text-sm font-semibold text-gray-700">Upload mode</legend>
-          <div className="flex flex-col sm:flex-row sm:gap-4 gap-2">
+        <section className="border-b border-rule pb-5">
+          <div className={LABEL}>Upload mode</div>
+          <div className="flex flex-col sm:flex-row sm:gap-6 gap-2">
             {([
               ["paste", "Paste markdown"],
               ["md-file", "Upload a single .md file"],
               ["zip-file", "Upload a .zip folder (multi-chapter)"],
             ] as const).map(([value, label]) => (
-              <label key={value} className="inline-flex items-center gap-2 text-sm text-gray-700">
+              <label key={value} className="inline-flex items-center gap-2 text-sm text-ink-2 cursor-pointer">
                 <input
                   type="radio"
                   name="upload-mode"
@@ -513,41 +526,46 @@ export function NewBookForm() {
                   checked={mode === value}
                   onChange={() => onModeChange(value)}
                   disabled={submitting}
+                  className="accent-ink"
                 />
-                {label}
+                <span className="font-serif">{label}</span>
               </label>
             ))}
           </div>
-        </fieldset>
+        </section>
       )}
 
       {showBookOnlyFields && (
-      <div>
-        <label htmlFor="title" className="block text-sm font-semibold text-gray-700 mb-1">
-          Title{" "}
-          {!titleSlugDomainRequired && (
-            <span className="font-normal text-gray-500">(optional — derived from manifest.yaml if present)</span>
-          )}
-        </label>
-        <input
-          id="title"
-          type="text"
-          value={title}
-          onChange={(e) => onTitleChange(e.target.value)}
-          maxLength={255}
-          required={titleSlugDomainRequired}
-          placeholder="NotebookLM Skill"
-          className="w-full px-3 py-2 border border-[#E5DCC8] rounded-lg bg-white text-sm"
-          disabled={submitting}
-        />
-      </div>
+        <div>
+          <label htmlFor="title" className={LABEL}>
+            Title{" "}
+            {!titleSlugDomainRequired && (
+              <span className="text-ink-4 normal-case tracking-normal">
+                (optional — derived from manifest.yaml if present)
+              </span>
+            )}
+          </label>
+          <input
+            id="title"
+            type="text"
+            value={title}
+            onChange={(e) => onTitleChange(e.target.value)}
+            maxLength={255}
+            required={titleSlugDomainRequired}
+            placeholder="NotebookLM Skill"
+            className={INPUT}
+            disabled={submitting}
+          />
+        </div>
       )}
 
       <div>
-        <label htmlFor="slug" className="block text-sm font-semibold text-gray-700 mb-1">
+        <label htmlFor="slug" className={LABEL}>
           Slug{" "}
           {!titleSlugDomainRequired && (
-            <span className="font-normal text-gray-500">(optional — derived from manifest.yaml if present)</span>
+            <span className="text-ink-4 normal-case tracking-normal">
+              (optional — derived from manifest.yaml if present)
+            </span>
           )}
         </label>
         <input
@@ -558,130 +576,147 @@ export function NewBookForm() {
           maxLength={128}
           required={titleSlugDomainRequired}
           placeholder="notebooklm-skill"
-          className="w-full px-3 py-2 border border-[#E5DCC8] rounded-lg bg-white text-sm font-mono"
+          className={`${INPUT} font-mono`}
           disabled={submitting}
         />
-        <p className="text-xs text-gray-500 mt-1">
-          Lowercase letters, digits, and hyphens only. Auto-derived from the title; edit to override.
-          Must be unique among your publisher&apos;s books.
+        <p className={HELP}>
+          Lowercase letters, digits, and hyphens only. Auto-derived from the
+          title; edit to override. Must be unique among your publisher&apos;s
+          books.
         </p>
         {/* Slug prefetch banner (T2) — only when in zip mode */}
         {mode === "zip-file" && slugCheck.state === "exists" && (
-          <div className="mt-2 rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900">
-            Slug <code>{slug}</code> exists — uploading creates{" "}
-            <strong>v{(slugCheck.latestVersion ?? 0) + 1}</strong> of &ldquo;
-            <em>{slugCheck.title}</em>&rdquo;.
+          <div className="mt-3 bg-status-warn/10 border border-status-warn/30 p-3 text-sm text-status-warn">
+            Slug <code className="font-mono text-ink-2">{slug}</code> exists —
+            uploading creates{" "}
+            <strong className="font-semibold">
+              v{(slugCheck.latestVersion ?? 0) + 1}
+            </strong>{" "}
+            of &ldquo;<em className="font-serif">{slugCheck.title}</em>&rdquo;.
             {slugCheck.priceCents != null && (
               <>
                 {" "}
-                Price stays at <strong>${(slugCheck.priceCents / 100).toFixed(2)}</strong>; the
-                price field below is locked and ignored on submit.
+                Price stays at{" "}
+                <strong className="font-semibold num tabular-nums">
+                  ${(slugCheck.priceCents / 100).toFixed(2)}
+                </strong>
+                ; the price field below is locked and ignored on submit.
               </>
             )}
           </div>
         )}
         {mode === "zip-file" && slugCheck.state === "checking" && (
-          <p className="mt-1 text-xs text-gray-500">Checking slug…</p>
+          <p className={HELP}>Checking slug…</p>
         )}
         {mode === "zip-file" && slugCheck.state === "error" && (
-          <p className="mt-1 text-xs text-red-600">{slugCheck.message}</p>
+          <p className="font-mono text-[11px] text-status-err mt-1.5">{slugCheck.message}</p>
         )}
       </div>
 
       {showBookOnlyFields && (
-      <>
-      <div>
-        <label htmlFor="domain" className="block text-sm font-semibold text-gray-700 mb-1">
-          Domain{" "}
-          {!titleSlugDomainRequired && (
-            <span className="font-normal text-gray-500">(optional — derived from manifest.yaml if present)</span>
-          )}
-        </label>
-        <input
-          id="domain"
-          type="text"
-          value={domain}
-          onChange={(e) => setDomain(e.target.value)}
-          maxLength={64}
-          required={titleSlugDomainRequired}
-          placeholder="skill"
-          className="w-full px-3 py-2 border border-[#E5DCC8] rounded-lg bg-white text-sm"
-          disabled={submitting}
-        />
-        <p className="text-xs text-gray-500 mt-1">
-          Free-text taxonomy tag (e.g. <code>skill</code>, <code>reference</code>, <code>playbook</code>).
-        </p>
-      </div>
+        <>
+          <div>
+            <label htmlFor="domain" className={LABEL}>
+              Domain{" "}
+              {!titleSlugDomainRequired && (
+                <span className="text-ink-4 normal-case tracking-normal">
+                  (optional — derived from manifest.yaml if present)
+                </span>
+              )}
+            </label>
+            <input
+              id="domain"
+              type="text"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              maxLength={64}
+              required={titleSlugDomainRequired}
+              placeholder="skill"
+              className={INPUT}
+              disabled={submitting}
+            />
+            <p className={HELP}>
+              Free-text taxonomy tag (e.g. <code className="text-ink-2">skill</code>,{" "}
+              <code className="text-ink-2">reference</code>,{" "}
+              <code className="text-ink-2">playbook</code>).
+            </p>
+          </div>
 
-      <div>
-        <label htmlFor="description" className="block text-sm font-semibold text-gray-700 mb-1">
-          Description <span className="font-normal text-gray-500">(optional, but recommended)</span>
-        </label>
-        <textarea
-          id="description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          maxLength={5_000}
-          rows={3}
-          placeholder="Short prose summary buyers will see in the storefront."
-          className="w-full px-3 py-2 border border-[#E5DCC8] rounded-lg bg-white text-sm"
-          disabled={submitting}
-        />
-        <p className="text-xs text-gray-500 mt-1">
-          {description.length} / 5000 chars. Empty descriptions render as &ldquo;No description yet.&rdquo;
-        </p>
-      </div>
+          <div>
+            <label htmlFor="description" className={LABEL}>
+              Description{" "}
+              <span className="text-ink-4 normal-case tracking-normal">
+                (optional, but recommended)
+              </span>
+            </label>
+            <textarea
+              id="description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={5_000}
+              rows={3}
+              placeholder="Short prose summary buyers will see in the storefront."
+              className={INPUT}
+              disabled={submitting}
+            />
+            <p className={HELP}>
+              {description.length} / 5000 chars. Empty descriptions render as
+              &ldquo;No description yet.&rdquo;
+            </p>
+          </div>
 
-      {/* Cover Image Upload — unchanged from Stream H (T4) */}
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-1">
-          Cover Image <span className="font-normal text-gray-500">(optional)</span>
-        </label>
+          {/* Cover Image Upload — emoji replaced with mono COVER label
+              per HANDOFF.md no-emoji rule. */}
+          <div>
+            <label className={LABEL}>
+              Cover Image{" "}
+              <span className="text-ink-4 normal-case tracking-normal">(optional)</span>
+            </label>
 
-        {coverPreview ? (
-          <div className="flex items-start gap-4">
-            <div className="relative w-24 h-32 rounded-lg overflow-hidden border border-[#E5DCC8] shadow-sm flex-shrink-0">
-              <Image src={coverPreview} alt="Cover preview" fill className="object-cover" unoptimized />
-            </div>
-            <div className="flex flex-col gap-2 pt-1">
-              <p className="text-sm text-gray-700 font-medium">{coverFile?.name}</p>
-              <p className="text-xs text-gray-500">
-                {coverFile ? `${(coverFile.size / 1024).toFixed(0)} KB` : ""}
-              </p>
-              <button
-                type="button"
-                onClick={removeCover}
-                disabled={submitting}
-                className="text-xs text-red-600 hover:text-red-800 font-semibold underline text-left"
+            {coverPreview ? (
+              <div className="flex items-start gap-4 p-4 bg-paper border border-rule">
+                <div className="relative w-24 h-32 overflow-hidden border border-rule flex-shrink-0">
+                  <Image src={coverPreview} alt="Cover preview" fill className="object-cover" unoptimized />
+                </div>
+                <div className="flex flex-col gap-2 pt-1">
+                  <p className="font-serif text-ink text-sm">{coverFile?.name}</p>
+                  <p className="font-mono text-[11px] text-ink-3">
+                    {coverFile ? `${(coverFile.size / 1024).toFixed(0)} KB` : ""}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={removeCover}
+                    disabled={submitting}
+                    className="text-xs text-status-err hover:text-ink font-mono uppercase tracking-eyebrow text-left"
+                  >
+                    Remove cover
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={() => !submitting && fileInputRef.current?.click()}
+                className="border-2 border-dashed border-rule p-6 text-center cursor-pointer hover:border-ink hover:bg-paper-2 transition-colors bg-paper"
               >
-                Remove cover
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div
-            onClick={() => !submitting && fileInputRef.current?.click()}
-            className="border-2 border-dashed border-[#E5DCC8] rounded-xl p-6 text-center cursor-pointer hover:border-gray-400 hover:bg-[#F5F0E4] transition-colors"
-          >
-            <div className="text-3xl mb-2">🖼️</div>
-            <p className="text-sm font-semibold text-gray-700">Click to upload a cover image</p>
-            <p className="text-xs text-gray-500 mt-1">JPEG, PNG, WebP, or GIF — max 5 MB</p>
-            <p className="text-xs text-gray-400 mt-1">Recommended: 3:4 portrait ratio (e.g. 600×800 px)</p>
-          </div>
-        )}
+                <span className="inline-block font-mono text-[10px] tracking-wider text-ink-3 bg-paper-2 border border-rule px-2 py-1 mb-3">COVER</span>
+                <p className="font-serif text-ink text-sm">Click to upload a cover image</p>
+                <p className="font-mono text-[11px] text-ink-3 mt-1">JPEG, PNG, WebP, or GIF — max 5 MB</p>
+                <p className="font-mono text-[11px] text-ink-4 mt-1">Recommended: 3:4 portrait ratio (e.g. 600×800 px)</p>
+              </div>
+            )}
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
-          onChange={onCoverChange}
-          className="hidden"
-          disabled={submitting}
-        />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+              onChange={onCoverChange}
+              className="hidden"
+              disabled={submitting}
+            />
 
-        {coverError && <p className="text-xs text-red-600 mt-1">{coverError}</p>}
-      </div>
-      </>
+            {coverError && <p className="font-mono text-[11px] text-status-err mt-1.5">{coverError}</p>}
+          </div>
+        </>
       )}
 
       {/* md-file mode: the Stream I file picker */}
@@ -703,7 +738,7 @@ export function NewBookForm() {
       {/* Content textarea — paste + md-file modes only */}
       {(mode === "paste" || mode === "md-file") && (
         <div>
-          <label htmlFor="content" className="block text-sm font-semibold text-gray-700 mb-1">
+          <label htmlFor="content" className={LABEL}>
             Content (markdown)
           </label>
           <textarea
@@ -714,10 +749,10 @@ export function NewBookForm() {
             rows={14}
             required
             placeholder={"# Heading\n\nMarkdown body that an agent fetch will return."}
-            className="w-full px-3 py-2 border border-[#E5DCC8] rounded-lg bg-white text-sm font-mono"
+            className={`${INPUT} font-mono`}
             disabled={submitting}
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className={HELP}>
             Stored inline as the first version. Up to 1MB.
           </p>
         </div>
@@ -726,20 +761,18 @@ export function NewBookForm() {
       {/* zip-file mode: the Stream K zip picker */}
       {mode === "zip-file" && (
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">
-            Upload a .zip folder
-          </label>
+          <label className={LABEL}>Upload a .zip folder</label>
           {zipFile ? (
-            <div className="flex items-start gap-4">
-              <div className="text-3xl flex-shrink-0">🗂️</div>
-              <div className="flex flex-col gap-2 pt-1">
-                <p className="text-sm text-gray-700 font-medium">{zipFile.name}</p>
-                <p className="text-xs text-gray-500">{(zipFile.size / 1024).toFixed(0)} KB</p>
+            <div className="flex items-start gap-4 p-4 bg-paper border border-rule">
+              <span className="font-mono text-[10px] tracking-wider text-ink-3 bg-paper-2 border border-rule px-2 py-1 shrink-0">ZIP</span>
+              <div className="flex flex-col gap-2 pt-0.5">
+                <p className="font-serif text-ink text-sm">{zipFile.name}</p>
+                <p className="font-mono text-[11px] text-ink-3">{(zipFile.size / 1024).toFixed(0)} KB</p>
                 <button
                   type="button"
                   onClick={removeZip}
                   disabled={submitting}
-                  className="text-xs text-red-600 hover:text-red-800 font-semibold underline text-left"
+                  className="text-xs text-status-err hover:text-ink font-mono uppercase tracking-eyebrow text-left"
                 >
                   Clear file
                 </button>
@@ -748,11 +781,11 @@ export function NewBookForm() {
           ) : (
             <div
               onClick={() => !submitting && zipInputRef.current?.click()}
-              className="border-2 border-dashed border-[#E5DCC8] rounded-xl p-6 text-center cursor-pointer hover:border-gray-400 hover:bg-[#F5F0E4] transition-colors"
+              className="border-2 border-dashed border-rule p-6 text-center cursor-pointer hover:border-ink hover:bg-paper-2 transition-colors bg-paper"
             >
-              <div className="text-3xl mb-2">🗂️</div>
-              <p className="text-sm font-semibold text-gray-700">Click to choose a .zip file</p>
-              <p className="text-xs text-gray-500 mt-1">
+              <span className="inline-block font-mono text-[10px] tracking-wider text-ink-3 bg-paper-2 border border-rule px-2 py-1 mb-3">ZIP</span>
+              <p className="font-serif text-ink text-sm">Click to choose a .zip file</p>
+              <p className="font-mono text-[11px] text-ink-3 mt-1">
                 .zip with optional manifest.yaml + chapter .md files — max{" "}
                 {(MAX_ZIP_BYTES / 1024 / 1024).toFixed(0)} MB
               </p>
@@ -766,21 +799,21 @@ export function NewBookForm() {
             className="hidden"
             disabled={submitting}
           />
-          {zipError && <p className="text-xs text-red-600 mt-1">{zipError}</p>}
+          {zipError && <p className="font-mono text-[11px] text-status-err mt-1.5">{zipError}</p>}
         </div>
       )}
 
       <div>
-        <label htmlFor="price" className="block text-sm font-semibold text-gray-700 mb-1">
+        <label htmlFor="price" className={LABEL}>
           Price (USD){" "}
           {priceLockedToExisting && (
-            <span className="font-normal text-gray-500">
+            <span className="text-ink-4 normal-case tracking-normal">
               (locked — new version of an existing book; price stays at the current value)
             </span>
           )}
         </label>
         <div className="flex items-center gap-2">
-          <span className="text-gray-500">$</span>
+          <span className="text-ink-3 font-mono">$</span>
           <input
             id="price"
             type="number"
@@ -791,11 +824,11 @@ export function NewBookForm() {
             placeholder="9.99"
             required={priceRequired}
             readOnly={priceLockedToExisting}
-            className="flex-grow px-3 py-2 border border-[#E5DCC8] rounded-lg bg-white text-sm disabled:opacity-50"
+            className={`${INPUT} num tabular-nums`}
             disabled={submitting || priceLockedToExisting}
           />
         </div>
-        <p className="text-xs text-gray-500 mt-1">
+        <p className={HELP}>
           {priceLockedToExisting
             ? "Price changes happen on the pricing page, not on upload."
             : "Minimum $0.50 (Stripe USD floor). A fresh Stripe Price is created on submit."}
@@ -803,11 +836,11 @@ export function NewBookForm() {
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3 rounded-lg">
+        <div className="bg-status-err/10 border border-status-err/30 text-status-err text-sm px-4 py-3">
           <div className="font-semibold mb-1">Failed to create book</div>
           <div>{error}</div>
           {stripeReconcile && (
-            <div className="mt-2 text-xs">
+            <div className="mt-2 text-xs font-mono">
               <span className="font-semibold">Stripe reconcile note:</span> {stripeReconcile}
             </div>
           )}
@@ -817,7 +850,7 @@ export function NewBookForm() {
       <button
         type="submit"
         disabled={submitting}
-        className="bg-black text-[#FAF6EC] px-4 py-2 rounded-lg text-sm font-bold hover:bg-black shadow-sm disabled:opacity-50"
+        className="bg-ink text-paper px-5 py-2.5 font-mono text-[11px] tracking-eyebrow uppercase hover:bg-ink-2 transition-colors disabled:opacity-50"
       >
         {submitLabel()}
       </button>

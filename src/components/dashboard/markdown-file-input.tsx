@@ -5,12 +5,12 @@ import { useRef, useState } from "react";
 // Phase 5 Stream I (D15.13) — client component: choose a .md file on the
 // new-book form's Content field as an alternative to pasting markdown.
 //
-// Behaviour mirrors the Cover Image input on the same form (NewBookForm):
+// Behaviour mirrors the Cover Image / Zip inputs on the same form:
 //   - Hidden <input type="file"> triggered by clicking a dashed-border zone.
-//   - Click-only, NO drag-and-drop — kept symmetric with the cover input on
-//     purpose. If drag-drop is ever wanted it goes on BOTH inputs together in
-//     a separate stream; we do not introduce asymmetry where one file input
-//     has it and the other doesn't.
+//   - Click-only, NO drag-and-drop — kept symmetric across all file inputs
+//     on the form. If drag-drop is ever wanted it goes on ALL inputs in a
+//     separate stream; we do not introduce asymmetry where one file input
+//     has it and the others don't.
 //   - The file is read entirely in the browser via FileReader.readAsText; the
 //     decoded text is handed to the parent via onContentLoaded, which sets the
 //     Content textarea value. There is NO server endpoint and NO multipart
@@ -18,6 +18,9 @@ import { useRef, useState } from "react";
 //     existing POST /api/books/new handler and its server-side validation
 //     (1M-char content cap, slug uniqueness, Stripe-first atomicity) run
 //     unchanged after submit, whether the content was pasted or file-loaded.
+//
+// bkstr redesign PR 6 — restyled with design tokens. The 📄 emoji is
+// replaced with a mono "MD" label per HANDOFF.md ("no emoji in product copy").
 
 const ALLOWED_EXTENSIONS = [".md", ".markdown"];
 const MAX_CONTENT_CHARS = 1_000_000; // same cap the Content field enforces; server re-checks on submit
@@ -90,21 +93,21 @@ export function MarkdownFileInput({
 
   return (
     <div>
-      <label className="block text-sm font-semibold text-gray-700 mb-1">
-        Upload a markdown file <span className="font-normal text-gray-500">(optional)</span>
+      <label className="block font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 mb-1.5">
+        Upload a markdown file <span className="text-ink-4 normal-case tracking-normal">(optional)</span>
       </label>
 
       {currentFilename ? (
-        <div className="flex items-start gap-4">
-          <div className="text-3xl flex-shrink-0">📄</div>
-          <div className="flex flex-col gap-2 pt-1">
-            <p className="text-sm text-gray-700 font-medium">{currentFilename}</p>
-            {sizeLabel && <p className="text-xs text-gray-500">{sizeLabel}</p>}
+        <div className="flex items-start gap-4 p-4 bg-paper border border-rule">
+          <span className="font-mono text-[10px] tracking-wider text-ink-3 bg-paper-2 border border-rule px-2 py-1 shrink-0">MD</span>
+          <div className="flex flex-col gap-2 pt-0.5">
+            <p className="font-serif text-ink text-sm">{currentFilename}</p>
+            {sizeLabel && <p className="font-mono text-[11px] text-ink-3">{sizeLabel}</p>}
             <button
               type="button"
               onClick={clearSelection}
               disabled={disabled}
-              className="text-xs text-red-600 hover:text-red-800 font-semibold underline text-left"
+              className="text-xs text-status-err hover:text-ink font-mono uppercase tracking-eyebrow text-left"
             >
               Clear file
             </button>
@@ -113,11 +116,11 @@ export function MarkdownFileInput({
       ) : (
         <div
           onClick={() => !disabled && fileInputRef.current?.click()}
-          className="border-2 border-dashed border-[#E5DCC8] rounded-xl p-6 text-center cursor-pointer hover:border-gray-400 hover:bg-[#F5F0E4] transition-colors"
+          className="border-2 border-dashed border-rule p-6 text-center cursor-pointer hover:border-ink hover:bg-paper-2 transition-colors bg-paper"
         >
-          <div className="text-3xl mb-2">📄</div>
-          <p className="text-sm font-semibold text-gray-700">Click to choose a .md file</p>
-          <p className="text-xs text-gray-500 mt-1">
+          <span className="inline-block font-mono text-[10px] tracking-wider text-ink-3 bg-paper-2 border border-rule px-2 py-1 mb-3">MD</span>
+          <p className="font-serif text-ink text-sm">Click to choose a .md file</p>
+          <p className="font-mono text-[11px] text-ink-3 mt-1">
             .md or .markdown — fills the Content field below; you can edit it after
           </p>
         </div>
@@ -132,7 +135,7 @@ export function MarkdownFileInput({
         disabled={disabled}
       />
 
-      {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
+      {error && <p className="text-xs text-status-err font-mono mt-1">{error}</p>}
     </div>
   );
 }
