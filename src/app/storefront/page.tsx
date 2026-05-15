@@ -262,15 +262,21 @@ export default function StorefrontPage() {
             })}
           </div>
           <div className="flex gap-2.5 items-center">
+            {/* PR 9 a11y — aria-label closes the placeholder-only loophole
+                so screen readers announce the input's purpose; visible
+                label would add chrome we don't want in this filter row. */}
             <input
+              type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search titles & domains..."
+              aria-label="Search catalog by title or domain"
               className="font-sans text-[13px] py-2 px-3 bg-paper border border-rule outline-none w-60 focus:border-ink"
             />
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as SortKey)}
+              aria-label="Sort catalog"
               className="font-mono text-[11px] tracking-[1px] py-2 px-2.5 bg-paper border border-rule uppercase focus:border-ink outline-none"
             >
               {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (

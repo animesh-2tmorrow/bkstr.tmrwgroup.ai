@@ -381,6 +381,7 @@ export function AssistantPane({
                 : "Ask a question about platform state..."
             }
             disabled={streaming}
+            aria-label="Ask the assistant"
             className="flex-grow px-3 py-2 border border-rule bg-paper text-sm text-ink disabled:opacity-50 placeholder:text-ink-3 focus:outline-none focus:border-ink"
             autoComplete="off"
           />

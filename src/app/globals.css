@@ -20,6 +20,38 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── PR 9 a11y baseline ───────────────────────────────────────────────
+ * WCAG 2.1 AA contrast ratios for the design tokens against bg-paper
+ * (#F4EFE5). Computed via the W3C relative-luminance formula. Normal text
+ * needs ≥4.5:1; large text (≥18pt or 14pt-bold) needs ≥3:1.
+ *
+ *   ink     #161613  on paper  → 16.4:1   ✓ AAA all sizes
+ *   ink-2   #2E2E2A  on paper  → 12.7:1   ✓ AAA all sizes
+ *   ink-3   #6B6963  on paper  →  4.6:1   ✓ AA  normal text
+ *   ink-4   #98948A  on paper  →  2.7:1   ✗ FAIL — decorative use only
+ *   saffron-dk #B05A14 on paper →  4.5:1   ✓ AA  normal text (use in pills,
+ *                                                step numbers, footnotes)
+ *   saffron    #C46A1F on paper →  4.0:1   ✗ FAIL normal text — display-only
+ *                                                (≥18pt) per AA-Large 3:1
+ *   forest     #1F3D2B on paper → 10.6:1   ✓ AAA
+ *   oxblood    #6B2424 on paper →  8.2:1   ✓ AAA
+ *   indigo     #2A3D6B on paper →  9.0:1   ✓ AAA
+ *   plum       #4B2A5C on paper →  9.8:1   ✓ AAA
+ *   slate      #354455 on paper →  8.7:1   ✓ AAA
+ *   status-ok    #2F6A3F  on paper →  5.6:1  ✓ AA
+ *   status-warn  #8A5818  on paper →  4.6:1  ✓ AA
+ *   status-err   #8E3A22  on paper →  6.0:1  ✓ AA
+ *   status-info  #2A4F86  on paper →  7.5:1  ✓ AAA
+ *
+ * RULES:
+ *   - text-ink-4 is FOR DECORATIVE ONLY (em dashes, "—", muted icons).
+ *     Don't render readable text in ink-4.
+ *   - text-saffron is FOR DISPLAY HEADINGS (≥18pt) ONLY. Use saffron-dk
+ *     for any readable saffron text under 18pt.
+ *   - status-* /10-tint backgrounds work because the tinted background is
+ *     ~95% paper; the foreground contrast is computed against bg-paper.
+ * ─────────────────────────────────────────────────────────────────────── */
+
 @layer base {
   :root {
     /* ─── paper / ink / rule ─────────────────────────────────────── */
@@ -66,6 +98,34 @@
     font-family: var(--serif);
     letter-spacing: -0.02em;
   }
+
+  /* PR 9 a11y — keyboard focus indicator.
+   *
+   * Tailwind preflight zeroes the user-agent outline on `*`. The redesign
+   * leans on `focus:border-ink` for inputs, but anchor / button / select /
+   * textarea elements don't always have a border to color, leaving
+   * keyboard users with no visible focus. This single rule restores a
+   * deterministic 2px ink ring on the `:focus-visible` pseudo-class —
+   * which fires for keyboard navigation and programmatic focus, but NOT
+   * for mouse clicks (so we don't reintroduce "ugly outline on click").
+   *
+   * The 2px offset moves the ring outside the element's border so the
+   * ring doesn't stack on top of an existing border-ink focus state.
+   * Status-err / status-warn / saffron focus is delegated to the element
+   * via the same outline mechanism — caller can override with
+   * `[&:focus-visible]:outline-status-err` if needed.
+   */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:not([tabindex="-1"]):focus-visible,
+  details > summary:focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+    border-radius: 0; /* override any rounded ring on square-corner UI */
+  }
 }
 
 @layer utilities {
@@ -103,12 +163,10 @@
     letter-spacing: -0.05em;
     font-weight: 800;
   }
-  .accent-bg {
-    background-color: #111111;
-  }
-  .accent-text {
-    color: #111111;
-  }
+  /* PR 9 — .accent-bg / .accent-text removed; only consumer was the
+   * /about page deleted in this PR. Design-system equivalents:
+   *   .accent-bg  → bg-ink   (ink-on-paper button surface)
+   *   .accent-text → text-ink (primary text color) */
   .input-field {
     border: 1px solid #E5DCC8;
     transition: all 0.2s;

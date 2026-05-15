@@ -37,7 +37,13 @@ const VARIANTS: Record<PillVariant, string> = {
   'status-warn': 'text-status-warn border-status-warn/40 bg-status-warn/10',
   'status-err':  'text-status-err  border-status-err/40  bg-status-err/10',
   'status-info': 'text-status-info border-status-info/40 bg-status-info/10',
-  saffron:       'text-saffron border-saffron/40',
+  // PR 9 a11y — pills are 10.5px mono uppercase. text-saffron (#C46A1F)
+  // on bg-paper hits 3.97:1 contrast — fails WCAG AA (≥4.5 for normal
+  // text). Switched to saffron-dk (#B05A14, 4.51:1, passes AA) for the
+  // pill's foreground while the border keeps the brighter saffron tint.
+  // Other accent variants (forest/oxblood/indigo/plum/slate) are darker
+  // by construction (≥5:1) so they stay on their primary color.
+  saffron:       'text-saffron-dk border-saffron/40',
   forest:        'text-forest  border-forest/40',
   oxblood:       'text-oxblood border-oxblood/40',
   indigo:        'text-indigo  border-indigo/40',

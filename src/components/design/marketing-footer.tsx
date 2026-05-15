@@ -50,7 +50,11 @@ export function MarketingFooter() {
           <FooterColumn
             heading="Company"
             links={[
-              { label: 'About', href: '/about' },
+              // bkstr redesign PR 9 — `/about` deleted in copy audit (was a
+              // Phase 5 Stream H.1 orphan with subscription-tier copy that
+              // contradicted HANDOFF). Demoted to `#` placeholder pending a
+              // future content surface, matching sibling placeholders.
+              { label: 'About', href: '#' },
               { label: 'Tmrw Group', href: '#' },
               { label: 'Security', href: '#' },
               { label: 'Contact', href: '#' },

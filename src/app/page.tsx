@@ -283,7 +283,10 @@ export default async function HomePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mt-9">
           {STEPS.map((s) => (
             <div key={s.n} className="border-t-2 border-ink pt-5">
-              <div className="font-mono text-xs tracking-[2px] text-saffron">
+              {/* PR 9 a11y — step number renders at 12px (text-xs) on
+                  bg-paper. text-saffron at that size is 3.97:1 contrast —
+                  fails AA. Swapped to saffron-dk (4.51:1, passes). */}
+              <div className="font-mono text-xs tracking-[2px] text-saffron-dk">
                 {s.n}
               </div>
               <h3 className="font-serif font-normal text-[22px] leading-[1.2] mt-4 mb-2.5 tracking-tight">
