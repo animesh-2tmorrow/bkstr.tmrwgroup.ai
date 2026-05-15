@@ -3,8 +3,9 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
-import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { DashShell, Eyebrow } from "@/components/design";
 import { ApiInstructionsBlock } from "@/components/dashboard/api-instructions-block";
+import { buildDashNav } from "@/lib/dashboard/nav-config";
 
 export const metadata = {
   title: "Payment received | bkstr",
@@ -18,6 +19,8 @@ export const dynamic = "force-dynamic";
 // provisioned asynchronously by the payment_intent.succeeded webhook handler,
 // so we display "provisioning in progress" + a refresh hint rather than
 // pretending the grant is already live (which would race the webhook).
+//
+// bkstr redesign PR 7 — migrated to <DashShell> + design-token chrome.
 
 export default async function PurchaseSuccessPage({
   searchParams,
@@ -36,7 +39,6 @@ export default async function PurchaseSuccessPage({
   });
   const companyName = subscriber?.companyName ?? "Personal";
   const userEmail = session.user.email;
-  const initial = (session.user.name?.[0] ?? userEmail[0] ?? "?").toUpperCase();
 
   let bookId: string | null = null;
   let bookTitle: string | null = null;
@@ -63,37 +65,34 @@ export default async function PurchaseSuccessPage({
   }
 
   return (
-    <DashboardShell
-      active="books"
-      companyName={companyName}
-      userEmail={userEmail}
-      initial={initial}
-      role={session.user.role}
+    <DashShell
+      nav={buildDashNav(session.user.role, "/dashboard")}
+      brandSubtitle={companyName.toUpperCase()}
+      userBlock={<UserBlock email={userEmail} />}
     >
       <div className="max-w-2xl">
         <header className="mb-6">
-          <h1 className="text-2xl font-bold">Payment received</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Access provisioning in progress. The grant is created by Stripe&apos;s webhook delivery
-            and is usually visible within seconds.
+          <Eyebrow>§ CHECKOUT · CONFIRMATION RECEIPT</Eyebrow>
+          <h1 className="font-serif font-normal text-[36px] leading-[1.05] tracking-display text-ink mt-3 mb-2">
+            Payment received
+          </h1>
+          <p className="text-ink-3 text-sm">
+            Access provisioning in progress. The grant is created by Stripe&apos;s
+            webhook delivery and is usually visible within seconds.
           </p>
         </header>
 
-        <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-6 space-y-4">
+        <div className="bg-paper border border-rule p-6 space-y-5">
           {bookTitle && (
             <div>
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Book
-              </div>
-              <div className="text-lg font-bold mt-1">{bookTitle}</div>
+              <Eyebrow>BOOK</Eyebrow>
+              <div className="font-serif text-[22px] tracking-display text-ink mt-1.5">{bookTitle}</div>
             </div>
           )}
           {amountTotalCents !== null && (
             <div>
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Amount
-              </div>
-              <div className="text-lg font-bold mt-1">
+              <Eyebrow>AMOUNT</Eyebrow>
+              <div className="font-serif text-[22px] tracking-display text-ink num tabular-nums mt-1.5">
                 {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
                   amountTotalCents / 100,
                 )}
@@ -102,25 +101,26 @@ export default async function PurchaseSuccessPage({
           )}
           {sessionId && (
             <div>
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Stripe Checkout Session
-              </div>
-              <div className="text-xs font-mono mt-1 text-gray-600 break-all">{sessionId}</div>
+              <Eyebrow>STRIPE CHECKOUT SESSION</Eyebrow>
+              <div className="font-mono text-[11px] mt-1.5 text-ink-3 break-all">{sessionId}</div>
             </div>
           )}
           {stripeError && (
-            <div className="bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3 rounded-lg">
+            <div className="bg-status-err/10 border border-status-err/30 text-status-err text-sm px-4 py-3">
               Could not retrieve the Checkout Session from Stripe: {stripeError}
             </div>
           )}
           {!sessionId && (
-            <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm px-4 py-3 rounded-lg">
-              No <code>session_id</code> on this URL — landed here without a Stripe redirect.
+            <div className="bg-status-warn/10 border border-status-warn/30 text-status-warn text-sm px-4 py-3">
+              No <code className="font-mono">session_id</code> on this URL — landed here without a Stripe redirect.
             </div>
           )}
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-ink-2">
             Your access grant should be live within a few seconds.{" "}
-            <Link href="/dashboard/library?filter=active" className="font-semibold underline hover:no-underline">
+            <Link
+              href="/dashboard/library?filter=active"
+              className="text-ink underline hover:no-underline"
+            >
               Open the Library
             </Link>{" "}
             to see the &ldquo;Access granted&rdquo; pill and the View / Download
@@ -129,7 +129,7 @@ export default async function PurchaseSuccessPage({
         </div>
 
         {subscriber && bookId && (
-          <div className="mt-6">
+          <div className="mt-8">
             <ApiInstructionsBlock
               subscriberId={subscriber.id}
               bookId={bookId}
@@ -138,6 +138,29 @@ export default async function PurchaseSuccessPage({
           </div>
         )}
       </div>
-    </DashboardShell>
+    </DashShell>
+  );
+}
+
+function UserBlock({ email }: { email: string }) {
+  return (
+    <>
+      <div className="text-ink text-[13px] mb-1 truncate">{email}</div>
+      <div className="flex justify-between items-center text-ink-3">
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="w-1.5 h-1.5 rounded-full bg-status-ok inline-block"
+          />
+          Signed in
+        </span>
+        <a
+          href="/api/auth/signout"
+          className="text-ink-3 hover:text-ink transition-colors"
+        >
+          Log out
+        </a>
+      </div>
+    </>
   );
 }

@@ -1,11 +1,17 @@
-type Tone = "green" | "yellow" | "red" | "neutral";
+// bkstr redesign PR 7 — fetch-log status pill on design tokens.
+//
+// Maps Bedrock-call statuses to the four design-system status colors
+// (status-ok / status-warn / status-err / paper). Square corners, mono
+// uppercase label, dot affordance preserved.
+
+type Tone = "ok" | "warn" | "err" | "neutral";
 
 const STATUS_TONES: Record<string, Tone> = {
-  success: "green",
-  cache_hit: "green",
-  timeout: "yellow",
-  content_too_large: "yellow",
-  error: "red",
+  success: "ok",
+  cache_hit: "ok",
+  timeout: "warn",
+  content_too_large: "warn",
+  error: "err",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -16,26 +22,26 @@ const STATUS_LABELS: Record<string, string> = {
   error: "Error",
 };
 
-const TONE_CLASSES: Record<Tone, string> = {
-  green: "bg-green-50 text-green-700",
-  yellow: "bg-yellow-50 text-yellow-800",
-  red: "bg-red-50 text-red-700",
-  neutral: "bg-[#EAE2D0] text-gray-600",
+const TONE_CHIP: Record<Tone, string> = {
+  ok: "bg-status-ok/10 text-status-ok border border-status-ok/30",
+  warn: "bg-status-warn/10 text-status-warn border border-status-warn/30",
+  err: "bg-status-err/10 text-status-err border border-status-err/30",
+  neutral: "bg-paper-2 text-ink-3 border border-rule",
 };
 
-const TONE_DOTS: Record<Tone, string> = {
-  green: "bg-green-500",
-  yellow: "bg-yellow-500",
-  red: "bg-red-500",
-  neutral: "bg-gray-400",
+const TONE_DOT: Record<Tone, string> = {
+  ok: "bg-status-ok",
+  warn: "bg-status-warn",
+  err: "bg-status-err",
+  neutral: "bg-ink-4",
 };
 
 export function StatusBadge({ status }: { status: string }) {
   const tone: Tone = STATUS_TONES[status] ?? "neutral";
   const label = STATUS_LABELS[status] ?? status;
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-bold ${TONE_CLASSES[tone]}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${TONE_DOTS[tone]}`}></span>
+    <span className={`inline-flex items-center gap-1.5 px-2 py-1 font-mono text-[11px] tracking-eyebrow uppercase ${TONE_CHIP[tone]}`}>
+      <span aria-hidden className={`w-1.5 h-1.5 rounded-full ${TONE_DOT[tone]}`} />
       {label}
     </span>
   );

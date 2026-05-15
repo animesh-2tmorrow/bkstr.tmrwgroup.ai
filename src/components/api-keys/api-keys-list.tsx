@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { GenerateKeyModal } from "@/components/api-keys/generate-key-modal";
+import { Eyebrow } from "@/components/design";
+
+// bkstr redesign PR 7 — restyled with design tokens.
+// The page header is rendered here (inside the client island) so the
+// "Generate new key" CTA stays adjacent to the modal it opens.
 
 type ApiKeyRow = {
   id: string;
@@ -65,51 +70,55 @@ export function ApiKeysList() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <header className="mb-8 flex justify-between items-end gap-4">
         <div>
-          <h1 className="text-2xl font-bold">API Keys</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Issue and revoke keys for the agent fetch endpoint.
+          <Eyebrow>§ ACCESS · AGENT API CREDENTIALS</Eyebrow>
+          <h1 className="font-serif font-normal text-[36px] leading-[1.05] tracking-display text-ink mt-3 mb-2">
+            API Keys
+          </h1>
+          <p className="text-ink-3 text-sm max-w-[72ch]">
+            Issue and revoke keys for the agent fetch endpoint. Each key is
+            shown in plaintext exactly once at issuance — copy it then.
           </p>
         </div>
         <button
           type="button"
           onClick={() => setShowGenerate(true)}
-          className="bg-black text-[#FAF6EC] px-4 py-2 rounded-lg text-sm font-bold hover:bg-black shadow-sm"
+          className="bg-ink text-paper px-4 py-2 font-mono text-[11px] tracking-eyebrow uppercase hover:bg-ink-2 transition-colors shrink-0"
         >
           Generate new key
         </button>
-      </div>
+      </header>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3 rounded-lg">
+        <div className="mb-4 bg-status-err/10 border border-status-err/30 text-status-err text-sm px-4 py-3">
           {error}
         </div>
       )}
 
-      <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-paper border border-rule overflow-hidden">
         <table className="w-full text-left text-sm">
-          <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
-            <tr>
-              <th className="px-6 py-4 font-semibold text-gray-600">Name</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Prefix</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Created</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Last used</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Status</th>
-              <th className="px-6 py-4 font-semibold text-gray-600 text-right">Action</th>
+          <thead>
+            <tr className="border-b border-ink">
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Name</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Prefix</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Created</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Last used</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Status</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal text-right">Action</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#E5DCC8]">
+          <tbody>
             {loading && (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-6 py-8 text-center text-ink-3 text-sm">
                   Loading…
                 </td>
               </tr>
             )}
             {!loading && keys.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-6 py-8 text-center text-ink-3 text-sm">
                   No keys yet. Generate one to call the agent fetch endpoint.
                 </td>
               </tr>
@@ -118,33 +127,33 @@ export function ApiKeysList() {
               keys.map((row) => {
                 const revoked = Boolean(row.revokedAt);
                 return (
-                  <tr key={row.id} className="hover:bg-[#F5F0E6] transition-colors">
+                  <tr key={row.id} className="border-b border-rule hover:bg-paper-2 transition-colors">
                     <td className="px-6 py-4">
                       {row.name?.trim() ? (
-                        <span className="font-medium text-gray-900">{row.name}</span>
+                        <span className="font-serif text-ink">{row.name}</span>
                       ) : (
-                        <span className="italic text-gray-400">(no name)</span>
+                        <span className="italic text-ink-4 font-serif">(no name)</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 font-mono text-xs text-gray-700">{row.keyPrefix}</td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 font-mono text-[11px] text-ink-2">{row.keyPrefix}</td>
+                    <td className="px-6 py-4 font-mono text-[11px] text-ink-3">
                       <span title={new Date(row.createdAt).toLocaleString()}>
                         {relativeTime(row.createdAt)}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 font-mono text-[11px] text-ink-3">
                       <span title={row.lastUsedAt ? new Date(row.lastUsedAt).toLocaleString() : ""}>
                         {relativeTime(row.lastUsedAt)}
                       </span>
                     </td>
                     <td className="px-6 py-4">
                       {revoked ? (
-                        <span className="inline-flex items-center gap-1.5 bg-[#EAE2D0] text-gray-600 px-2 py-1 rounded text-xs font-bold">
+                        <span className="inline-flex items-center gap-1.5 bg-paper-2 border border-rule text-ink-3 px-2 py-1 font-mono text-[11px] tracking-eyebrow uppercase">
                           Revoked
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 px-2 py-1 rounded text-xs font-bold">
-                          <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span> Active
+                        <span className="inline-flex items-center gap-1.5 bg-status-ok/10 border border-status-ok/30 text-status-ok px-2 py-1 font-mono text-[11px] tracking-eyebrow uppercase">
+                          <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-status-ok" /> Active
                         </span>
                       )}
                     </td>
@@ -154,7 +163,7 @@ export function ApiKeysList() {
                           type="button"
                           onClick={() => handleRevoke(row)}
                           disabled={revokingId === row.id}
-                          className="text-black font-semibold underline hover:no-underline disabled:opacity-50"
+                          className="font-mono text-[11px] tracking-eyebrow uppercase text-status-err hover:text-ink underline-offset-2 hover:underline disabled:opacity-50"
                         >
                           {revokingId === row.id ? "Revoking…" : "Revoke"}
                         </button>

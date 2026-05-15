@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { Eyebrow } from "@/components/design";
 
 // Phase 4 Stream C — post-purchase API instructions block.
 // Server component, rendered on /dashboard/purchase/success and inside the
@@ -16,6 +17,9 @@ import { prisma } from "@/lib/db";
 // The endpoint URL is the production host. Local-dev callers replace it
 // with http://localhost:3000 — that's a "your tooling already knows the
 // dev URL" affordance and not surfaced here to keep the block one-shape.
+//
+// bkstr redesign PR 7 — restyled with design tokens. Square corners,
+// hairline rules, mono uppercase eyebrows on the field labels.
 
 export async function ApiInstructionsBlock({
   subscriberId,
@@ -54,55 +58,54 @@ export async function ApiInstructionsBlock({
     <div
       className={
         compact
-          ? "rounded-lg border border-[#E5DCC8] bg-[#F5F0E6] p-4 space-y-3"
-          : "bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-6 space-y-4"
+          ? "border border-rule bg-paper-2 p-4 space-y-4"
+          : "bg-paper border border-rule p-6 space-y-5"
       }
     >
       {!compact && (
         <div>
-          <h2 className="text-lg font-bold">Use this book via the API</h2>
-          <p className="text-xs text-gray-500 mt-1">
-            POST a query and stream the answer. The agent fetch endpoint is the
-            production path for plugging this book into your tooling.
+          <Eyebrow>§ INTEGRATION · CURL</Eyebrow>
+          <h2 className="font-serif text-[22px] tracking-display text-ink mt-2 mb-1">
+            Use this book via the API
+          </h2>
+          <p className="text-ink-3 text-xs">
+            POST a query and stream the answer. The agent fetch endpoint is
+            the production path for plugging this book into your tooling.
           </p>
         </div>
       )}
 
       <div>
-        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-          Book ID
-        </div>
-        <div className="font-mono text-xs bg-[#FAF6EC] border border-[#E5DCC8] rounded px-2 py-1.5 break-all select-all">
+        <Eyebrow>BOOK ID</Eyebrow>
+        <div className="font-mono text-[12px] bg-paper-2 border border-rule px-2 py-1.5 break-all select-all text-ink mt-1.5">
           {bookId}
         </div>
         {bookSlug && (
-          <div className="text-xs text-gray-500 mt-1 font-mono">{bookSlug}</div>
+          <div className="font-mono text-[11px] text-ink-3 mt-1">{bookSlug}</div>
         )}
       </div>
 
       <div>
-        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-          API key
-        </div>
+        <Eyebrow>API KEY</Eyebrow>
         {activeKey ? (
-          <div className="space-y-1">
-            <div className="font-mono text-xs">
+          <div className="space-y-1 mt-1.5">
+            <div className="font-mono text-[12px] text-ink">
               {maskedKey}{" "}
-              <span className="text-gray-400">(masked — full secret shown only at issuance)</span>
+              <span className="text-ink-4">(masked — full secret shown only at issuance)</span>
             </div>
             <Link
               href="/dashboard/api-keys"
-              className="text-xs font-semibold underline hover:no-underline text-black"
+              className="font-mono text-[11px] tracking-eyebrow uppercase text-ink underline-offset-2 underline hover:no-underline"
             >
               Manage keys →
             </Link>
           </div>
         ) : (
-          <div className="space-y-1">
-            <div className="text-xs text-gray-600">No active API key.</div>
+          <div className="space-y-1 mt-1.5">
+            <div className="text-xs text-ink-2">No active API key.</div>
             <Link
               href="/dashboard/api-keys"
-              className="text-xs font-semibold underline hover:no-underline text-black"
+              className="font-mono text-[11px] tracking-eyebrow uppercase text-ink underline-offset-2 underline hover:no-underline"
             >
               Issue an API key →
             </Link>
@@ -111,16 +114,15 @@ export async function ApiInstructionsBlock({
       </div>
 
       <div>
-        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-          Request
-        </div>
-        <pre className="font-mono text-xs bg-[#FAF6EC] border border-[#E5DCC8] rounded p-3 overflow-x-auto whitespace-pre">
+        <Eyebrow>REQUEST</Eyebrow>
+        <pre className="font-mono text-[12px] bg-paper-2 border border-rule p-3 overflow-x-auto whitespace-pre text-ink mt-1.5">
           {curl}
         </pre>
-        <p className="text-xs text-gray-500 mt-2">
-          The <code>-N</code> flag disables curl&apos;s output buffering so the
-          SSE stream surfaces incrementally. Replace the masked prefix with your
-          full key (shown only once at issuance).
+        <p className="text-xs text-ink-3 mt-2">
+          The <code className="font-mono text-ink-2">-N</code> flag disables
+          curl&apos;s output buffering so the SSE stream surfaces
+          incrementally. Replace the masked prefix with your full key (shown
+          only once at issuance).
         </p>
       </div>
     </div>

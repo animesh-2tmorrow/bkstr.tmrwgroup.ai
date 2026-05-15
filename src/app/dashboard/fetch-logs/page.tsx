@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { DashShell, Eyebrow } from "@/components/design";
 import { FetchLogsTable } from "@/components/dashboard/fetch-logs-table";
 import { RefreshButton } from "@/components/dashboard/refresh-button";
 import { getRecentFetchLogs, getBookTitle } from "@/lib/dashboard/queries";
+import { buildDashNav } from "@/lib/dashboard/nav-config";
 
 export const metadata = {
   title: "Fetch Logs | bkstr",
@@ -14,6 +15,7 @@ export const dynamic = "force-dynamic";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// bkstr redesign PR 7 — migrated to <DashShell> + design-token header.
 export default async function FetchLogsPage({
   searchParams,
 }: {
@@ -28,7 +30,6 @@ export default async function FetchLogsPage({
   });
   const companyName = subscriber?.companyName ?? "Personal";
   const userEmail = session.user.email;
-  const initial = (session.user.name?.[0] ?? userEmail[0] ?? "?").toUpperCase();
 
   const params = await searchParams;
   const filterBookId = params.book && UUID_REGEX.test(params.book) ? params.book : null;
@@ -40,24 +41,49 @@ export default async function FetchLogsPage({
     : [[], null];
 
   return (
-    <DashboardShell
-      active="fetch-logs"
-      companyName={companyName}
-      userEmail={userEmail}
-      initial={initial}
-      role={session.user.role}
+    <DashShell
+      nav={buildDashNav(session.user.role, "/dashboard/fetch-logs")}
+      brandSubtitle={companyName.toUpperCase()}
+      userBlock={<UserBlock email={userEmail} />}
     >
-      <header className="mb-8 flex justify-between items-center">
+      <header className="mb-8 flex justify-between items-end gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Fetch Logs</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <Eyebrow>§ OBSV · BEDROCK FETCH LEDGER</Eyebrow>
+          <h1 className="font-serif font-normal text-[36px] leading-[1.05] tracking-display text-ink mt-3 mb-2">
+            Fetch Logs
+          </h1>
+          <p className="text-ink-3 text-sm max-w-[72ch]">
             Every Bedrock call your subscribers have made, last 100 rows.
+            Filter by book using the storefront link or query param.
           </p>
         </div>
         <RefreshButton />
       </header>
 
       <FetchLogsTable rows={rows} filterBookTitle={filterBookTitle} filterBookId={filterBookId} />
-    </DashboardShell>
+    </DashShell>
+  );
+}
+
+function UserBlock({ email }: { email: string }) {
+  return (
+    <>
+      <div className="text-ink text-[13px] mb-1 truncate">{email}</div>
+      <div className="flex justify-between items-center text-ink-3">
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="w-1.5 h-1.5 rounded-full bg-status-ok inline-block"
+          />
+          Signed in
+        </span>
+        <a
+          href="/api/auth/signout"
+          className="text-ink-3 hover:text-ink transition-colors"
+        >
+          Log out
+        </a>
+      </div>
+    </>
   );
 }
