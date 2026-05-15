@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { CancelInvitationButton } from "./cancel-invitation-button";
+import { Eyebrow } from "@/components/design";
 
 // Phase 5 Stream E (D15.1 / D15.2) — pending-invitations table.
 //
@@ -7,6 +8,8 @@ import { CancelInvitationButton } from "./cancel-invitation-button";
 // Email / Role / Invited by / Invited at / Status / Accepted at /
 // Mismatch / Actions. Actions cell on unaccepted rows renders the
 // CancelInvitationButton client island; accepted rows show a "—".
+//
+// bkstr redesign PR 5 — restyled with design tokens.
 
 function formatShortDate(d: Date | null): string {
   if (!d) return "—";
@@ -28,24 +31,27 @@ function StatusPill({
   expired: boolean;
 }) {
   // Effective status: accepted wins over everything; expired then beats
-  // pending/sent/failed; cancelled is its own thing.
+  // pending/sent/failed; cancelled is its own thing. Token palette uses the
+  // design-system status colors (status-ok / status-warn / status-err /
+  // status-info) with a low-opacity background tint.
   let label = status;
-  let cls = "inline-block px-2 py-1 rounded-md text-xs font-medium bg-white border border-[#E5DCC8] text-gray-700";
+  const base = "inline-block px-2 py-1 font-mono text-[11px] tracking-eyebrow uppercase";
+  let cls = `${base} bg-paper border border-rule text-ink-2`;
   if (accepted) {
     label = "accepted";
-    cls = "inline-block px-2 py-1 rounded-md text-xs font-bold bg-green-100 text-green-800";
+    cls = `${base} bg-status-ok/10 text-status-ok border border-status-ok/30`;
   } else if (status === "cancelled") {
     label = "cancelled";
-    cls = "inline-block px-2 py-1 rounded-md text-xs font-medium bg-gray-200 text-gray-700";
+    cls = `${base} bg-paper-2 text-ink-3 border border-rule`;
   } else if (expired) {
     label = "expired";
-    cls = "inline-block px-2 py-1 rounded-md text-xs font-medium bg-amber-100 text-amber-800";
+    cls = `${base} bg-status-warn/10 text-status-warn border border-status-warn/30`;
   } else if (status === "sent") {
-    cls = "inline-block px-2 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-800";
+    cls = `${base} bg-status-info/10 text-status-info border border-status-info/30`;
   } else if (status === "failed") {
-    cls = "inline-block px-2 py-1 rounded-md text-xs font-bold bg-red-100 text-red-800";
+    cls = `${base} bg-status-err/10 text-status-err border border-status-err/30`;
   } else if (status === "pending") {
-    cls = "inline-block px-2 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700";
+    cls = `${base} bg-paper-2 text-ink-3 border border-rule`;
   }
   return <span className={cls}>{label}</span>;
 }
@@ -72,8 +78,11 @@ export async function PendingInvitationsTable() {
     return (
       <section className="mt-12">
         <header className="mb-4">
-          <h2 className="text-xl font-bold">Invitations</h2>
-          <p className="text-sm text-gray-500 mt-1">No invitations issued yet.</p>
+          <Eyebrow>§ INVITATIONS</Eyebrow>
+          <h2 className="font-serif text-[22px] tracking-display text-ink mt-2 mb-1">
+            Invitations
+          </h2>
+          <p className="text-ink-3 text-sm">No invitations issued yet.</p>
         </header>
       </section>
     );
@@ -84,39 +93,42 @@ export async function PendingInvitationsTable() {
   return (
     <section className="mt-12">
       <header className="mb-4">
-        <h2 className="text-xl font-bold">Invitations</h2>
-        <p className="text-sm text-gray-500 mt-1">
-          Pending + recently-accepted invitations (50 most recent). The
-          15-min expiry runs from the createdAt timestamp.
+        <Eyebrow>§ INVITATIONS</Eyebrow>
+        <h2 className="font-serif text-[22px] tracking-display text-ink mt-2 mb-1">
+          Invitations
+        </h2>
+        <p className="text-ink-3 text-sm">
+          Pending + recently-accepted invitations (50 most recent). The 15-min
+          expiry runs from the createdAt timestamp.
         </p>
       </header>
-      <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-paper border border-rule overflow-hidden">
         <table className="w-full text-left text-sm">
-          <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
-            <tr>
-              <th className="px-6 py-4 font-semibold text-gray-600">Email</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Role</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Invited by</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Invited at</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Status</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Accepted at</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Note</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Action</th>
+          <thead>
+            <tr className="border-b border-ink">
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Email</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Role</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Invited by</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Invited at</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Status</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Accepted at</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Note</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Action</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#E5DCC8]">
+          <tbody>
             {rows.map((r) => {
               const accepted = r.acceptedAt !== null;
               const expired = !accepted && r.expiresAt < now;
               const cancellable = !accepted && r.emailSendStatus !== "cancelled";
               return (
-                <tr key={r.id}>
-                  <td className="px-6 py-4 font-medium text-gray-900">{r.email}</td>
-                  <td className="px-6 py-4 font-mono text-xs uppercase">{r.role}</td>
-                  <td className="px-6 py-4 text-xs text-gray-600">
+                <tr key={r.id} className="border-b border-rule hover:bg-paper-2 transition-colors">
+                  <td className="px-6 py-4 font-serif text-ink">{r.email}</td>
+                  <td className="px-6 py-4 font-mono text-[11px] tracking-eyebrow uppercase text-ink-2">{r.role}</td>
+                  <td className="px-6 py-4 text-ink-3 text-sm">
                     {r.invitedBy.name ?? r.invitedBy.email}
                   </td>
-                  <td className="px-6 py-4 text-xs text-gray-600">
+                  <td className="px-6 py-4 font-mono text-[11px] text-ink-3">
                     {formatShortDate(r.createdAt)}
                   </td>
                   <td className="px-6 py-4">
@@ -126,27 +138,27 @@ export async function PendingInvitationsTable() {
                       expired={expired}
                     />
                     {r.emailSendError && (
-                      <div className="text-xs text-red-700 mt-1 font-mono">
+                      <div className="text-xs text-status-err mt-1 font-mono">
                         {r.emailSendError.slice(0, 80)}
                         {r.emailSendError.length > 80 ? "…" : ""}
                       </div>
                     )}
                   </td>
-                  <td className="px-6 py-4 text-xs text-gray-600">
+                  <td className="px-6 py-4 font-mono text-[11px] text-ink-3">
                     {formatShortDate(r.acceptedAt)}
                   </td>
-                  <td className="px-6 py-4 text-xs text-gray-600">
+                  <td className="px-6 py-4 text-sm">
                     {r.emailMismatchNote ? (
-                      <span className="text-amber-800">{r.emailMismatchNote}</span>
+                      <span className="text-status-warn">{r.emailMismatchNote}</span>
                     ) : (
-                      "—"
+                      <span className="text-ink-4">—</span>
                     )}
                   </td>
                   <td className="px-6 py-4">
                     {cancellable ? (
                       <CancelInvitationButton invitationId={r.id} email={r.email} />
                     ) : (
-                      <span className="text-xs text-gray-400">—</span>
+                      <span className="text-ink-4 text-xs">—</span>
                     )}
                   </td>
                 </tr>

@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { redirect } from "next/navigation";
-import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { DashShell, Eyebrow } from "@/components/design";
 import {
   UsersTable,
   type UsersTableFilter,
@@ -14,6 +14,7 @@ import {
   type AdminUsersSortDir,
 } from "@/lib/dashboard/queries";
 import { Role } from "@/generated/prisma/client";
+import { buildDashNav } from "@/lib/dashboard/nav-config";
 
 // Phase 4.5 Stream E — ADMIN users-list surface.
 //
@@ -27,11 +28,12 @@ import { Role } from "@/generated/prisma/client";
 // is the load-bearing authz floor.
 //
 // Filter + sort state lives in URL search params (?role=…&sort=…&dir=…) so
-// the view is link-shareable + refresh-stable, mirroring Library's pattern at
-// app/dashboard/library/page.tsx:21-25.
+// the view is link-shareable + refresh-stable.
+//
+// bkstr redesign PR 5 — migrated to <DashShell> + design-token header.
 
 export const metadata = {
-  title: "Admin: Users | bkstr",
+  title: "Admin · Users | bkstr",
 };
 
 export const dynamic = "force-dynamic";
@@ -98,26 +100,26 @@ export default async function AdminUsersPage({
 
   const companyName = subscriber?.companyName ?? "Personal";
   const userEmail = session.user.email;
-  const initial = (session.user.name?.[0] ?? userEmail[0] ?? "?").toUpperCase();
 
   return (
-    <DashboardShell
-      active="admin-users"
-      companyName={companyName}
-      userEmail={userEmail}
-      initial={initial}
-      role={session.user.role}
+    <DashShell
+      nav={buildDashNav(session.user.role, "/dashboard/admin/users")}
+      brandSubtitle={companyName.toUpperCase()}
+      userBlock={<UserBlock email={userEmail} />}
     >
       <header className="mb-8 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Admin: Users</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Promote or demote users between SUBSCRIBER / PUBLISHER / ADMIN roles.
-            Every mutation writes a durable audit row to{" "}
-            <span className="font-mono">admin_actions</span> (Phase 4.5 Stream G).
-            See the Stream E runbook in{" "}
-            <span className="font-mono">docs/operations.md</span> for the
-            env-file-vs-UI consistency story.
+          <Eyebrow>§ ADMN · USER & ROLE ADMINISTRATION</Eyebrow>
+          <h1 className="font-serif font-normal text-[36px] leading-[1.05] tracking-display text-ink mt-3 mb-2">
+            Users
+          </h1>
+          <p className="text-ink-3 text-sm max-w-[72ch]">
+            Promote or demote users between SUBSCRIBER / PUBLISHER / ADMIN
+            roles. Every mutation writes a durable audit row to{" "}
+            <code className="font-mono text-ink-2">admin_actions</code>. See
+            the Stream E runbook in{" "}
+            <code className="font-mono text-ink-2">docs/operations.md</code>{" "}
+            for the env-file-vs-UI consistency story.
           </p>
         </div>
         <InviteUserButton />
@@ -132,6 +134,29 @@ export default async function AdminUsersPage({
       />
 
       <PendingInvitationsTable />
-    </DashboardShell>
+    </DashShell>
+  );
+}
+
+function UserBlock({ email }: { email: string }) {
+  return (
+    <>
+      <div className="text-ink text-[13px] mb-1 truncate">{email}</div>
+      <div className="flex justify-between items-center text-ink-3">
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="w-1.5 h-1.5 rounded-full bg-status-ok inline-block"
+          />
+          Signed in
+        </span>
+        <a
+          href="/api/auth/signout"
+          className="text-ink-3 hover:text-ink transition-colors"
+        >
+          Log out
+        </a>
+      </div>
+    </>
   );
 }

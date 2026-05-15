@@ -64,11 +64,11 @@ export function ArchiveBookButton({
           type="button"
           onClick={handleUnarchive}
           disabled={submitting}
-          className="px-3 py-1 rounded-md text-xs font-bold bg-white border border-[#E5DCC8] text-gray-700 hover:bg-[#EAE2D0] disabled:opacity-50"
+          className="px-3 py-1.5 font-mono text-[11px] tracking-eyebrow uppercase bg-paper border border-rule text-ink-2 hover:bg-paper-2 hover:text-ink transition-colors disabled:opacity-50"
         >
           {submitting ? "Unarchiving…" : "Unarchive"}
         </button>
-        {error && <div className="text-xs text-red-700 mt-1">{error}</div>}
+        {error && <div className="text-xs text-status-err mt-1 font-mono">{error}</div>}
       </div>
     );
   }
@@ -78,7 +78,7 @@ export function ArchiveBookButton({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="px-3 py-1 rounded-md text-xs font-bold bg-white border border-red-200 text-red-700 hover:bg-red-50"
+        className="px-3 py-1.5 font-mono text-[11px] tracking-eyebrow uppercase bg-paper border border-status-err/40 text-status-err hover:bg-status-err/10 transition-colors"
       >
         Archive
       </button>

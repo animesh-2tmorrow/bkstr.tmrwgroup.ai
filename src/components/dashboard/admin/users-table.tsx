@@ -7,18 +7,17 @@ import { RoleMutationButton } from "@/components/dashboard/admin/role-mutation-m
 //
 // Filter state lives in URL search params (?role=…&sort=…&dir=…) so the view
 // is link-shareable + refresh-stable, mirroring Stream C's Library-table
-// pattern at src/components/dashboard/library-table.tsx:20-58. The page
-// component (app/dashboard/admin/users/page.tsx) reads the params and passes
-// the parsed values down; this component only renders.
+// pattern at src/components/dashboard/library-table.tsx.
 //
-// Columns (Q-E8): Email / Company / Role / Created / Last signin / Actions.
+// Columns: Email / Company / Role / Created / Last signin / Actions.
 // Sort: server-side via Link rewrites on column headers (sortBy + sortDir);
-// click-to-sort on email / created_at / last_signin_at. Defer client-side
-// sort to a follow-up if it ever matters.
+// click-to-sort on email / created_at / last_signin_at.
 //
 // Actions cell: a RoleMutationButton client island per row. The button opens
 // the asymmetric-friction modal (D12.10) which posts to
 // /api/admin/users/[id]/role and refreshes on success.
+//
+// bkstr redesign PR 5 — restyled with design tokens.
 
 export type UsersTableFilter = "all" | "SUBSCRIBER" | "PUBLISHER" | "ADMIN";
 
@@ -107,12 +106,12 @@ export function UsersTable({
 }) {
   return (
     <div>
-      <nav className="mb-6 inline-flex gap-1 p-1 rounded-lg bg-[#EFE8D8] border border-[#E5DCC8]">
+      <nav className="mb-6 inline-flex gap-px bg-rule border border-rule">
         {FILTERS.map((f) => {
           const isActive = f.key === filter;
           const className = isActive
-            ? "px-4 py-1.5 rounded-md text-xs font-bold bg-[#FAF6EC] text-black shadow-sm"
-            : "px-4 py-1.5 rounded-md text-xs font-bold text-gray-600 hover:text-black";
+            ? "px-4 py-1.5 font-mono text-[11px] tracking-eyebrow uppercase bg-ink text-paper"
+            : "px-4 py-1.5 font-mono text-[11px] tracking-eyebrow uppercase bg-paper text-ink-3 hover:text-ink hover:bg-paper-2";
           return (
             <Link
               key={f.key}
@@ -125,11 +124,11 @@ export function UsersTable({
         })}
       </nav>
 
-      <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-paper border border-rule overflow-hidden">
         <table className="w-full text-left text-sm">
-          <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
-            <tr>
-              <th className="px-6 py-4 font-semibold text-gray-600">
+          <thead>
+            <tr className="border-b border-ink">
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">
                 <Link
                   href={buildHref({
                     filter,
@@ -137,14 +136,14 @@ export function UsersTable({
                     sortDir,
                     override: { sortBy: "email", sortDir: nextSortDirFor("email", sortBy, sortDir) },
                   })}
-                  className="hover:text-black"
+                  className="hover:text-ink"
                 >
                   Email{sortIndicator("email", sortBy, sortDir)}
                 </Link>
               </th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Company</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Role</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Company</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Role</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">
                 <Link
                   href={buildHref({
                     filter,
@@ -155,12 +154,12 @@ export function UsersTable({
                       sortDir: nextSortDirFor("created_at", sortBy, sortDir),
                     },
                   })}
-                  className="hover:text-black"
+                  className="hover:text-ink"
                 >
                   Created{sortIndicator("created_at", sortBy, sortDir)}
                 </Link>
               </th>
-              <th className="px-6 py-4 font-semibold text-gray-600">
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">
                 <Link
                   href={buildHref({
                     filter,
@@ -171,18 +170,18 @@ export function UsersTable({
                       sortDir: nextSortDirFor("last_signin_at", sortBy, sortDir),
                     },
                   })}
-                  className="hover:text-black"
+                  className="hover:text-ink"
                 >
                   Last signin{sortIndicator("last_signin_at", sortBy, sortDir)}
                 </Link>
               </th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Actions</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#E5DCC8]">
+          <tbody>
             {users.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-6 py-8 text-center text-ink-3 text-sm">
                   No users match this filter.
                 </td>
               </tr>
@@ -190,24 +189,24 @@ export function UsersTable({
               users.map((u) => {
                 const isSelf = u.id === currentUserId;
                 return (
-                  <tr key={u.id}>
+                  <tr key={u.id} className="border-b border-rule hover:bg-paper-2 transition-colors">
                     <td className="px-6 py-4">
-                      <div className="font-medium text-gray-900">{u.email}</div>
+                      <div className="font-serif text-ink">{u.email}</div>
                       {u.name && (
-                        <div className="text-xs text-gray-500 mt-1">
+                        <div className="font-mono text-[11px] text-ink-3 mt-1">
                           {u.name}
-                          {isSelf && <span className="ml-2 text-gray-400">(you)</span>}
+                          {isSelf && <span className="ml-2 text-ink-4">(you)</span>}
                         </div>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-gray-700">{u.companyName ?? "—"}</td>
+                    <td className="px-6 py-4 text-ink-2 text-sm">{u.companyName ?? "—"}</td>
                     <td className="px-6 py-4">
                       <RoleChip role={u.role} />
                     </td>
-                    <td className="px-6 py-4 text-xs text-gray-600">
+                    <td className="px-6 py-4 font-mono text-[11px] text-ink-3">
                       {formatShortDate(u.createdAt)}
                     </td>
-                    <td className="px-6 py-4 text-xs text-gray-600">
+                    <td className="px-6 py-4 font-mono text-[11px] text-ink-3">
                       {formatShortDate(u.lastSigninAt)}
                     </td>
                     <td className="px-6 py-4">
@@ -231,13 +230,13 @@ export function UsersTable({
 
 function RoleChip({ role }: { role: Role }) {
   // Color-code roles so ADMIN rows stand out visually — operator's eye should
-  // land on the privileged rows first. Tailwind utility classes only (no
-  // global CSS additions); palette matches the existing dashboard surface.
+  // land on the privileged rows first. Design-token palette (ink-on-paper)
+  // with no rounded corners; ADMIN gets the inverted treatment.
   const className =
     role === Role.ADMIN
-      ? "inline-block px-2 py-1 rounded-md text-xs font-bold bg-black text-[#FAF6EC]"
+      ? "inline-block px-2 py-1 font-mono text-[11px] tracking-eyebrow uppercase bg-ink text-paper"
       : role === Role.PUBLISHER
-        ? "inline-block px-2 py-1 rounded-md text-xs font-bold bg-[#EAE2D0] text-gray-900"
-        : "inline-block px-2 py-1 rounded-md text-xs font-medium bg-white border border-[#E5DCC8] text-gray-700";
+        ? "inline-block px-2 py-1 font-mono text-[11px] tracking-eyebrow uppercase bg-paper-2 border border-rule text-ink"
+        : "inline-block px-2 py-1 font-mono text-[11px] tracking-eyebrow uppercase bg-paper border border-rule text-ink-2";
   return <span className={className}>{role}</span>;
 }

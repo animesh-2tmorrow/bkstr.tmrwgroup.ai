@@ -19,6 +19,8 @@ import { formatUsdCents } from "@/lib/format/currency";
 // row) when publisher_user_id is NULL (the "unattributed" state) — though
 // today every seed book is attributed to ADMIN via the ADMIN-as-seed-owner
 // runbook, so unattributed rows are rare.
+//
+// bkstr redesign PR 5 — restyled with design tokens.
 
 export function AdminBooksTable({
   books,
@@ -33,7 +35,7 @@ export function AdminBooksTable({
 
   if (books.length === 0) {
     return (
-      <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-8 text-center text-gray-500">
+      <div className="bg-paper border border-rule p-8 text-center text-ink-3 text-sm">
         No books in the system yet.
       </div>
     );
@@ -41,19 +43,19 @@ export function AdminBooksTable({
 
   return (
     <>
-      <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-paper border border-rule overflow-hidden">
         <table className="w-full text-left text-sm">
-          <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
-            <tr>
-              <th className="px-6 py-4 font-semibold text-gray-600">Title</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Publisher</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Status</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Price</th>
-              <th className="px-6 py-4 font-semibold text-gray-600">Active grants</th>
-              <th className="px-6 py-4 font-semibold text-gray-600 text-right">Action</th>
+          <thead>
+            <tr className="border-b border-ink">
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Title</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Publisher</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Status</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Price</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Active grants</th>
+              <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal text-right">Action</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#E5DCC8]">
+          <tbody>
             {books.map((b) => {
               // Publisher display: prefer per-user name → tenant name fallback.
               // The user's email appears as a subtitle so operators can
@@ -75,28 +77,28 @@ export function AdminBooksTable({
                 : `tenant: ${b.publisherTenantName}`;
 
               return (
-                <tr key={b.id} className="hover:bg-[#F5F0E6] transition-colors">
+                <tr key={b.id} className="border-b border-rule hover:bg-paper-2 transition-colors">
                   <td className="px-6 py-4">
-                    <div className="font-bold text-gray-900">{b.title}</div>
-                    <div className="text-xs text-gray-500 font-mono mt-1">
-                      {b.slug} <span className="text-gray-400">·</span> {b.domain}
+                    <div className="font-serif text-ink">{b.title}</div>
+                    <div className="font-mono text-[11px] text-ink-3 mt-1">
+                      {b.slug} <span className="text-ink-4">·</span> {b.domain}
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="text-gray-900">{primaryLabel}</div>
+                    <div className="text-ink-2 text-sm">{primaryLabel}</div>
                     {subtitle && (
-                      <div className="text-xs text-gray-500 font-mono mt-1">{subtitle}</div>
+                      <div className="font-mono text-[11px] text-ink-3 mt-1">{subtitle}</div>
                     )}
                   </td>
-                  <td className="px-6 py-4 font-mono text-xs uppercase">{b.status}</td>
-                  <td className="px-6 py-4 font-medium">
+                  <td className="px-6 py-4 font-mono text-[11px] uppercase tracking-eyebrow text-ink-2">{b.status}</td>
+                  <td className="px-6 py-4 font-mono text-[13px] text-ink num tabular-nums">
                     {b.unitAmountCents !== null ? (
                       formatUsdCents(b.unitAmountCents)
                     ) : (
-                      <span className="text-gray-400 italic">Not for sale</span>
+                      <span className="text-ink-4 italic font-serif">Not for sale</span>
                     )}
                   </td>
-                  <td className="px-6 py-4 font-medium">
+                  <td className="px-6 py-4 font-mono text-[13px] text-ink num tabular-nums">
                     {b.activeGrantCount.toLocaleString()}
                   </td>
                   <td className="px-6 py-4 text-right">
@@ -108,7 +110,7 @@ export function AdminBooksTable({
                       <button
                         type="button"
                         onClick={() => setActiveBook(b)}
-                        className="bg-black text-[#FAF6EC] px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-black shadow-sm"
+                        className="bg-ink text-paper px-3 py-1.5 font-mono text-[11px] tracking-eyebrow uppercase hover:bg-ink-2 transition-colors"
                       >
                         Reassign
                       </button>

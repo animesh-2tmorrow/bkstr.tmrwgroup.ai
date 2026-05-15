@@ -10,13 +10,17 @@ import { GrantSource } from "@/generated/prisma/enums";
 import { RevokeGrantModal } from "@/components/dashboard/admin/revoke-grant-modal";
 
 // Phase 4.5 Stream F — ADMIN grants ledger. Filter tabs by source per
-// Q-F4 (single-select tab — matches Stream E's tabs pattern). URL-driven
-// state means the view is link-shareable; the page re-renders SSR on
-// filter change (no client-side filtering).
+// Q-F4 (single-select tab). URL-driven state means the view is
+// link-shareable; the page re-renders SSR on filter change.
 //
 // Active rows (revoked_at IS NULL) get a Revoke button that opens a modal.
 // Revoked rows render with strikethrough + the revoked_at timestamp; no
 // Revoke button (Q-F5 — re-issue inverse is psql-only).
+//
+// bkstr redesign PR 5 — restyled with design tokens. Square corners
+// (no rounded-xl/lg), no shadows, hairline rules on borders, ink-on-paper
+// pills. Modal interior untouched (out of scope; revoke-grant-modal.tsx
+// already on tokens via Stream V).
 
 type FilterKey = "all" | GrantSource;
 
@@ -57,12 +61,12 @@ export function AdminGrantsTable({
 
   return (
     <>
-      <nav className="mb-6 inline-flex gap-1 p-1 rounded-lg bg-[#EFE8D8] border border-[#E5DCC8] flex-wrap">
+      <nav className="mb-6 inline-flex gap-px bg-rule border border-rule flex-wrap">
         {FILTERS.map((f) => {
           const isActive = f.key === activeKey;
           const className = isActive
-            ? "px-3 py-1.5 rounded-md text-xs font-bold bg-[#FAF6EC] text-black shadow-sm"
-            : "px-3 py-1.5 rounded-md text-xs font-bold text-gray-600 hover:text-black";
+            ? "px-3 py-1.5 font-mono text-[11px] tracking-eyebrow uppercase bg-ink text-paper"
+            : "px-3 py-1.5 font-mono text-[11px] tracking-eyebrow uppercase bg-paper text-ink-3 hover:text-ink hover:bg-paper-2";
           // "All" clears the filter; a specific source sets ?source=...
           const href = f.key === "all" ? "/dashboard/admin/grants" : `/dashboard/admin/grants?source=${f.key}`;
           return (
@@ -74,61 +78,61 @@ export function AdminGrantsTable({
       </nav>
 
       {grants.length === 0 ? (
-        <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm p-8 text-center text-gray-500">
+        <div className="bg-paper border border-rule p-8 text-center text-ink-3 text-sm">
           No grants match this filter.
         </div>
       ) : (
-        <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-paper border border-rule overflow-hidden">
           <table className="w-full text-left text-sm">
-            <thead className="bg-[#EFE8D8] border-b border-[#E5DCC8]">
-              <tr>
-                <th className="px-6 py-4 font-semibold text-gray-600">Subscriber</th>
-                <th className="px-6 py-4 font-semibold text-gray-600">Book</th>
-                <th className="px-6 py-4 font-semibold text-gray-600">Source</th>
-                <th className="px-6 py-4 font-semibold text-gray-600">Granted</th>
-                <th className="px-6 py-4 font-semibold text-gray-600">Revoked</th>
-                <th className="px-6 py-4 font-semibold text-gray-600">Expires</th>
-                <th className="px-6 py-4 font-semibold text-gray-600 text-right">Action</th>
+            <thead>
+              <tr className="border-b border-ink">
+                <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Subscriber</th>
+                <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Book / Skill</th>
+                <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Source</th>
+                <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Granted</th>
+                <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Revoked</th>
+                <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal">Expires</th>
+                <th className="px-6 py-3 font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 font-normal text-right">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#E5DCC8]">
+            <tbody>
               {grants.map((g) => {
                 const isRevoked = g.revokedAt !== null;
                 // Strikethrough revoked rows so the eye picks up active-vs-revoked
                 // at a glance. The text color stays readable so the operator can
                 // still read the row's content.
                 const rowClass = isRevoked
-                  ? "hover:bg-[#F5F0E6] transition-colors text-gray-500 line-through"
-                  : "hover:bg-[#F5F0E6] transition-colors";
+                  ? "border-b border-rule hover:bg-paper-2 transition-colors text-ink-3 line-through"
+                  : "border-b border-rule hover:bg-paper-2 transition-colors";
                 return (
                   <tr key={g.id} className={rowClass}>
-                    <td className="px-6 py-4">{g.subscriberEmail}</td>
+                    <td className="px-6 py-4 text-ink-2">{g.subscriberEmail}</td>
                     <td className="px-6 py-4">
                       {/* Stream L: a grant points at either a book or a skill
                           (XOR-checked at the DB layer). Render whichever is
                           populated; the "—" fallback is defensive. */}
-                      <div className="font-medium flex items-center gap-2">
+                      <div className="font-serif text-ink flex items-center gap-2">
                         {g.bookTitle ?? g.skillName ?? "—"}
-                        <span className="text-[10px] uppercase tracking-wide text-gray-500 bg-[#EAE2D0] px-1.5 py-0.5 rounded">
+                        <span className="font-mono text-[10px] uppercase tracking-eyebrow text-ink-3 bg-paper-2 px-1.5 py-0.5 border border-rule">
                           {g.bookId ? "Book" : g.skillId ? "Skill" : "—"}
                         </span>
                       </div>
-                      <div className="text-xs text-gray-500 font-mono mt-1">
+                      <div className="font-mono text-[11px] text-ink-3 mt-1">
                         {g.bookSlug ?? g.skillSlug ?? "—"}
                       </div>
                     </td>
-                    <td className="px-6 py-4 font-mono text-xs">{g.source}</td>
-                    <td className="px-6 py-4 text-xs">{fmtDate(g.grantedAt)}</td>
-                    <td className="px-6 py-4 text-xs">{fmtDate(g.revokedAt)}</td>
-                    <td className="px-6 py-4 text-xs">{fmtDate(g.expiresAt)}</td>
+                    <td className="px-6 py-4 font-mono text-[11px] text-ink-2 uppercase">{g.source}</td>
+                    <td className="px-6 py-4 font-mono text-[11px] text-ink-3">{fmtDate(g.grantedAt)}</td>
+                    <td className="px-6 py-4 font-mono text-[11px] text-ink-3">{fmtDate(g.revokedAt)}</td>
+                    <td className="px-6 py-4 font-mono text-[11px] text-ink-3">{fmtDate(g.expiresAt)}</td>
                     <td className="px-6 py-4 text-right">
                       {isRevoked ? (
-                        <span className="text-xs text-gray-400 italic">revoked</span>
+                        <span className="font-mono text-[11px] text-ink-4 italic">revoked</span>
                       ) : (
                         <button
                           type="button"
                           onClick={() => setActiveGrant(g)}
-                          className="bg-black text-[#FAF6EC] px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-black shadow-sm"
+                          className="bg-ink text-paper px-3 py-1.5 text-[11px] font-mono tracking-eyebrow uppercase hover:bg-ink-2 transition-colors"
                         >
                           Revoke
                         </button>

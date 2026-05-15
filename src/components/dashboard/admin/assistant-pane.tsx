@@ -18,8 +18,9 @@ import remarkGfm from "remark-gfm";
 // MARKDOWN: ReactMarkdown + remarkGfm for assistant text. The
 // `@tailwindcss/typography` plugin is NOT installed (verified at
 // src/app/dashboard/docs/page.tsx:49-55), so the `prose` class would be
-// unstyled. Falling back to a plain wrapper with space-y rhythm, same
-// pattern as Stream A's docs surface.
+// unstyled. Falling back to a plain wrapper with space-y rhythm.
+//
+// bkstr redesign PR 5 — restyled with design tokens.
 
 type Conversation = {
   id: string;
@@ -270,21 +271,21 @@ export function AssistantPane({
   }
 
   return (
-    <div className="flex border border-[#E5DCC8] rounded-xl overflow-hidden bg-white" style={{ height: "70vh" }}>
+    <div className="flex border border-rule overflow-hidden bg-paper" style={{ height: "70vh" }}>
       {/* Left rail */}
-      <aside className="w-64 bg-[#FAF6EC] border-r border-[#E5DCC8] flex flex-col">
-        <div className="p-4 border-b border-[#E5DCC8]">
+      <aside className="w-64 bg-paper-2 border-r border-rule flex flex-col">
+        <div className="p-4 border-b border-rule">
           <button
             type="button"
             onClick={handleNew}
-            className="w-full bg-black text-[#FAF6EC] px-4 py-2 rounded-lg text-sm font-bold hover:opacity-90"
+            className="w-full bg-ink text-paper px-4 py-2 font-mono text-[11px] tracking-eyebrow uppercase hover:bg-ink-2 transition-colors"
           >
             + New conversation
           </button>
         </div>
         <div className="flex-grow overflow-y-auto">
           {conversations.length === 0 ? (
-            <div className="p-4 text-xs text-gray-500">No conversations yet.</div>
+            <div className="p-4 text-xs text-ink-3">No conversations yet.</div>
           ) : (
             <ul className="p-2 space-y-1">
               {conversations.map((c) => {
@@ -292,14 +293,16 @@ export function AssistantPane({
                 return (
                   <li key={c.id}>
                     <div
-                      className={`group flex items-center justify-between gap-2 rounded-lg px-3 py-2 cursor-pointer text-sm ${
-                        isActive ? "bg-[#EAE2D0] font-bold" : "hover:bg-[#EAE2D0]"
+                      className={`group flex items-center justify-between gap-2 px-3 py-2 cursor-pointer text-sm border-l-2 ${
+                        isActive
+                          ? "bg-paper text-ink border-saffron-dk"
+                          : "border-transparent text-ink-2 hover:bg-paper hover:text-ink"
                       }`}
                       onClick={() => handleSelect(c.id)}
                     >
                       <div className="truncate">
-                        <div className="truncate">{c.title || "(untitled)"}</div>
-                        <div className="text-xs text-gray-500">
+                        <div className="font-serif truncate">{c.title || "(untitled)"}</div>
+                        <div className="font-mono text-[11px] text-ink-3">
                           {c.messageCount} {c.messageCount === 1 ? "message" : "messages"}
                         </div>
                       </div>
@@ -309,7 +312,7 @@ export function AssistantPane({
                           e.stopPropagation();
                           handleDelete(c.id);
                         }}
-                        className="opacity-0 group-hover:opacity-100 text-xs text-gray-500 hover:text-red-700"
+                        className="opacity-0 group-hover:opacity-100 text-xs text-ink-3 hover:text-status-err"
                         aria-label="Archive conversation"
                       >
                         x
@@ -324,10 +327,10 @@ export function AssistantPane({
       </aside>
 
       {/* Main pane */}
-      <section className="flex-grow flex flex-col">
+      <section className="flex-grow flex flex-col bg-paper">
         <div ref={scrollerRef} className="flex-grow overflow-y-auto p-6 space-y-4">
           {messages.length === 0 && !streamingText && streamingToolCalls.length === 0 ? (
-            <div className="text-sm text-gray-500 max-w-xl">
+            <div className="text-sm text-ink-3 max-w-xl">
               Ask me anything about platform users, books, grants, or activity. I
               have read access to the database. Try: &ldquo;How many active grants are
               there?&rdquo; or &ldquo;Show me admin actions from the last 24 hours.&rdquo;
@@ -349,16 +352,16 @@ export function AssistantPane({
           ))}
 
           {streamingText && (
-            <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-lg p-4 text-sm">
-              <div className="text-xs font-bold text-gray-500 mb-2">Assistant</div>
-              <article className="space-y-2">
+            <div className="bg-paper-2 border border-rule p-4 text-sm">
+              <div className="font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 mb-2">Assistant</div>
+              <article className="space-y-2 text-ink-2">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingText}</ReactMarkdown>
               </article>
             </div>
           )}
 
           {streamError && (
-            <div className="bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3 rounded-lg">
+            <div className="bg-paper border border-status-err text-status-err text-sm px-4 py-3">
               {streamError}
             </div>
           )}
@@ -366,7 +369,7 @@ export function AssistantPane({
 
         <form
           onSubmit={handleSubmit}
-          className="border-t border-[#E5DCC8] p-4 flex gap-2 bg-[#FAF6EC]"
+          className="border-t border-rule p-4 flex gap-2 bg-paper-2"
         >
           <input
             type="text"
@@ -378,13 +381,13 @@ export function AssistantPane({
                 : "Ask a question about platform state..."
             }
             disabled={streaming}
-            className="flex-grow px-3 py-2 border border-[#E5DCC8] rounded-lg bg-white text-sm disabled:opacity-50"
+            className="flex-grow px-3 py-2 border border-rule bg-paper text-sm text-ink disabled:opacity-50 placeholder:text-ink-3 focus:outline-none focus:border-ink"
             autoComplete="off"
           />
           <button
             type="submit"
             disabled={streaming || !input.trim()}
-            className="bg-black text-[#FAF6EC] px-4 py-2 rounded-lg text-sm font-bold hover:opacity-90 disabled:opacity-50"
+            className="bg-ink text-paper px-4 py-2 font-mono text-[11px] tracking-eyebrow uppercase hover:bg-ink-2 transition-colors disabled:opacity-50"
           >
             {streaming ? "..." : "Send"}
           </button>
@@ -399,21 +402,21 @@ function MessageRow({ message }: { message: StoredMessage }) {
   if (message.role === "user") {
     const text = typeof c?.text === "string" ? c.text : "";
     return (
-      <div className="bg-white border border-[#E5DCC8] rounded-lg p-4 text-sm">
-        <div className="text-xs font-bold text-gray-500 mb-2">You</div>
-        <div className="whitespace-pre-wrap">{text}</div>
+      <div className="bg-paper-2 border border-rule p-4 text-sm">
+        <div className="font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 mb-2">You</div>
+        <div className="whitespace-pre-wrap text-ink-2">{text}</div>
       </div>
     );
   }
   if (message.role === "assistant") {
     const text = typeof c?.text === "string" ? c.text : "";
     return (
-      <div className="bg-[#FAF6EC] border border-[#E5DCC8] rounded-lg p-4 text-sm">
-        <div className="text-xs font-bold text-gray-500 mb-2">Assistant</div>
+      <div className="bg-paper border border-rule p-4 text-sm">
+        <div className="font-mono text-[11px] tracking-eyebrow uppercase text-ink-3 mb-2">Assistant</div>
         {/* Tailwind typography plugin not installed — falling back to a
             plain wrapper with space-y rhythm. Same pattern as Stream A's
             docs surface (src/app/dashboard/docs/page.tsx:49-55). */}
-        <article className="space-y-2">
+        <article className="space-y-2 text-ink-2">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
         </article>
       </div>
@@ -423,12 +426,12 @@ function MessageRow({ message }: { message: StoredMessage }) {
     const name = typeof c?.name === "string" ? c.name : "<tool>";
     const input = (c?.input as Record<string, unknown>) ?? {};
     return (
-      <details className="text-xs text-gray-600 bg-white border border-[#E5DCC8] rounded-lg px-3 py-2">
+      <details className="text-xs text-ink-3 bg-paper border border-rule px-3 py-2">
         <summary className="cursor-pointer">
-          <span className="font-mono font-bold">{name}</span>(
+          <span className="font-mono text-ink-2">{name}</span>(
           {Object.keys(input).length === 0 ? "" : "..."}) called
         </summary>
-        <pre className="mt-2 whitespace-pre-wrap text-[11px]">
+        <pre className="mt-2 whitespace-pre-wrap text-[11px] font-mono">
           {JSON.stringify(input, null, 2)}
         </pre>
       </details>
@@ -438,11 +441,11 @@ function MessageRow({ message }: { message: StoredMessage }) {
     const output = c?.output ?? null;
     const preview = JSON.stringify(output);
     return (
-      <details className="text-xs text-gray-600 bg-white border border-[#E5DCC8] rounded-lg px-3 py-2">
+      <details className="text-xs text-ink-3 bg-paper border border-rule px-3 py-2">
         <summary className="cursor-pointer">
           Result: {preview.length > 80 ? preview.slice(0, 80) + "..." : preview}
         </summary>
-        <pre className="mt-2 whitespace-pre-wrap text-[11px]">
+        <pre className="mt-2 whitespace-pre-wrap text-[11px] font-mono">
           {JSON.stringify(output, null, 2)}
         </pre>
       </details>
@@ -453,15 +456,15 @@ function MessageRow({ message }: { message: StoredMessage }) {
 
 function ToolCallCard({ tc }: { tc: StreamingToolCall }) {
   return (
-    <div className="text-xs text-gray-600 bg-white border border-[#E5DCC8] rounded-lg px-3 py-2">
+    <div className="text-xs text-ink-3 bg-paper border border-rule px-3 py-2">
       <div>
-        <span className="font-mono font-bold">{tc.name}</span> called
+        <span className="font-mono text-ink-2">{tc.name}</span> called
         {tc.output === undefined ? " (running...)" : " "}
       </div>
       {tc.output !== undefined && (
         <details className="mt-1">
           <summary className="cursor-pointer">Result</summary>
-          <pre className="mt-2 whitespace-pre-wrap text-[11px]">
+          <pre className="mt-2 whitespace-pre-wrap text-[11px] font-mono">
             {JSON.stringify(tc.output, null, 2)}
           </pre>
         </details>

@@ -72,7 +72,7 @@ export function RoleMutationButton({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="px-3 py-1 rounded-md text-xs font-bold bg-white border border-[#E5DCC8] text-gray-700 hover:bg-[#EAE2D0]"
+        className="px-3 py-1.5 font-mono text-[11px] tracking-eyebrow uppercase bg-paper border border-rule text-ink-2 hover:bg-paper-2 hover:text-ink transition-colors"
       >
         Change role
       </button>

@@ -39,7 +39,7 @@ export function InviteUserButton() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="bg-black text-[#FAF6EC] px-4 py-2 rounded-lg text-sm font-bold hover:bg-black shadow-sm"
+        className="bg-ink text-paper px-4 py-2 font-mono text-[11px] tracking-eyebrow uppercase hover:bg-ink-2 transition-colors shrink-0"
       >
         Invite user
       </button>
