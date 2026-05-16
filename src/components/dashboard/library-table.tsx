@@ -178,6 +178,10 @@ export function LibraryTable({
                                   itemId={item.id}
                                   itemSlug={item.slug}
                                   subscriberId={subscriberId}
+                                  apiKey=""
+                                  isFree={
+                                    priceCents == null || priceCents === 0
+                                  }
                                   compact
                                 />
                               </div>

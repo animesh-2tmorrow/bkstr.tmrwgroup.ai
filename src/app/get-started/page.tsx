@@ -103,21 +103,20 @@ function HeroSection() {
         <span className="text-saffron">.</span>
       </h1>
       <p className="text-[19px] text-ink-2 mt-7 mb-9 leading-[1.55] max-w-[62ch]">
-        Buy a book. Fetch its files via API. Install per your agent&apos;s
-        docs. Three commands and a fresh bundle of context — versioned,
-        paid-for, hash-stored — lands on disk where your agent expects it.
+        Buy a book. Run one command. A fresh bundle of context — versioned,
+        paid-for, hash-stored — unpacks straight into your agent&apos;s
+        skills directory.
       </p>
 
-      {/* Real curl against the real host. Mirrors the homepage's "How to
-          Get Started · 3 STEPS" example block but shorter — the hero
-          plants the API shape, the install section below shows the full
-          install pipeline. */}
+      {/* The one-liner install command, real host. gif-grep is a free
+          item, so the command below runs as-is for anyone copy-pasting.
+          The install section further down covers the four agents. */}
       <pre className="font-mono text-[13px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] mt-0 mb-9 max-w-[820px]">
-{`# Fetch a book's raw files (JSON)
-$ curl -H "Authorization: Bearer $BKSTR_KEY" \\
-       https://bkstr.tmrwgroup.ai/api/books/<slug>/files
+{`# Install a book or skill — one command into your agent's skills dir
+$ curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep \\
+       | tar xz -C ~/.claude/skills/
 
-# Returns: { "files": [ { "path", "content", "sha256" }, ... ] }`}
+# gif-grep is free — runs as-is. Paid items add -H "Bearer $BKSTR_KEY".`}
       </pre>
 
       <div className="flex gap-3.5 items-center flex-wrap">
@@ -194,7 +193,7 @@ function WhatIsBkstrSection() {
           <MentalModelColumn
             step="02"
             title="Files"
-            body="The bundle — markdown chapters for books, executable files for skills. Delivered as JSON with path + content + sha256 per file."
+            body="The bundle — markdown chapters for books, executable files for skills. Delivered as a gzipped tarball that unpacks straight to disk."
           />
           <MentalModelColumn
             step="03"
@@ -280,18 +279,21 @@ function ThreeStepsSection() {
 
         <StepRow
           step="03"
-          title="Fetch the files."
+          title="Install with one command."
           body={
             <>
-              From the dashboard library, expand any owned row&apos;s API
-              access disclosure. You get the masked key prefix, the exact
-              files-endpoint curl, and the JSON shape you should expect.
-              Authorize, fetch, write to disk wherever your agent expects
-              the bundle — done.
+              Own it? Install it with a single{" "}
+              <code className="font-mono text-[0.85em] bg-paper-2 px-1">
+                curl … | tar xz
+              </code>{" "}
+              — the command fetches the bundle and unpacks it straight into
+              your agent&apos;s skills directory. The dashboard&apos;s
+              API-access panel hands you the exact command for any item you
+              own, free or paid.
             </>
           }
           imageSrc="/get-started/08-api-disclosure.png"
-          imageAlt="Library row with the 'API access' disclosure expanded — showing the masked key bks_4af5…j34t, a 'MANAGE KEYS →' link, and the real curl to /api/skills/eval-runner/files."
+          imageAlt="The dashboard library's API-access panel, expanded for an owned item."
           imageWidth={1280}
           imageHeight={720}
           imageSide="right"
@@ -387,97 +389,97 @@ function InstallReferenceSection() {
 
         <div className="mt-10 max-w-[64ch]">
           <p className="text-[16px] text-ink-2 leading-[1.65] m-0">
-            Same fetch endpoint, different destinations. Claude Code is the
-            canonical install — bkstr&apos;s own development happens there
-            and the &#x60;~/.claude/skills/&#x60; convention is well-defined.
-            The other three are provisional: based on each agent&apos;s
-            documented configuration model, not yet stress-tested by us in
-            the wild.
+            One command, four destinations. The install endpoint streams a
+            gzipped tarball; <code className="font-mono text-[0.9em]">tar xz -C &lt;dir&gt;</code>{" "}
+            unpacks it wherever your agent reads files. Claude Code is the
+            canonical target; Cursor, Cline, and Aider are provisional —
+            based on each agent&apos;s documented configuration model, not
+            yet stress-tested by us in the wild.
           </p>
         </div>
 
-        {/* CLAUDE CODE — canonical install. Full bash pipeline with
-            comments. Shows the skills endpoint (matches the step 3
-            screenshot) and writes to ~/.claude/skills/<slug>/. */}
+        {/* CLAUDE CODE — canonical install. The one-liner: fetch the
+            install endpoint, pipe straight into tar. */}
         <div className="mt-14">
           <div className="flex items-baseline gap-3 mb-3">
             <Eyebrow>CLAUDE CODE</Eyebrow>
             <Pill variant="status-ok">Canonical</Pill>
           </div>
           <h3 className="font-serif font-normal text-[26px] leading-[1.15] tracking-tight text-ink mb-4">
-            The full pipeline — fetch, decode, write.
+            One command — fetch and unpack.
           </h3>
           <p className="text-ink-2 text-[15px] leading-[1.65] mb-5 max-w-[64ch]">
-            Generate an API key at <Link href="/dashboard/api-keys" className="underline decoration-rule hover:decoration-ink">/dashboard/api-keys</Link>, export it, then run the
-            block below. The pipeline iterates the files array, base64-decodes
-            each entry, and writes to the canonical Claude Code skills
-            directory. Re-run anytime the publisher ships a new version —
-            the writes overwrite.
+            The install endpoint streams a gzipped tarball; pipe it into{" "}
+            <code className="font-mono text-ink-2">tar xz</code> and the
+            bundle lands under{" "}
+            <code className="font-mono text-ink-2">
+              ~/.claude/skills/&lt;slug&gt;/
+            </code>
+            . Free items install anonymously. Paid items take a Bearer
+            token — create a key at{" "}
+            <Link
+              href="/dashboard/api-keys"
+              className="underline decoration-rule hover:decoration-ink"
+            >
+              /dashboard/api-keys
+            </Link>{" "}
+            and export it as{" "}
+            <code className="font-mono text-ink-2">$BKSTR_KEY</code>. Re-run
+            any time the publisher ships a new version — the writes
+            overwrite.
           </p>
           <pre className="font-mono text-[12.5px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] m-0">
-{`# 1. API key from /dashboard/api-keys (shown once at issuance)
+{`# Free item — installs anonymously, runs as-is
+curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep \\
+  | tar xz -C ~/.claude/skills/
+
+# Paid item — export your key first, then add the Bearer header
 export BKSTR_KEY="bks_..."
-
-# 2. Pick a slug + destination
-SLUG="self-upgrade-engineer"
-DEST="$HOME/.claude/skills/$SLUG"
-mkdir -p "$DEST"
-
-# 3. Fetch + decode + write each file
-curl -sH "Authorization: Bearer $BKSTR_KEY" \\
-     "https://bkstr.tmrwgroup.ai/api/books/$SLUG/files" \\
-  | jq -r '.files[] | "\\(.path)\\t\\(.content | @base64)"' \\
-  | while IFS=$'\\t' read -r path b64; do
-      mkdir -p "$DEST/$(dirname "$path")"
-      printf '%s' "$b64" | base64 --decode > "$DEST/$path"
-    done
-
-# 4. Bundle is now on disk; reference chapters with @-mentions or /read
-ls -R "$DEST"`}
+curl -sL -H "Authorization: Bearer $BKSTR_KEY" \\
+     https://bkstr.tmrwgroup.ai/api/install/<slug> \\
+  | tar xz -C ~/.claude/skills/`}
           </pre>
           <p className="text-ink-3 text-[13px] leading-[1.6] mt-4 mb-0 max-w-[64ch]">
-            For skill downloads (executable bundles rather than chapter
-            content), swap{" "}
-            <code className="font-mono text-ink-2">/api/books/$SLUG/files</code>{" "}
-            for{" "}
-            <code className="font-mono text-ink-2">/api/skills/$SLUG/files</code>.
-            Same response shape; the destination differs by what your
-            agent does with the files — books typically live alongside
-            your project docs while skills install under your agent&apos;s
-            skills directory.
+            The tarball is namespaced under{" "}
+            <code className="font-mono text-ink-2">&lt;slug&gt;/</code>, so
+            extracting to{" "}
+            <code className="font-mono text-ink-2">~/.claude/skills/</code>{" "}
+            keeps each install in its own directory. Books and skills use
+            the same endpoint and the same command.
           </p>
         </div>
 
-        {/* THE OTHER THREE — short, footnoted */}
+        {/* THE OTHER THREE — short, footnoted. Same one-liner, only the
+            tar -C destination changes per agent. */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-16">
           <ProvisionalAgent
             name="CURSOR"
             blurb={
               <>
-                Drop fetched files into{" "}
+                Unpack into{" "}
                 <code className="font-mono text-ink-2">.cursor/rules/</code>{" "}
                 inside your project. Cursor reads them as project rules; the
                 agent inherits the bundle when it scopes to your repo.
               </>
             }
-            snippet={`DEST="./.cursor/rules/$SLUG"
-mkdir -p "$DEST"
-# ...same curl + decode + write loop as Claude Code...`}
+            snippet={`mkdir -p .cursor/rules
+curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \\
+  | tar xz -C .cursor/rules/`}
           />
           <ProvisionalAgent
             name="CLINE"
             blurb={
               <>
                 No fixed install directory — Cline reads any file you
-                @-mention. Save the bundle under{" "}
-                <code className="font-mono text-ink-2">./bkstr/&lt;slug&gt;/</code>{" "}
-                and reference paths from the chat panel.
+                @-mention. Unpack under{" "}
+                <code className="font-mono text-ink-2">./bkstr/</code> and
+                reference paths from the chat panel.
               </>
             }
-            snippet={`DEST="./bkstr/$SLUG"
-mkdir -p "$DEST"
-# Same fetch loop. Then in Cline:
-#   @bkstr/self-upgrade-engineer/chapters/foundations.md`}
+            snippet={`mkdir -p bkstr
+curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \\
+  | tar xz -C bkstr/
+# then @bkstr/<slug>/SKILL.md in the panel`}
           />
           <ProvisionalAgent
             name="AIDER"
@@ -487,13 +489,13 @@ mkdir -p "$DEST"
                 <code className="font-mono text-ink-2">/read</code> command
                 or the{" "}
                 <code className="font-mono text-ink-2">--read</code> flag.
-                Save the bundle anywhere; add the paths you want active.
+                Unpack anywhere; add the paths you want active.
               </>
             }
-            snippet={`DEST="$HOME/bkstr/$SLUG"
-mkdir -p "$DEST"
-# Same fetch loop, then:
-#   aider --read $DEST/chapters/foundations.md $DEST/chapters/ownership.md`}
+            snippet={`mkdir -p ~/bkstr
+curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \\
+  | tar xz -C ~/bkstr/
+# then aider --read ~/bkstr/<slug>/SKILL.md`}
           />
         </div>
 
@@ -511,17 +513,22 @@ mkdir -p "$DEST"
           and we&apos;ll correct it.
         </p>
 
-        {/* WHAT'S IN THE RESPONSE — JSON shape panel */}
+        {/* ADVANCED — the raw per-file JSON endpoint, demoted below the
+            one-liner. Still fully documented for callers who'd rather
+            handle the files themselves. */}
         <div className="mt-16 border border-rule bg-paper p-8">
-          <Eyebrow className="block mb-4">§ WHAT&apos;S IN THE RESPONSE</Eyebrow>
+          <Eyebrow className="block mb-4">§ ADVANCED · RAW JSON</Eyebrow>
           <p className="text-ink-2 text-[15px] leading-[1.65] mt-0 mb-5 max-w-[64ch]">
+            Prefer to handle the files yourself rather than pipe a tarball?{" "}
             <code className="font-mono">GET /api/books/&lt;slug&gt;/files</code>{" "}
-            returns a shape like the one below.{" "}
+            (and the <code className="font-mono">/api/skills/…</code>{" "}
+            equivalent) returns per-file JSON instead — the shape below.{" "}
             <code className="font-mono">path</code> is relative to the
             bundle root, <code className="font-mono">content</code> is the
-            raw file content (markdown chapters for books),{" "}
-            <code className="font-mono">sha256</code> is the file&apos;s
-            hash for cache validation.
+            raw file content, <code className="font-mono">sha256</code> is
+            the file&apos;s hash for cache validation. This is the
+            programmatic-access surface; the one-liner above is the
+            supported install path.
           </p>
           <pre className="font-mono text-[12.5px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] m-0">
 {`{

@@ -45,16 +45,31 @@ Behind the scenes, your purchase writes an access grant linked to your Stripe pa
 
 ### Reading a book or installing a skill
 
-Once you own something, you have a few ways to consume it. The primary path is the **files endpoint** — same shape for both books and skills.
+Once you own something, the fastest way to consume it is the **one-command install** — covered first below. The raw JSON endpoint and the Q&A endpoint follow as the programmatic-access surfaces.
 
-#### Fetching raw files (primary)
+#### Quickstart — one-command install
 
-The files endpoint returns JSON: each file carries its `path`, `content` (raw markdown for book chapters; raw text/code for skill files), and a `sha256` hash. Your agent writes these to disk and installs from there.
+The install endpoint streams a gzipped tarball of the book's or skill's files, namespaced under `<slug>/`. Pipe it into `tar xz` and the bundle lands wherever your agent reads files:
 
 ```bash
-# Generate an API key first at /dashboard/api-keys, then:
-export BKSTR_KEY=bks_...
+# Free items — installs anonymously, no key needed
+curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \
+  | tar xz -C ~/.claude/skills/
 
+# Paid items — export your API key first, then add the Bearer header
+export BKSTR_KEY=bks_...
+curl -sL -H "Authorization: Bearer $BKSTR_KEY" \
+     https://bkstr.tmrwgroup.ai/api/install/<slug> \
+  | tar xz -C ~/.claude/skills/
+```
+
+**Free vs paid.** A free book or skill (priced at $0) installs anonymously — no API key, no `Authorization` header. A paid item requires a Bearer token *and* an active access grant for that `book_id` / `skill_id` on your subscriber row; without either you get a `401` (no/invalid token) or `403` (token valid, no grant). The endpoint is the same for books and skills — the resolver handles both kinds. The same one-liner appears on the homepage's **How to Get Started** section.
+
+#### Raw files via JSON (API reference)
+
+If you'd rather receive per-file JSON than a tarball, the files endpoint returns each file as `path`, `content` (raw markdown for book chapters; raw text/code for skill files), and a `sha256` hash:
+
+```bash
 # For a book — returns chapters[]
 curl -H "Authorization: Bearer $BKSTR_KEY" \
      https://bkstr.tmrwgroup.ai/api/books/<slug>/files
@@ -64,9 +79,7 @@ curl -H "Authorization: Bearer $BKSTR_KEY" \
      https://bkstr.tmrwgroup.ai/api/skills/<slug>/files
 ```
 
-Both endpoints require an active access grant on the matching `book_id` or `skill_id` for your subscriber row. The response shape is identical between kinds — same field names, same `sha256` discipline. The same curl shape appears on the homepage's **How to Get Started** section.
-
-For skills, there's also `GET /api/skills/<slug>/download` which returns a `.zip` archive (re-built on demand from the stored files); useful when the consumer tooling wants a single artifact rather than per-file JSON.
+Both require an active access grant on the matching `book_id` or `skill_id`. The response shape is identical between kinds — same field names, same `sha256` discipline. For skills there's also `GET /api/skills/<slug>/download` — a `.zip` archive re-built on demand, useful when the consumer wants a single artifact rather than per-file JSON.
 
 #### Q&A endpoint (advanced, books only)
 
@@ -194,8 +207,9 @@ Switch the **Kind** toggle at the top of `/dashboard/books/new` to **Skill**. Th
 - Total uncompressed: 20 MB
 - Maximum file count: 500
 
-**What buyers get.** A buyer who purchases your skill has two consumption paths:
-- `GET /api/skills/{slug}/files` — JSON with per-file `path` + `content` + `sha256`. The recommended agent-install path. (Shipped as follow-up #122; same shape as the books-side `/api/books/{slug}/files`.)
+**What buyers get.** A buyer who purchases your skill has three consumption paths:
+- `GET /api/install/{slug}` — the one-command install: a gzipped tarball piped straight into `tar xz`. The recommended path (Move 1).
+- `GET /api/skills/{slug}/files` — JSON with per-file `path` + `content` + `sha256`. The programmatic-access path; same shape as the books-side `/api/books/{slug}/files`.
 - `GET /api/skills/{slug}/download` — single `.zip` re-archived on demand from the stored `skill_files` rows, layout-matching your upload (modulo the wrapping directory, stripped on ingest). Useful when the consumer wants one artifact.
 
 **Discoverability.** Your skill appears at `/storefront` (the unified public catalog) and `/storefront/{slug}` (detail page). The detail page renders the manifest of file paths and sizes; file CONTENTS are behind purchase. Old `/skills` and `/skills/{slug}` URLs `308`-redirect to the same destinations.

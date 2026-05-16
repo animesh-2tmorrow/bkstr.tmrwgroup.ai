@@ -257,22 +257,21 @@ export default async function StorefrontDetailPage({
             <p className="text-xs text-ink-3 mb-4 max-w-[60ch]">
               {item.kind === "book" ? (
                 <>
-                  Chapter list with paths and sizes. The full chapter content
-                  is delivered via{" "}
+                  Chapter list with paths and sizes. After purchase, install
+                  the whole book with one command —{" "}
                   <code className="font-mono">
-                    GET /api/books/{item.slug}/files
+                    curl -sL …/api/install/{item.slug} | tar xz
                   </code>{" "}
-                  after purchase — see Get Started below.
+                  — see Get Started below.
                 </>
               ) : (
                 <>
-                  File contents are delivered as a single{" "}
-                  <code className="font-mono">.zip</code> after purchase, or
-                  as JSON via{" "}
+                  The list below is the manifest — paths and sizes only.
+                  After purchase, install the whole skill with one command —{" "}
                   <code className="font-mono">
-                    GET /api/skills/{item.slug}/files
-                  </code>
-                  . The list below is the manifest — paths and sizes only.
+                    curl -sL …/api/install/{item.slug} | tar xz
+                  </code>{" "}
+                  — see Get Started below.
                 </>
               )}
             </p>
@@ -303,28 +302,13 @@ export default async function StorefrontDetailPage({
                 You own this {item.kind}.
               </h2>
               <p className="text-ink-2 text-sm leading-[1.6] mb-5 max-w-[64ch]">
-                {item.kind === "book" ? (
-                  <>
-                    Fetch the chapters from your agent with one GET. The
-                    response is JSON — each file carries{" "}
-                    <code className="font-mono">path</code>,{" "}
-                    <code className="font-mono">content</code> (raw markdown),
-                    and a <code className="font-mono">sha256</code>. Write the
-                    content to disk under your agent&apos;s skills directory,
-                    or read it inline.
-                  </>
-                ) : (
-                  <>
-                    Fetch the skill files from your agent with one GET. The
-                    response is JSON — each file carries{" "}
-                    <code className="font-mono">path</code>,{" "}
-                    <code className="font-mono">content</code>, and a{" "}
-                    <code className="font-mono">sha256</code>. Write each
-                    file to your agent&apos;s skills directory (Claude Code:{" "}
-                    <code className="font-mono">~/.claude/skills/{item.slug}/</code>
-                    ; other agents follow their own convention).
-                  </>
-                )}
+                You own this {item.kind} — install it with the single command
+                below. It fetches the bundle and unpacks it under{" "}
+                <code className="font-mono">
+                  ~/.claude/skills/{item.slug}/
+                </code>
+                . The raw per-file JSON endpoint stays available under
+                &ldquo;Advanced&rdquo; in the block.
               </p>
 
               {/* The instructions block carries the masked api-key + the
@@ -334,8 +318,11 @@ export default async function StorefrontDetailPage({
                 kind={item.kind}
                 itemId={item.id}
                 itemSlug={item.slug}
-                subscriberId={subscriberId}
-                apiKey={apiKey}
+                subscriberId={subscriberId ?? ""}
+                apiKey={apiKey?.prefix ?? ""}
+                isFree={
+                  item.unitAmountCents == null || item.unitAmountCents === 0
+                }
               />
 
               {/* Operator decision 7.2 — also link to /dashboard/docs from

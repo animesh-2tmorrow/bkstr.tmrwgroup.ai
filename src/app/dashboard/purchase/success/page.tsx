@@ -128,12 +128,19 @@ export default async function PurchaseSuccessPage({
           </p>
         </div>
 
-        {subscriber && bookId && (
+        {subscriber && bookId && bookSlug && (
           <div className="mt-8">
+            {/* Post-Checkout = a paid book by construction (free items are
+                never routed through Stripe), so isFree is always false.
+                apiKey="" — a fresh buyer typically has no key yet; the
+                block renders the "Create an API key →" guidance. */}
             <ApiInstructionsBlock
+              kind="book"
+              itemId={bookId}
+              itemSlug={bookSlug}
               subscriberId={subscriber.id}
-              bookId={bookId}
-              bookSlug={bookSlug ?? undefined}
+              apiKey=""
+              isFree={false}
             />
           </div>
         )}

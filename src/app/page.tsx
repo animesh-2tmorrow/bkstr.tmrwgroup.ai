@@ -360,12 +360,17 @@ export default async function HomePage() {
 
             <li>
               <div className="font-mono text-[11px] uppercase tracking-wider text-ink-3 mb-2">
-                02 · GET A KEY
+                02 · GET A KEY{' '}
+                <span className="text-ink-4 normal-case tracking-normal">
+                  (paid items only)
+                </span>
               </div>
               <p className="text-ink-2 m-0 leading-[1.55]">
-                Generate one API key per agent. Copy the{' '}
-                <code className="font-mono text-[13px]">bks_…</code> value
-                when shown — it&apos;s hash-stored and never shown again.
+                Free books and skills install with no key. For paid items,
+                create a key at{' '}
+                <code className="font-mono text-[13px]">/dashboard/api-keys</code>{' '}
+                and export it as{' '}
+                <code className="font-mono text-[13px]">$BKSTR_KEY</code>.
               </p>
               <Link
                 href="/dashboard/api-keys"
@@ -377,22 +382,26 @@ export default async function HomePage() {
 
             <li>
               <div className="font-mono text-[11px] uppercase tracking-wider text-ink-3 mb-2">
-                03 · FETCH THE FILES
+                03 · INSTALL
               </div>
               <p className="text-ink-2 m-0 leading-[1.55]">
-                One real GET. Returns JSON with file paths + content. Write
-                to disk; install per your agent&apos;s docs.
+                One command —{' '}
+                <code className="font-mono text-[13px]">curl … | tar xz</code>{' '}
+                fetches the bundle and unpacks it straight into your
+                agent&apos;s skills directory.
               </p>
             </li>
           </ol>
 
           <pre className="font-mono text-[13px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] mt-6 mb-0">
-{`# Fetch a book's raw files (JSON)
-$ curl -H "Authorization: Bearer $BKSTR_KEY" \\
-       https://bkstr.tmrwgroup.ai/api/books/<slug>/files
-
-# Returns: { "book": {...}, "files": [{"path","content","sha256"}, ...] }`}
+{`# Install gif-grep (free) — runs as-is, no signup needed
+$ curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep \\
+       | tar xz -C ~/.claude/skills/`}
           </pre>
+          <p className="font-mono text-[12px] text-ink-3 mt-2 mb-0">
+            Paid items: prepend{' '}
+            <code>-H &quot;Authorization: Bearer $BKSTR_KEY&quot;</code>
+          </p>
 
           {/* get-started(d) — full-walkthrough CTA. Sits between the curl
               block and the Q&A footnote: the homepage section is the
