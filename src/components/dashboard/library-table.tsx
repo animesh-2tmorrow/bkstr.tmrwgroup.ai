@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import type {
   LibraryItem,
@@ -118,111 +119,126 @@ export function LibraryTable({
                 const priceCents = access?.unitAmountCents ?? null;
                 const granted = access?.state === "granted";
                 const isLast = idx === filtered.length - 1;
+                // Phase 2b.3 — the "▸ API access" disclosure renders as a
+                // full-width detail row BELOW the main row (colSpan over
+                // all 5 columns), NOT trapped inside the narrow w-[26%]
+                // Title cell. The narrow cell was squeezing the install
+                // command into an unreadable character-wrapped strip.
+                const hasDisclosure = granted && subscriberId !== null;
                 return (
-                  <tr
-                    key={keyOf(item)}
-                    className={
-                      "transition-colors hover:bg-paper-2 align-top " +
-                      (isLast ? "" : "border-b border-rule")
-                    }
-                  >
-                    {/* Title cell — single <BookCover> render for both
-                        kinds (redesign(10)/6). Skills pass "SKILL" as the
-                        imprint-bar domain; books pass their actual
-                        domain. The kind-aware "SKILL · .zip" pill below
-                        in the subtitle row stays — pill discriminates
-                        kind, cover unifies. */}
-                    <td className="px-4 py-4">
-                      <div className="flex gap-3.5 items-start">
-                        <div className="shrink-0">
-                          {item.palette && item.glyph ? (
-                            <BookCover
-                              book={{
-                                title: item.displayName,
-                                glyph: item.glyph,
-                                domain: item.domain ?? "SKILL",
-                                palette: item.palette as BookCoverPalette,
-                                vol: "Vol. 01",
-                                version: `v${item.latestVersion || 1}`,
-                                author: "—",
-                              }}
-                              size="xs"
-                              flat
-                            />
-                          ) : null}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-serif text-[15.5px] tracking-tight text-ink">
-                            {item.displayName}
-                          </div>
-                          <div className="font-mono text-[11px] text-ink-3 mt-1 flex items-center gap-2 flex-wrap">
-                            {item.kind === "skill" ? (
-                              <Pill variant="saffron">SKILL · .zip</Pill>
-                            ) : null}
-                            <span>{item.slug}</span>
-                            {item.kind === "book" && item.domain ? (
-                              <>
-                                <span className="text-ink-4">·</span>
-                                <span>{item.domain}</span>
-                              </>
+                  <Fragment key={keyOf(item)}>
+                    <tr
+                      className={
+                        "transition-colors hover:bg-paper-2 align-top " +
+                        (hasDisclosure || isLast ? "" : "border-b border-rule")
+                      }
+                    >
+                      {/* Title cell — single <BookCover> render for both
+                          kinds (redesign(10)/6). Skills pass "SKILL" as
+                          the imprint-bar domain; books pass their actual
+                          domain. The "SKILL · .zip" pill discriminates
+                          kind, cover unifies. */}
+                      <td className="px-4 py-4">
+                        <div className="flex gap-3.5 items-start">
+                          <div className="shrink-0">
+                            {item.palette && item.glyph ? (
+                              <BookCover
+                                book={{
+                                  title: item.displayName,
+                                  glyph: item.glyph,
+                                  domain: item.domain ?? "SKILL",
+                                  palette: item.palette as BookCoverPalette,
+                                  vol: "Vol. 01",
+                                  version: `v${item.latestVersion || 1}`,
+                                  author: "—",
+                                }}
+                                size="xs"
+                                flat
+                              />
                             ) : null}
                           </div>
-                          {granted && subscriberId && (
-                            <details className="mt-3 text-xs">
-                              <summary className="cursor-pointer text-ink-3 hover:text-ink font-mono uppercase tracking-eyebrow text-[11px]">
-                                ▸ API access
-                              </summary>
-                              <div className="mt-3 bg-ink p-3 border border-rule overflow-x-auto">
-                                <ApiInstructionsBlock
-                                  kind={item.kind}
-                                  itemId={item.id}
-                                  itemSlug={item.slug}
-                                  subscriberId={subscriberId}
-                                  apiKey=""
-                                  isFree={
-                                    priceCents == null || priceCents === 0
-                                  }
-                                  compact
-                                />
-                              </div>
-                            </details>
-                          )}
+                          <div className="min-w-0">
+                            <div className="font-serif text-[15.5px] tracking-tight text-ink">
+                              {item.displayName}
+                            </div>
+                            <div className="font-mono text-[11px] text-ink-3 mt-1 flex items-center gap-2 flex-wrap">
+                              {item.kind === "skill" ? (
+                                <Pill variant="saffron">SKILL · .zip</Pill>
+                              ) : null}
+                              <span>{item.slug}</span>
+                              {item.kind === "book" && item.domain ? (
+                                <>
+                                  <span className="text-ink-4">·</span>
+                                  <span>{item.domain}</span>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    {/* Description */}
-                    <td className="px-4 py-4 text-ink-2 leading-[1.5]">
-                      {item.description ? (
-                        <span className="line-clamp-3">{item.description}</span>
-                      ) : (
-                        <span className="text-ink-4">—</span>
-                      )}
-                    </td>
-                    {/* Publisher */}
-                    <td className="px-4 py-4">
-                      <div className="text-ink-2">{item.publisherName}</div>
-                    </td>
-                    {/* Price */}
-                    <td className="px-4 py-4 text-right">
-                      {priceCents !== null ? (
-                        <span className="font-serif text-[18px] text-ink num">
-                          {formatUsdCents(priceCents)}
-                        </span>
-                      ) : (
-                        <span className="text-ink-4">—</span>
-                      )}
-                    </td>
-                    {/* Access cell — kind-aware View/Download targets */}
-                    <td className="px-4 py-4">
-                      <AccessCell
-                        kind={item.kind}
-                        itemId={item.id}
-                        itemSlug={item.slug}
-                        access={access}
-                        showActions
-                      />
-                    </td>
-                  </tr>
+                      </td>
+                      {/* Description */}
+                      <td className="px-4 py-4 text-ink-2 leading-[1.5]">
+                        {item.description ? (
+                          <span className="line-clamp-3">
+                            {item.description}
+                          </span>
+                        ) : (
+                          <span className="text-ink-4">—</span>
+                        )}
+                      </td>
+                      {/* Publisher */}
+                      <td className="px-4 py-4">
+                        <div className="text-ink-2">{item.publisherName}</div>
+                      </td>
+                      {/* Price */}
+                      <td className="px-4 py-4 text-right">
+                        {priceCents !== null ? (
+                          <span className="font-serif text-[18px] text-ink num">
+                            {formatUsdCents(priceCents)}
+                          </span>
+                        ) : (
+                          <span className="text-ink-4">—</span>
+                        )}
+                      </td>
+                      {/* Access cell — kind-aware View/Download targets */}
+                      <td className="px-4 py-4">
+                        <AccessCell
+                          kind={item.kind}
+                          itemId={item.id}
+                          itemSlug={item.slug}
+                          access={access}
+                          showActions
+                        />
+                      </td>
+                    </tr>
+                    {/* Full-width API-access detail row — spans all 5
+                        columns so the install command has room to render
+                        on one or two lines instead of a narrow strip. */}
+                    {granted && subscriberId && (
+                      <tr className={isLast ? "" : "border-b border-rule"}>
+                        <td colSpan={5} className="px-4 pb-4">
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-ink-3 hover:text-ink font-mono uppercase tracking-eyebrow text-[11px]">
+                              ▸ API access
+                            </summary>
+                            <div className="mt-3 bg-ink p-3 border border-rule">
+                              <ApiInstructionsBlock
+                                kind={item.kind}
+                                itemId={item.id}
+                                itemSlug={item.slug}
+                                subscriberId={subscriberId}
+                                apiKey=""
+                                isFree={
+                                  priceCents == null || priceCents === 0
+                                }
+                                compact
+                              />
+                            </div>
+                          </details>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
