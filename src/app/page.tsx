@@ -394,13 +394,22 @@ export default async function HomePage() {
           </ol>
 
           <pre className="font-mono text-[13px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] mt-6 mb-0">
-{`# Install gif-grep (free) — runs as-is, no signup needed
-$ curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep \\
-       | tar xz -C ~/.claude/skills/`}
+{`# Install gif-grep (free) — copy-paste, runs as-is on a fresh machine
+$ mkdir -p ~/.claude/skills && curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep | tar xz -C ~/.claude/skills/`}
           </pre>
-          <p className="font-mono text-[12px] text-ink-3 mt-2 mb-0">
-            Paid items: prepend{' '}
-            <code>-H &quot;Authorization: Bearer $BKSTR_KEY&quot;</code>
+          <p className="text-[12px] text-ink-3 mt-2 mb-0 leading-[1.55]">
+            Paid items: prepend an{' '}
+            <code className="font-mono">export BKSTR_KEY=bks_…</code> line and
+            add{' '}
+            <code className="font-mono">-H &quot;Authorization: Bearer $BKSTR_KEY&quot;</code>{' '}
+            to the curl — full copy-paste command on the{' '}
+            <Link
+              href="/get-started"
+              className="underline decoration-rule hover:decoration-ink"
+            >
+              get-started guide
+            </Link>
+            .
           </p>
 
           {/* get-started(d) — full-walkthrough CTA. Sits between the curl

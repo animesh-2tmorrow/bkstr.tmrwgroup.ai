@@ -109,14 +109,12 @@ function HeroSection() {
       </p>
 
       {/* The one-liner install command, real host. gif-grep is a free
-          item, so the command below runs as-is for anyone copy-pasting.
-          The install section further down covers the four agents. */}
+          item; the mkdir -p makes the command copy-paste safely on a
+          fresh machine where ~/.claude/skills/ doesn't exist yet. The
+          install section further down covers paid items + the 4 agents. */}
       <pre className="font-mono text-[13px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] mt-0 mb-9 max-w-[820px]">
-{`# Install a book or skill — one command into your agent's skills dir
-$ curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep \\
-       | tar xz -C ~/.claude/skills/
-
-# gif-grep is free — runs as-is. Paid items add -H "Bearer $BKSTR_KEY".`}
+{`# Install gif-grep (free) — copy-paste, runs as-is on a fresh machine
+$ mkdir -p ~/.claude/skills && curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep | tar xz -C ~/.claude/skills/`}
       </pre>
 
       <div className="flex gap-3.5 items-center flex-wrap">
@@ -429,15 +427,12 @@ function InstallReferenceSection() {
             overwrite.
           </p>
           <pre className="font-mono text-[12.5px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] m-0">
-{`# Free item — installs anonymously, runs as-is
-curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep \\
-  | tar xz -C ~/.claude/skills/
+{`# Free item — copy-paste, runs as-is on a fresh machine
+mkdir -p ~/.claude/skills && curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep | tar xz -C ~/.claude/skills/
 
-# Paid item — export your key first, then add the Bearer header
-export BKSTR_KEY="bks_..."
-curl -sL -H "Authorization: Bearer $BKSTR_KEY" \\
-     https://bkstr.tmrwgroup.ai/api/install/<slug> \\
-  | tar xz -C ~/.claude/skills/`}
+# Paid item — paste BOTH lines together (the export feeds the curl)
+export BKSTR_KEY=bks_your_key_here
+mkdir -p ~/.claude/skills && curl -sL -H "Authorization: Bearer $BKSTR_KEY" https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C ~/.claude/skills/`}
           </pre>
           <p className="text-ink-3 text-[13px] leading-[1.6] mt-4 mb-0 max-w-[64ch]">
             The tarball is namespaced under{" "}
@@ -462,9 +457,7 @@ curl -sL -H "Authorization: Bearer $BKSTR_KEY" \\
                 agent inherits the bundle when it scopes to your repo.
               </>
             }
-            snippet={`mkdir -p .cursor/rules
-curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \\
-  | tar xz -C .cursor/rules/`}
+            snippet={`mkdir -p .cursor/rules && curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C .cursor/rules/`}
           />
           <ProvisionalAgent
             name="CLINE"
@@ -476,9 +469,7 @@ curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \\
                 reference paths from the chat panel.
               </>
             }
-            snippet={`mkdir -p bkstr
-curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \\
-  | tar xz -C bkstr/
+            snippet={`mkdir -p bkstr && curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C bkstr/
 # then @bkstr/<slug>/SKILL.md in the panel`}
           />
           <ProvisionalAgent
@@ -492,9 +483,7 @@ curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \\
                 Unpack anywhere; add the paths you want active.
               </>
             }
-            snippet={`mkdir -p ~/bkstr
-curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \\
-  | tar xz -C ~/bkstr/
+            snippet={`mkdir -p ~/bkstr && curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C ~/bkstr/
 # then aider --read ~/bkstr/<slug>/SKILL.md`}
           />
         </div>

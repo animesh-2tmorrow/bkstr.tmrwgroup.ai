@@ -35,13 +35,28 @@ export type ApiInstructionsBlockProps = {
   compact?: boolean;
 };
 
-// The one-liner install command. Free → anonymous; paid → Bearer token via
-// the $BKSTR_KEY env var (the literal env var, never an inline key value).
-function buildInstallCommand(slug: string, isFree: boolean): string {
+// The install command, copy-paste-safe on a fresh machine.
+//   - `mkdir -p ~/.claude/skills` is prepended so the tar target exists on
+//     first run (a fresh Claude Code install doesn't have it).
+//   - Free → single self-sufficient line, no auth.
+//   - Paid → two lines in ONE block: an `export BKSTR_KEY=…` line above the
+//     curl, so copying the whole block sets the env var the curl reads.
+//     The export carries the subscriber's key prefix as a personalized
+//     starting point (or a generic placeholder when the caller didn't
+//     thread a key); the user completes it with their full key, which is
+//     hash-stored and never re-shown.
+function buildInstallCommand(
+  slug: string,
+  isFree: boolean,
+  apiKey: string,
+): string {
   const url = `${ENDPOINT_HOST}/api/install/${slug}`;
-  return isFree
-    ? `curl -sL ${url} | tar xz -C ~/.claude/skills/`
-    : `curl -sL -H "Authorization: Bearer $BKSTR_KEY" ${url} | tar xz -C ~/.claude/skills/`;
+  if (isFree) {
+    return `mkdir -p ~/.claude/skills && curl -sL ${url} | tar xz -C ~/.claude/skills/`;
+  }
+  const keyValue = apiKey !== "" ? apiKey : "bks_your_key_here";
+  return `export BKSTR_KEY=${keyValue}
+mkdir -p ~/.claude/skills && curl -sL -H "Authorization: Bearer $BKSTR_KEY" ${url} | tar xz -C ~/.claude/skills/`;
 }
 
 // Advanced path — the per-file JSON endpoint. Kept documented but demoted.
@@ -70,7 +85,7 @@ export function ApiInstructionsBlock({
   isFree,
   compact = false,
 }: ApiInstructionsBlockProps) {
-  const installCmd = buildInstallCommand(itemSlug, isFree);
+  const installCmd = buildInstallCommand(itemSlug, isFree, apiKey);
   const filesCurl = buildFilesCurl(kind, itemSlug);
   const qaCurl = kind === "book" ? buildQACurl(itemId) : null;
   const hasKey = apiKey !== "";
@@ -110,22 +125,29 @@ export function ApiInstructionsBlock({
         </pre>
         {isFree ? (
           <p className="text-xs text-ink-3 mt-2">
-            This {kind} is free — no API key required. The bundle unpacks to{" "}
+            This {kind} is free — no API key required. The command creates{" "}
+            <code className="font-mono text-ink-2">~/.claude/skills/</code> if
+            it&apos;s missing, then unpacks the bundle into{" "}
             <code className="font-mono text-ink-2">
               ~/.claude/skills/{itemSlug}/
             </code>
-            ; other agents follow their own skills-directory convention.
+            . Copy-paste it as-is.
           </p>
         ) : (
           <p className="text-xs text-ink-3 mt-2">
-            Export your bkstr API key as{" "}
-            <code className="font-mono text-ink-2">$BKSTR_KEY</code> before
-            running this.{" "}
+            Copy <strong className="text-ink-2">both lines</strong> together —
+            the <code className="font-mono text-ink-2">export</code> sets{" "}
+            <code className="font-mono text-ink-2">$BKSTR_KEY</code>, which the
+            curl reads. Replace{" "}
+            <code className="font-mono text-ink-2">
+              {hasKey ? apiKey : "bks_your_key_here"}
+            </code>{" "}
+            with your full key.{" "}
             <Link
               href="/dashboard/api-keys"
               className="text-ink underline underline-offset-2 hover:no-underline"
             >
-              {hasKey ? "Manage keys →" : "Create an API key →"}
+              {hasKey ? "Manage keys →" : "Create or find your key →"}
             </Link>
           </p>
         )}

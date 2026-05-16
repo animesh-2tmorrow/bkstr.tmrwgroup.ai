@@ -260,7 +260,8 @@ export default async function StorefrontDetailPage({
                   Chapter list with paths and sizes. After purchase, install
                   the whole book with one command —{" "}
                   <code className="font-mono">
-                    curl -sL …/api/install/{item.slug} | tar xz
+                    mkdir -p ~/.claude/skills &amp;&amp; curl -sL
+                    …/api/install/{item.slug} | tar xz
                   </code>{" "}
                   — see Get Started below.
                 </>
@@ -269,7 +270,8 @@ export default async function StorefrontDetailPage({
                   The list below is the manifest — paths and sizes only.
                   After purchase, install the whole skill with one command —{" "}
                   <code className="font-mono">
-                    curl -sL …/api/install/{item.slug} | tar xz
+                    mkdir -p ~/.claude/skills &amp;&amp; curl -sL
+                    …/api/install/{item.slug} | tar xz
                   </code>{" "}
                   — see Get Started below.
                 </>

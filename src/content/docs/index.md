@@ -52,16 +52,15 @@ Once you own something, the fastest way to consume it is the **one-command insta
 The install endpoint streams a gzipped tarball of the book's or skill's files, namespaced under `<slug>/`. Pipe it into `tar xz` and the bundle lands wherever your agent reads files:
 
 ```bash
-# Free items — installs anonymously, no key needed
-curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> \
-  | tar xz -C ~/.claude/skills/
+# Free items — copy-paste, runs as-is on a fresh machine
+mkdir -p ~/.claude/skills && curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C ~/.claude/skills/
 
-# Paid items — export your API key first, then add the Bearer header
-export BKSTR_KEY=bks_...
-curl -sL -H "Authorization: Bearer $BKSTR_KEY" \
-     https://bkstr.tmrwgroup.ai/api/install/<slug> \
-  | tar xz -C ~/.claude/skills/
+# Paid items — paste BOTH lines together (the export feeds the curl)
+export BKSTR_KEY=bks_your_key_here
+mkdir -p ~/.claude/skills && curl -sL -H "Authorization: Bearer $BKSTR_KEY" https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C ~/.claude/skills/
 ```
+
+> **Tip:** paste both lines of the paid command together — the `export` sets the env var that the `curl` on the next line reads. Get your key from [/dashboard/api-keys](/dashboard/api-keys). The leading `mkdir -p ~/.claude/skills` is included so the command works on a fresh machine where that directory doesn't exist yet.
 
 **Free vs paid.** A free book or skill (priced at $0) installs anonymously — no API key, no `Authorization` header. A paid item requires a Bearer token *and* an active access grant for that `book_id` / `skill_id` on your subscriber row; without either you get a `401` (no/invalid token) or `403` (token valid, no grant). The endpoint is the same for books and skills — the resolver handles both kinds. The same one-liner appears on the homepage's **How to Get Started** section.
 
