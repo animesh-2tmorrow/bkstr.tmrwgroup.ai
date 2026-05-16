@@ -120,7 +120,7 @@ export function ApiInstructionsBlock({
       {/* PRIMARY — the install one-liner. */}
       <div>
         <Eyebrow>INSTALL</Eyebrow>
-        <pre className="font-mono text-[12px] bg-paper-2 border border-rule p-3 overflow-x-auto whitespace-pre text-ink mt-1.5">
+        <pre className="font-mono text-[12px] bg-paper-2 border border-rule p-3 whitespace-pre-wrap break-all text-ink mt-1.5">
           {installCmd}
         </pre>
         {isFree ? (
@@ -177,7 +177,7 @@ export function ApiInstructionsBlock({
               <code className="font-mono text-ink-2">sha256</code> — write the
               content fields to disk yourself.
             </p>
-            <pre className="font-mono text-[12px] bg-paper-2 border border-rule p-3 overflow-x-auto whitespace-pre text-ink">
+            <pre className="font-mono text-[12px] bg-paper-2 border border-rule p-3 whitespace-pre-wrap break-all text-ink">
               {filesCurl}
             </pre>
           </div>
@@ -189,7 +189,7 @@ export function ApiInstructionsBlock({
                 fetching files. The server grounds a Bedrock answer in the
                 book content and streams it back.
               </p>
-              <pre className="font-mono text-[12px] bg-paper-2 border border-rule p-3 overflow-x-auto whitespace-pre text-ink">
+              <pre className="font-mono text-[12px] bg-paper-2 border border-rule p-3 whitespace-pre-wrap break-all text-ink">
                 {qaCurl}
               </pre>
               <p className="text-xs text-ink-3 mt-2">
