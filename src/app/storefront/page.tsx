@@ -72,6 +72,7 @@ interface ItemsResponse {
 const MASTHEAD_NAV = [
   { label: "Home", href: "/" },
   { label: "Catalog", href: "/storefront", active: true },
+  { label: "Get started", href: "/get-started" },
   { label: "Docs", href: "/dashboard/docs" },
   { label: "Log in", href: "/login" },
 ];

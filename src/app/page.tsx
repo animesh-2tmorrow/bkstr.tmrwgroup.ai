@@ -69,6 +69,7 @@ export const dynamic = 'force-dynamic';
 const MASTHEAD_NAV = [
   { label: 'Home', href: '/', active: true },
   { label: 'Catalog', href: '/storefront' },
+  { label: 'Get started', href: '/get-started' },
   { label: 'Docs', href: '/dashboard/docs' },
   { label: 'Log in', href: '/login' },
 ];
@@ -392,6 +393,23 @@ $ curl -H "Authorization: Bearer $BKSTR_KEY" \\
 
 # Returns: { "book": {...}, "files": [{"path","content","sha256"}, ...] }`}
           </pre>
+
+          {/* get-started(d) — full-walkthrough CTA. Sits between the curl
+              block and the Q&A footnote: the homepage section is the
+              teaser, /get-started is the full page with screenshots.
+              Dispatch JSX specified `decoration-ink-1` (no such token —
+              tailwind.config.ts has ink DEFAULT + ink-2/3/4) and a bare
+              `<a>`; shipped as `decoration-ink` + `<Link>` to match the
+              adjacent Q&A footnote and the file's conventions. */}
+          <p className="text-ink-2 text-[14px] mt-6 mb-0">
+            Want the full walkthrough with screenshots?{' '}
+            <Link
+              href="/get-started"
+              className="underline decoration-rule hover:decoration-ink underline-offset-4"
+            >
+              See the get-started guide →
+            </Link>
+          </p>
 
           <p className="text-ink-3 text-[13px] mt-4 mb-0">
             For Q&amp;A access against book content (Bedrock-generated

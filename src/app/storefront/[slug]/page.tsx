@@ -67,6 +67,9 @@ const MASTHEAD_NAV = [
   // redesign(10)/3 — Skills entry removed. /skills is a 308 redirect
   // to /storefront from this phase forward. Books + skills share the
   // unified catalog.
+  // get-started(d) — "Get started" inserted between Catalog and Docs,
+  // matching the homepage + /storefront masthead arrays.
+  { label: "Get started", href: "/get-started" },
   { label: "Docs", href: "/dashboard/docs" },
   { label: "Log in", href: "/login" },
 ];
