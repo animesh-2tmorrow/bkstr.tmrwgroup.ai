@@ -2,6 +2,22 @@ version: 0.2
 
 env:
   shell: bash
+  # monitoring(1a) — Sentry build-time vars. The Next.js build runs HERE
+  # in CodeBuild, not on the EC2 box, so these must be present at build
+  # time. NEXT_PUBLIC_SENTRY_DSN is inlined into the client bundle by
+  # Next.js; SENTRY_ORG/PROJECT are the sourcemap-upload target. The DSN
+  # is public-key-like and ORG/PROJECT are non-secret — safe to commit.
+  variables:
+    NEXT_PUBLIC_SENTRY_DSN: "https://838f69ed8685a7adaacc63efd908afe0@o4511397501337600.ingest.us.sentry.io/4511397525520384"
+    SENTRY_ORG: "tmrwgroupai"
+    SENTRY_PROJECT: "bkstr"
+  # SENTRY_AUTH_TOKEN is a build-time-only secret (sourcemap upload auth).
+  # Stored as an SSM SecureString by the operator; the CodeBuild service
+  # role needs ssm:GetParameters on this path. If the parameter does not
+  # exist, CodeBuild fails env resolution BEFORE the build starts — so
+  # the parameter must exist before this buildspec change reaches main.
+  parameter-store:
+    SENTRY_AUTH_TOKEN: "/bkstr/sentry/auth-token"
 
 phases:
   install:
