@@ -52,5 +52,5 @@ next-env.d.ts
 # storage-state.json holds a live __Secure-next-auth.session-token cookie
 # (animesh@2tmorrow.com); leaking it grants full account access. The results
 # dir is per-run noise (traces, videos, html reports). Both regenerate.
-/scripts/screenshots/storage-state.json
+/scripts/screenshots/storage-state*.json
 /.playwright-results/
