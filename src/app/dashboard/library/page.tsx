@@ -46,10 +46,22 @@ export default async function LibraryPage({
   const companyName = subscriber?.companyName ?? "Personal";
   const userEmail = session.user.email;
 
-  const [items, accessByItem] = await Promise.all([
+  const [items, accessByItem, apiKeyRow] = await Promise.all([
     getCatalogForLibrary(),
     subscriber ? getAccessStatesForCatalog(subscriber.id) : Promise.resolve(undefined),
+    // Most-recent non-revoked API key — its stored 12-char prefix is the
+    // masked value ApiInstructionsBlock renders inline (same pattern as the
+    // /storefront/[slug] owned-state panel). null when the subscriber has no
+    // key, which keeps the component's placeholder + key-creation fallback.
+    subscriber
+      ? prisma.subscriberApiKey.findFirst({
+          where: { subscriberId: subscriber.id, revokedAt: null },
+          orderBy: { createdAt: "desc" },
+          select: { keyPrefix: true },
+        })
+      : Promise.resolve(null),
   ]);
+  const apiKeyPrefix = apiKeyRow?.keyPrefix ?? "";
 
   return (
     <DashShell
@@ -82,6 +94,7 @@ export default async function LibraryPage({
         subscriberId={subscriber?.id ?? null}
         items={items}
         accessByItem={accessByItem}
+        apiKeyPrefix={apiKeyPrefix}
         filter={filter}
       />
     </DashShell>

@@ -41,11 +41,17 @@ export function LibraryTable({
   subscriberId,
   items,
   accessByItem,
+  apiKeyPrefix,
   filter,
 }: {
   subscriberId: string | null;
   items: LibraryItem[];
   accessByItem: Map<string, CatalogAccessEntry> | undefined;
+  /** Masked prefix of the subscriber's most-recent non-revoked API key;
+   *  "" when they have none (ApiInstructionsBlock then shows its
+   *  placeholder + "Create or find your key" fallback). Threaded into the
+   *  per-row paid-item disclosure; the component ignores it for free rows. */
+  apiKeyPrefix: string;
   filter: LibraryFilter;
 }) {
   const filtered = items.filter((it) => {
@@ -227,7 +233,7 @@ export function LibraryTable({
                                 itemId={item.id}
                                 itemSlug={item.slug}
                                 subscriberId={subscriberId}
-                                apiKey=""
+                                apiKey={apiKeyPrefix}
                                 isFree={
                                   priceCents == null || priceCents === 0
                                 }
