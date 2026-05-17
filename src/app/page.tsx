@@ -599,8 +599,7 @@ $ mkdir -p ~/.claude/skills && curl -sL https://bkstr.tmrwgroup.ai/api/install/g
             <p className="text-ink-2 text-base leading-[1.65] m-0">
               Checkout runs on Stripe&apos;s hosted page — we never touch
               your card data. Each volume produces one receipt; lifetime
-              spend, refund window, and Stripe payment IDs live in your
-              billing dashboard.
+              spend and Stripe payment IDs live in your billing dashboard.
             </p>
             <Link
               href="/dashboard/billing"
@@ -630,7 +629,7 @@ $ mkdir -p ~/.claude/skills && curl -sL https://bkstr.tmrwgroup.ai/api/install/g
             </Button>
           </div>
           <Eyebrow className="mt-6 block">
-            SIGN UP FREE · ONE-TIME PURCHASE PER VOLUME · 14-DAY REFUND
+            SIGN UP FREE · ONE-TIME PURCHASE PER VOLUME
           </Eyebrow>
         </div>
       </section>
@@ -681,7 +680,7 @@ const STEPS = [
   {
     n: '02',
     t: 'Buy the books you need',
-    d: 'One-time purchase per volume — $5 to $14. Stripe checkout. Refund within 14 days, no questions.',
+    d: 'One-time purchase per volume — $5 to $14. Stripe checkout.',
   },
   {
     n: '03',
@@ -710,6 +709,5 @@ const STEPS = [
 const PRICING_FACTS = [
   { included: true,  note: 'Unlimited fetches across your fleet' },
   { included: true,  note: 'Free minor & patch updates' },
-  { included: true,  note: '14-day refund, no questions' },
   { included: false, note: 'Recurring fees, seat math, or quotas' },
 ];

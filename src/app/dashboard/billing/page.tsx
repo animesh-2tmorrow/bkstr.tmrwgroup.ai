@@ -16,15 +16,14 @@ import type { BookCoverPalette } from "@/components/design/book-cover";
 // bkstr redesign PR 3 — Billing on the new <DashShell>.
 //
 // Per HANDOFF.md page-by-page §billing + dispatch §6 copy audit:
-//   - 4-stat strip: Volumes Owned / Lifetime Spend / Effective Per Fetch /
-//     Refunds Available — replaces the prior placeholder "Subscriptions
-//     deferred to Phase 4" subtitle.
+//   - 3-stat strip: Volumes Owned / Lifetime Spend / Effective Per Fetch —
+//     replaces the prior placeholder "Subscriptions deferred to Phase 4"
+//     subtitle.
 //   - Per-book purchases table: Book / Granted / Amount / Status /
 //     Stripe payment ID + invoice link slot.
 //
 // Copy audit grep (HANDOFF pricing-critical, dispatch §6 reminder):
 //   "Current plan"   -> "Volumes owned"           (now stat label)
-//   "Next invoice"   -> "Refunds available"       (now stat label)
 //   "monthly"        -> "one-time"                (subtitle)
 //   "seat"           -> "purchase"                (n/a — wasn't here)
 //   "/agent/mo"      -> ""                        (n/a — wasn't here)
@@ -129,14 +128,13 @@ export default async function BillingPage() {
           </h1>
           <p className="text-ink-3 text-sm max-w-[60ch]">
             Each volume is a one-time purchase. No subscriptions, no monthly
-            invoices. Refunds within 14 days of purchase, processed back to
-            your original payment method.
+            invoices.
           </p>
         </div>
       </div>
 
-      {/* 4-stat strip — replaces "Current plan / Next invoice" framing */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-rule mb-8">
+      {/* 3-stat strip — replaces "Current plan / Next invoice" framing */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-rule mb-8">
         <StatCard
           label="VOLUMES OWNED"
           value={stats.volumesOwned}
@@ -165,21 +163,6 @@ export default async function BillingPage() {
             stats.totalFetches > 0
               ? `over ${stats.totalFetches.toLocaleString()} ${stats.totalFetches === 1 ? "fetch" : "fetches"}`
               : "no fetches yet"
-          }
-          className="border-0"
-        />
-        <StatCard
-          label="REFUNDS AVAILABLE"
-          value={
-            <>
-              {dollars(stats.refundsAvailableCents)}
-              <span className="text-ink-3 text-sm">.00</span>
-            </>
-          }
-          delta={
-            stats.refundsAvailableCount > 0
-              ? `on ${stats.refundsAvailableCount} purchase${stats.refundsAvailableCount === 1 ? "" : "s"} ≤14d old`
-              : "no recent purchases"
           }
           className="border-0"
         />
@@ -313,7 +296,7 @@ export default async function BillingPage() {
 
       {/* Footer line — small reassurance copy */}
       <div className="mt-3 text-ink-3 text-xs flex justify-between items-baseline">
-        <Eyebrow>ALL AMOUNTS USD · 14-DAY REFUND</Eyebrow>
+        <Eyebrow>ALL AMOUNTS USD</Eyebrow>
       </div>
     </DashShell>
   );

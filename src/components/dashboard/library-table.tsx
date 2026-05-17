@@ -252,7 +252,7 @@ export function LibraryTable({
             SHOWING {filtered.length} OF {items.length} VOLUMES · YOU OWN{" "}
             {counts.active}
           </Eyebrow>
-          <Eyebrow>ALL PRICES USD · 14-DAY REFUND</Eyebrow>
+          <Eyebrow>ALL PRICES USD</Eyebrow>
         </div>
       ) : null}
     </div>
