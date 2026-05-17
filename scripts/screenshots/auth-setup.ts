@@ -18,14 +18,23 @@
 //   - more than ~30 days have elapsed (NextAuth session row TTL)
 //
 // Command:  npm run screenshots:auth-setup
+//
+// Env vars (both optional — defaults preserve the original behavior):
+//   AUTH_SETUP_EMAIL   — the Google account to sign in as
+//                        (default: animesh@2tmorrow.com)
+//   AUTH_SETUP_OUTPUT  — where to write the captured session JSON
+//                        (default: scripts/screenshots/storage-state.json)
+// Lets one script capture sessions for multiple personas (subscriber,
+// publisher) without a code edit per run.
 
 import { test, expect } from "@playwright/test";
-import path from "node:path";
 
-const STORAGE_STATE = path.resolve(__dirname, "storage-state.json");
+const TARGET_EMAIL = process.env.AUTH_SETUP_EMAIL ?? "animesh@2tmorrow.com";
+const STORAGE_STATE_PATH =
+  process.env.AUTH_SETUP_OUTPUT ?? "scripts/screenshots/storage-state.json";
 const OAUTH_WINDOW_MS = 5 * 60 * 1000;
 
-test("capture session cookie for animesh@2tmorrow.com", async ({
+test(`capture session cookie for ${TARGET_EMAIL}`, async ({
   page,
   context,
 }) => {
@@ -43,7 +52,7 @@ test("capture session cookie for animesh@2tmorrow.com", async ({
   // eslint-disable-next-line no-console
   console.log("Click 'Continue with Google' and sign in as:");
   // eslint-disable-next-line no-console
-  console.log("  animesh@2tmorrow.com");
+  console.log("  " + TARGET_EMAIL);
   // eslint-disable-next-line no-console
   console.log(
     `Waiting up to ${OAUTH_WINDOW_MS / 1000}s for the /dashboard redirect…\n`,
@@ -59,11 +68,11 @@ test("capture session cookie for animesh@2tmorrow.com", async ({
   // shows the signed-in email; if it's the wrong account we want to fail
   // BEFORE writing storageState so a misclick doesn't leave a stale cookie
   // for the wrong identity on disk.
-  await expect(page.getByText("animesh@2tmorrow.com").first()).toBeVisible({
+  await expect(page.getByText(TARGET_EMAIL).first()).toBeVisible({
     timeout: 10_000,
   });
 
-  await context.storageState({ path: STORAGE_STATE });
+  await context.storageState({ path: STORAGE_STATE_PATH });
   // eslint-disable-next-line no-console
-  console.log(`\n✓ Session captured → ${STORAGE_STATE}`);
+  console.log(`\n✓ Session captured → ${STORAGE_STATE_PATH}`);
 });
