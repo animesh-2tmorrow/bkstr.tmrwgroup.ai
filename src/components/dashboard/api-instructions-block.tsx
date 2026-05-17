@@ -9,6 +9,10 @@ import { Eyebrow } from "@/components/design";
 // the books-only Q&A endpoint are demoted into a collapsed "Advanced ·
 // programmatic access" disclosure.
 //
+// Move 2 Phase 2.5 — a secondary block under the same INSTALL header shows
+// the equivalent install via the bkstr CLI (npm, @clawbot678/bkstr). Curl
+// stays primary; the CLI is additive.
+//
 // Free items install anonymously (no key); paid items use a Bearer token
 // shown as the $BKSTR_KEY env var (never the inline key value).
 //
@@ -59,6 +63,19 @@ function buildInstallCommand(
 mkdir -p ~/.claude/skills && curl -sL -H "Authorization: Bearer $BKSTR_KEY" ${url} | tar xz -C ~/.claude/skills/`;
 }
 
+// The same install via the bkstr CLI (npm — @clawbot678/bkstr).
+//   - Free → one zero-install line through npx.
+//   - Paid → global install + `bkstr login` (stores the key in a local
+//     config; no `export` line, nothing left in shell history) + install.
+function buildCliCommand(slug: string, isFree: boolean): string {
+  if (isFree) {
+    return `npx -y @clawbot678/bkstr install ${slug}`;
+  }
+  return `npm install -g @clawbot678/bkstr
+bkstr login
+bkstr install ${slug}`;
+}
+
 // Advanced path — the per-file JSON endpoint. Kept documented but demoted.
 function buildFilesCurl(kind: "book" | "skill", slug: string): string {
   const path = kind === "book" ? "books" : "skills";
@@ -86,6 +103,7 @@ export function ApiInstructionsBlock({
   compact = false,
 }: ApiInstructionsBlockProps) {
   const installCmd = buildInstallCommand(itemSlug, isFree, apiKey);
+  const cliCmd = buildCliCommand(itemSlug, isFree);
   const filesCurl = buildFilesCurl(kind, itemSlug);
   const qaCurl = kind === "book" ? buildQACurl(itemId) : null;
   const hasKey = apiKey !== "";
@@ -151,6 +169,37 @@ export function ApiInstructionsBlock({
             </Link>
           </p>
         )}
+
+        {/* SECONDARY — the same install via the bkstr CLI (npm). Curl
+            above stays primary; this is the additive npm path. */}
+        <div className="mt-3 pt-3 border-t border-rule">
+          <p className="text-xs text-ink-3 mb-1.5">
+            Or with the{" "}
+            <a
+              href="https://github.com/tmrwgroup/bkstr-cli"
+              className="text-ink underline underline-offset-2 hover:no-underline"
+            >
+              bkstr CLI
+            </a>{" "}
+            (npm):
+          </p>
+          <pre className="font-mono text-[12px] bg-paper-2 border border-rule p-3 overflow-x-auto whitespace-pre text-ink">
+            {cliCmd}
+          </pre>
+          {isFree ? (
+            <p className="text-xs text-ink-3 mt-2">
+              <code className="font-mono text-ink-2">npx</code> runs it with
+              no prior install. This {kind} is free — no key needed.
+            </p>
+          ) : (
+            <p className="text-xs text-ink-3 mt-2">
+              <code className="font-mono text-ink-2">bkstr login</code> stores
+              your key locally — no{" "}
+              <code className="font-mono text-ink-2">export</code> line,
+              nothing left in shell history.
+            </p>
+          )}
+        </div>
       </div>
 
       {/* ADVANCED — the per-file JSON endpoint + (books) Q&A. Collapsed. */}

@@ -398,6 +398,13 @@ export default async function HomePage() {
 $ mkdir -p ~/.claude/skills && curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep | tar xz -C ~/.claude/skills/`}
           </pre>
           <p className="text-[12px] text-ink-3 mt-2 mb-0 leading-[1.55]">
+            Prefer npm?{' '}
+            <code className="font-mono">
+              npx -y @clawbot678/bkstr install gif-grep
+            </code>{' '}
+            installs the same bundle with the bkstr CLI.
+          </p>
+          <p className="text-[12px] text-ink-3 mt-2 mb-0 leading-[1.55]">
             Paid items: prepend an{' '}
             <code className="font-mono">export BKSTR_KEY=bks_…</code> line and
             add{' '}

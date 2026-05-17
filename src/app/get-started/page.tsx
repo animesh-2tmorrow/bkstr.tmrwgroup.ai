@@ -108,13 +108,17 @@ function HeroSection() {
         skills directory.
       </p>
 
-      {/* The one-liner install command, real host. gif-grep is a free
-          item; the mkdir -p makes the command copy-paste safely on a
-          fresh machine where ~/.claude/skills/ doesn't exist yet. The
-          install section further down covers paid items + the 4 agents. */}
+      {/* The install command — the curl one-liner and the npm CLI
+          equivalent. gif-grep is a free item; the mkdir -p makes the curl
+          form copy-paste safely on a fresh machine where ~/.claude/skills/
+          doesn't exist yet. The install section further down covers paid
+          items + the 4 agents. */}
       <pre className="font-mono text-[13px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] mt-0 mb-9 max-w-[820px]">
 {`# Install gif-grep (free) — copy-paste, runs as-is on a fresh machine
-$ mkdir -p ~/.claude/skills && curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep | tar xz -C ~/.claude/skills/`}
+$ mkdir -p ~/.claude/skills && curl -sL https://bkstr.tmrwgroup.ai/api/install/gif-grep | tar xz -C ~/.claude/skills/
+
+# Or with the bkstr CLI (npm) — zero install via npx
+$ npx -y @clawbot678/bkstr install gif-grep`}
       </pre>
 
       <div className="flex gap-3.5 items-center flex-wrap">
@@ -285,9 +289,13 @@ function ThreeStepsSection() {
                 curl … | tar xz
               </code>{" "}
               — the command fetches the bundle and unpacks it straight into
-              your agent&apos;s skills directory. The dashboard&apos;s
-              API-access panel hands you the exact command for any item you
-              own, free or paid.
+              your agent&apos;s skills directory. Prefer a tool? The bkstr
+              CLI does the same —{" "}
+              <code className="font-mono text-[0.85em] bg-paper-2 px-1">
+                npx -y @clawbot678/bkstr install &lt;slug&gt;
+              </code>
+              . The dashboard&apos;s API-access panel hands you the exact
+              command — curl or CLI — for any item you own, free or paid.
             </>
           }
           imageSrc="/get-started/08-api-disclosure.png"
@@ -442,6 +450,53 @@ mkdir -p ~/.claude/skills && curl -sL -H "Authorization: Bearer $BKSTR_KEY" http
             keeps each install in its own directory. Books and skills use
             the same endpoint and the same command.
           </p>
+
+          {/* The CLI alternative — npm-distributed, same install. Equal
+              weight on this longer-form guide (the homepage keeps curl
+              primary). */}
+          <div className="mt-8 pt-8 border-t border-rule">
+            <div className="flex items-baseline gap-3 mb-3">
+              <Eyebrow>OR · THE BKSTR CLI</Eyebrow>
+              <Pill variant="neutral">npm</Pill>
+            </div>
+            <h3 className="font-serif font-normal text-[26px] leading-[1.15] tracking-tight text-ink mb-4">
+              Same install, as a command.
+            </h3>
+            <p className="text-ink-2 text-[15px] leading-[1.65] mb-5 max-w-[64ch]">
+              Prefer a tool to a pipeline?{" "}
+              <code className="font-mono text-ink-2">@clawbot678/bkstr</code>{" "}
+              is the same install as an npm CLI — run it with{" "}
+              <code className="font-mono text-ink-2">npx</code> for zero
+              install, or install it globally. For paid items,{" "}
+              <code className="font-mono text-ink-2">bkstr login</code> stores
+              your key once — no{" "}
+              <code className="font-mono text-ink-2">export</code> line, nothing
+              left in shell history.{" "}
+              <code className="font-mono text-ink-2">--dir</code> retargets the
+              unpack to any directory (Cursor&apos;s{" "}
+              <code className="font-mono text-ink-2">.cursor/rules/</code>, a
+              project folder, anywhere).
+            </p>
+            <pre className="font-mono text-[12.5px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] m-0">
+{`# Free item — zero install, runs straight from npm
+npx -y @clawbot678/bkstr install gif-grep
+
+# Paid item — install once, log in, then install anything you own
+npm install -g @clawbot678/bkstr
+bkstr login
+bkstr install <slug>`}
+            </pre>
+            <p className="text-ink-3 text-[13px] leading-[1.6] mt-4 mb-0 max-w-[64ch]">
+              Source and issues:{" "}
+              <a
+                href="https://github.com/tmrwgroup/bkstr-cli"
+                className="text-ink underline decoration-rule hover:decoration-ink"
+              >
+                github.com/tmrwgroup/bkstr-cli
+              </a>
+              .
+            </p>
+          </div>
         </div>
 
         {/* THE OTHER THREE — short, footnoted. Same one-liner, only the
@@ -457,7 +512,9 @@ mkdir -p ~/.claude/skills && curl -sL -H "Authorization: Bearer $BKSTR_KEY" http
                 agent inherits the bundle when it scopes to your repo.
               </>
             }
-            snippet={`mkdir -p .cursor/rules && curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C .cursor/rules/`}
+            snippet={`mkdir -p .cursor/rules && curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C .cursor/rules/
+# or, with the bkstr CLI:
+npx -y @clawbot678/bkstr install <slug> --dir .cursor/rules`}
           />
           <ProvisionalAgent
             name="CLINE"
@@ -470,6 +527,7 @@ mkdir -p ~/.claude/skills && curl -sL -H "Authorization: Bearer $BKSTR_KEY" http
               </>
             }
             snippet={`mkdir -p bkstr && curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C bkstr/
+# or, with the bkstr CLI: npx -y @clawbot678/bkstr install <slug> --dir bkstr
 # then @bkstr/<slug>/SKILL.md in the panel`}
           />
           <ProvisionalAgent
@@ -484,6 +542,7 @@ mkdir -p ~/.claude/skills && curl -sL -H "Authorization: Bearer $BKSTR_KEY" http
               </>
             }
             snippet={`mkdir -p ~/bkstr && curl -sL https://bkstr.tmrwgroup.ai/api/install/<slug> | tar xz -C ~/bkstr/
+# or, with the bkstr CLI: npx -y @clawbot678/bkstr install <slug> --dir ~/bkstr
 # then aider --read ~/bkstr/<slug>/SKILL.md`}
           />
         </div>

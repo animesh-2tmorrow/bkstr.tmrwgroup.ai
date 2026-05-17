@@ -64,6 +64,26 @@ mkdir -p ~/.claude/skills && curl -sL -H "Authorization: Bearer $BKSTR_KEY" http
 
 **Free vs paid.** A free book or skill (priced at $0) installs anonymously — no API key, no `Authorization` header. A paid item requires a Bearer token *and* an active access grant for that `book_id` / `skill_id` on your subscriber row; without either you get a `401` (no/invalid token) or `403` (token valid, no grant). The endpoint is the same for books and skills — the resolver handles both kinds. The same one-liner appears on the homepage's **How to Get Started** section.
 
+#### Quickstart — the bkstr CLI (npm)
+
+Prefer a command to a pipeline? [`@clawbot678/bkstr`](https://github.com/tmrwgroup/bkstr-cli) is the same install, packaged as a small npm CLI. Three ways to run it:
+
+```bash
+# 1. Zero install — run straight from npm with npx (free items)
+npx -y @clawbot678/bkstr install <slug>
+
+# 2. Global install (free items)
+npm install -g @clawbot678/bkstr
+bkstr install <slug>
+
+# 3. Global install + login (paid items)
+npm install -g @clawbot678/bkstr
+bkstr login                       # paste your API key once — stored locally
+bkstr install <slug>
+```
+
+`bkstr login` writes the key to a local config file, so there's no `export BKSTR_KEY=…` line and nothing leaks into your shell history — it's the recommended path for paid items. For CI or scripting, the CLI also reads the `BKSTR_KEY` environment variable. `bkstr list` shows everything you own, and `bkstr install <slug> --dir <path>` retargets the unpack to any directory. Run `bkstr --help` for the full command list. Source and issues: [github.com/tmrwgroup/bkstr-cli](https://github.com/tmrwgroup/bkstr-cli).
+
 #### Raw files via JSON (API reference)
 
 If you'd rather receive per-file JSON than a tarball, the files endpoint returns each file as `path`, `content` (raw markdown for book chapters; raw text/code for skill files), and a `sha256` hash:

@@ -263,6 +263,10 @@ export default async function StorefrontDetailPage({
                     mkdir -p ~/.claude/skills &amp;&amp; curl -sL
                     …/api/install/{item.slug} | tar xz
                   </code>{" "}
+                  or, with the bkstr CLI,{" "}
+                  <code className="font-mono">
+                    npx -y @clawbot678/bkstr install {item.slug}
+                  </code>{" "}
                   — see Get Started below.
                 </>
               ) : (
@@ -272,6 +276,10 @@ export default async function StorefrontDetailPage({
                   <code className="font-mono">
                     mkdir -p ~/.claude/skills &amp;&amp; curl -sL
                     …/api/install/{item.slug} | tar xz
+                  </code>{" "}
+                  or, with the bkstr CLI,{" "}
+                  <code className="font-mono">
+                    npx -y @clawbot678/bkstr install {item.slug}
                   </code>{" "}
                   — see Get Started below.
                 </>
