@@ -240,6 +240,7 @@ function ThreeStepsSection() {
       <SectionRule label="§ THE 3 STEPS" rightLabel="ON ONE PAGE" className="my-0" />
 
       <div className="mt-14 space-y-20">
+        {/* capture: s-05 */}
         <StepRow
           step="01"
           title="Sign up free."
@@ -251,34 +252,36 @@ function ThreeStepsSection() {
               empty library; the catalog is one click away.
             </>
           }
-          imageSrc="/get-started/05-signup.png"
-          imageAlt="bkstr signup page: 'Sign up free.' headline on the left, 'Continue with Google' button on the right."
-          imageWidth={1280}
-          imageHeight={720}
+          imageSrc="/docs/screenshots/s-05-signup-form.png"
+          imageAlt="Signup form (Google OAuth)"
+          imageWidth={1440}
+          imageHeight={900}
           imageSide="right"
           priority
         />
 
+        {/* capture: s-12 */}
         <StepRow
           step="02"
           title="Browse the catalog and buy a book."
           body={
             <>
               The catalog mixes books (read-as-context) and skills
-              (install-and-run) in one unified grid. Each cover encodes the
-              palette + first-letter glyph deterministically — same slug
-              renders the same cover everywhere it appears. Buy one for $5
-              to $12 via Stripe; access is granted the moment the webhook
-              fires.
+              (install-and-run) in one unified grid. Pick one and choose
+              Buy — checkout runs on Stripe. It is in test mode during the
+              beta, so checkout takes a test card and no real charge is
+              made; live billing is coming. Access is granted the moment
+              Stripe&apos;s webhook reaches bkstr.
             </>
           }
-          imageSrc="/get-started/02-storefront.png"
-          imageAlt="The bkstr storefront grid showing six covers: three skills and three books, each with palette + glyph and a SKILL · .zip or domain pill below."
-          imageWidth={1280}
-          imageHeight={2164}
+          imageSrc="/docs/screenshots/s-12-stripe-checkout-pre-card.png"
+          imageAlt="Stripe test-mode checkout for agentic-qa-manual, pre-card-entry"
+          imageWidth={1440}
+          imageHeight={900}
           imageSide="left"
         />
 
+        {/* capture: s-22 */}
         <StepRow
           step="03"
           title="Install with one command."
@@ -298,10 +301,10 @@ function ThreeStepsSection() {
               command — curl or CLI — for any item you own, free or paid.
             </>
           }
-          imageSrc="/get-started/08-api-disclosure.png"
-          imageAlt="The dashboard library's API-access panel, expanded for an owned item."
-          imageWidth={1280}
-          imageHeight={720}
+          imageSrc="/docs/screenshots/s-22-paid-install-cli.png"
+          imageAlt="CLI install of an owned paid item (keyed)"
+          imageWidth={1440}
+          imageHeight={900}
           imageSide="right"
         />
       </div>
@@ -604,10 +607,10 @@ npx -y @clawbot678/bkstr install <slug> --dir .cursor/rules`}
           Looking for the Q&amp;A endpoint? That&apos;s the advanced
           path — books answer questions over their own content via{" "}
           <Link
-            href="/dashboard/docs"
+            href="/dashboard/docs/qa-endpoint"
             className="text-ink underline decoration-rule hover:decoration-ink"
           >
-            /dashboard/docs
+            the Q&amp;A endpoint reference
           </Link>
           . The files endpoint shown here is the primary path; Q&amp;A is
           books-only and intended for grounded retrieval, not install.
