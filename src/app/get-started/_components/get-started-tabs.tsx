@@ -598,15 +598,20 @@ claude mcp add bkstr --transport http https://mcp.bkstr.tmrwgroup.ai/mcp \\
         />
         <Capability
           eyebrow="ATTRIBUTION"
-          title="Same keys, same logs."
+          title="Same keys, same identity."
           body={
             <>
               The MCP server reuses the existing{" "}
-              <code className="font-mono text-ink-2">bks_</code> API key.
-              Authenticated calls write the same{" "}
-              <code className="font-mono text-ink-2">fetch_logs</code> rows
-              your other API surfaces already write, attributed to the same
-              subscriber — one identity, one budget, one audit trail.
+              <code className="font-mono text-ink-2">bks_</code> API key —
+              same key as the curl install, same key as the CLI, validated
+              against the same{" "}
+              <code className="font-mono text-ink-2">subscriber_api_keys</code>{" "}
+              table.{" "}
+              <code className="font-mono text-ink-2">ask_book</code> writes
+              its{" "}
+              <code className="font-mono text-ink-2">fetch_logs</code> row
+              attributed to that key, exactly like a direct call to the
+              Q&amp;A endpoint. One identity, one budget, one ledger.
             </>
           }
         />
