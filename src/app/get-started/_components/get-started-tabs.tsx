@@ -501,8 +501,11 @@ function ProvisionalAgent({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// MCP — new tab. Marketing-toned entry point that routes to the full
-// reference at /dashboard/docs/mcp.
+// MCP — expanded "understand and connect" tab. Routes onward to the
+// schema-level reference at /dashboard/docs/mcp. Six sections in order:
+// (1) what MCP is / why use it, (2) the two modes, (3) setup for all
+// three clients, (4) the seven tools plain overview, (5) a first-call
+// walkthrough, (6) link out to the docs page.
 // ─────────────────────────────────────────────────────────────────────────
 
 function MCPTab() {
@@ -514,116 +517,354 @@ function MCPTab() {
         className="my-0"
       />
 
+      {/* 1. What MCP is and why you'd use it */}
       <div className="mt-10 max-w-[64ch]">
-        <h3 className="font-serif font-normal text-[clamp(28px,3.5vw,40px)] leading-[1.1] tracking-display text-ink m-0 mb-5">
+        <h3 className="font-serif font-normal text-[clamp(28px,3.5vw,40px)] leading-[1.1] tracking-display text-ink m-0 mb-6">
           Your agent reads bkstr <em className="italic">in-conversation</em>.
         </h3>
-        <p className="text-[16.5px] text-ink-2 leading-[1.65] m-0">
-          bkstr runs a hosted Model Context Protocol server at{" "}
+        <p className="text-[16.5px] text-ink-2 leading-[1.65] mt-0 mb-5">
+          The Model Context Protocol — MCP — is the open standard hosts
+          like Claude Code, Cursor, and Codex CLI use to call tools from
+          inside a model turn. bkstr runs a hosted MCP server at{" "}
           <code className="font-mono text-[0.9em] bg-paper-2 px-1">
             https://mcp.bkstr.tmrwgroup.ai/mcp
           </code>
-          . Connect Claude Code, Cursor, Codex CLI, or any MCP-compatible
-          client, and your agent picks up seven tools for searching the
-          catalog and loading owned content — without leaving the
-          conversation, without shuttling files to disk.
+          . Point a compatible client at that URL and seven tools appear in
+          your agent&apos;s tool list.
+        </p>
+        <p className="text-[16.5px] text-ink-2 leading-[1.65] m-0 mb-5">
+          The agent can then search the catalog and load owned content
+          mid-conversation, without anyone downloading a tarball, pasting a
+          curl command, or copying chapter text into the chat. Ask{" "}
+          <em>&ldquo;what books are on bkstr about agents?&rdquo;</em> and
+          the model picks the right tool, runs it against bkstr, and reads
+          the result back to itself.
+        </p>
+        <p className="text-[16.5px] text-ink-2 leading-[1.65] m-0">
+          The server is shared infrastructure — nothing to install, nothing
+          to host. The curl and CLI install paths from the Agent Developers
+          tab still work; MCP is one more shape on top of the same
+          endpoints, not a replacement.
         </p>
       </div>
 
-      <div className="mt-12">
-        <div className="flex items-baseline gap-3 mb-3">
-          <Eyebrow>ONE LINE · CLAUDE CODE</Eyebrow>
-          <Pill variant="status-ok">Hosted</Pill>
+      {/* 2. The two modes */}
+      <div className="mt-16">
+        <SectionRule
+          label="§ TWO MODES"
+          rightLabel="NO KEY · BEARER KEY"
+          className="my-0"
+        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-10">
+          <ModeCard
+            mode="ANONYMOUS"
+            pillLabel="No key"
+            pillVariant="neutral"
+            title="Browse the catalog."
+            body={
+              <>
+                Connect with no header at all and four tools appear:
+                catalog search, item detail, popular items, and publisher
+                profiles. Works immediately for any visitor — no signup,
+                no key, no dashboard round-trip. Good for catalog
+                discovery and one-off questions about what bkstr carries.
+              </>
+            }
+          />
+          <ModeCard
+            mode="AUTHENTICATED"
+            pillLabel="Bearer key"
+            pillVariant="status-ok"
+            title="Read what you own."
+            body={
+              <>
+                Attach an{" "}
+                <code className="font-mono text-ink-2">
+                  Authorization: Bearer bks_…
+                </code>{" "}
+                header on every request and three more tools unlock:
+                library listing, inline loading of owned books and skills,
+                and grounded Q&amp;A against an owned book. The key is the
+                same{" "}
+                <code className="font-mono text-ink-2">bks_</code> key the
+                install endpoint and the CLI already use — create one at{" "}
+                <Link
+                  href="/dashboard/api-keys"
+                  className="text-ink underline decoration-rule hover:decoration-ink"
+                >
+                  /dashboard/api-keys
+                </Link>
+                .
+              </>
+            }
+          />
         </div>
-        <h4 className="font-serif font-normal text-[24px] leading-[1.15] tracking-tight text-ink mb-4">
-          Add the server, get seven tools.
-        </h4>
-        <pre className="font-mono text-[12.5px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] m-0">
-{`# Authenticated — paste your key once; Claude Code stores it
+      </div>
+
+      {/* 3. Setup for all three clients */}
+      <div className="mt-16">
+        <SectionRule
+          label="§ SETUP"
+          rightLabel="3 CLIENTS"
+          className="my-0"
+        />
+        <p className="text-[15px] text-ink-2 leading-[1.65] mt-8 max-w-[64ch]">
+          The endpoint is{" "}
+          <code className="font-mono text-ink-2 text-[0.9em]">
+            https://mcp.bkstr.tmrwgroup.ai/mcp
+          </code>{" "}
+          and the transport is Streamable HTTP — the modern MCP transport,
+          not stdio. Anonymous tools work with no header; authenticated
+          tools need a Bearer key on every request. Each client below has
+          both forms.
+        </p>
+
+        <ClientSetup
+          name="CLAUDE CODE"
+          pillLabel="claude mcp CLI"
+          summary={
+            <>
+              Add the server once with the{" "}
+              <code className="font-mono text-ink-2">claude mcp</code> CLI.{" "}
+              <code className="font-mono text-ink-2">--transport http</code>{" "}
+              picks Streamable HTTP;{" "}
+              <code className="font-mono text-ink-2">--header</code> attaches
+              the Bearer key. Inside Claude Code, type{" "}
+              <code className="font-mono text-ink-2">/mcp</code> to see the
+              connected server and its tools.
+            </>
+          }
+          snippet={`# Anonymous — only the four browse tools will work
+claude mcp add bkstr --transport http https://mcp.bkstr.tmrwgroup.ai/mcp
+
+# Authenticated — paste your key once; Claude Code stores it
 claude mcp add bkstr --transport http https://mcp.bkstr.tmrwgroup.ai/mcp \\
   --header "Authorization: Bearer $BKSTR_KEY"`}
-        </pre>
-        <p className="text-ink-3 text-[13px] leading-[1.6] mt-4 mb-0 max-w-[64ch]">
-          Cursor and Codex CLI follow the same shape — drop the URL into the
-          MCP config block, attach the same{" "}
-          <code className="font-mono text-ink-2">Bearer bks_…</code> key in
-          the headers, restart the client. The full per-client config — and
-          the anonymous form — is in the docs.
+        />
+
+        <ClientSetup
+          name="CURSOR"
+          pillLabel="mcp.json"
+          summary={
+            <>
+              Cursor reads MCP servers from{" "}
+              <code className="font-mono text-ink-2">~/.cursor/mcp.json</code>{" "}
+              (global) or{" "}
+              <code className="font-mono text-ink-2">.cursor/mcp.json</code>{" "}
+              inside a project. Drop the{" "}
+              <code className="font-mono text-ink-2">headers</code> block to
+              use the server anonymously. Restart Cursor after saving the
+              file; the{" "}
+              <code className="font-mono text-ink-2">bkstr</code> server
+              shows up in the MCP panel with its tool list.
+            </>
+          }
+          snippet={`{
+  "mcpServers": {
+    "bkstr": {
+      "url": "https://mcp.bkstr.tmrwgroup.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer bks_your_key_here"
+      }
+    }
+  }
+}`}
+        />
+
+        <ClientSetup
+          name="CODEX CLI"
+          pillLabel="config.toml"
+          summary={
+            <>
+              Codex reads{" "}
+              <code className="font-mono text-ink-2">~/.codex/config.toml</code>.
+              Add an{" "}
+              <code className="font-mono text-ink-2">[mcp_servers.bkstr]</code>{" "}
+              block — omit the{" "}
+              <code className="font-mono text-ink-2">[…headers]</code> table
+              for anonymous use.{" "}
+              <code className="font-mono text-ink-2">codex mcp list</code>{" "}
+              confirms the server is registered.
+            </>
+          }
+          snippet={`[mcp_servers.bkstr]
+url = "https://mcp.bkstr.tmrwgroup.ai/mcp"
+
+[mcp_servers.bkstr.headers]
+Authorization = "Bearer bks_your_key_here"`}
+        />
+
+        <p className="text-ink-3 text-[13px] leading-[1.65] mt-8 max-w-[68ch]">
+          Anything else that speaks Streamable HTTP MCP works the same way:
+          hand it the URL above; for authenticated tools, attach an{" "}
+          <code className="font-mono text-ink-2">Authorization: Bearer bks_…</code>{" "}
+          header. The server is stateless — no session handshake or
+          persistent connection is required.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-16">
-        <Capability
-          eyebrow="ANONYMOUS"
-          title="Catalog search, instantly."
-          body={
-            <>
-              Four tools work with no key at all:{" "}
-              <code className="font-mono text-ink-2">search_catalog</code>,{" "}
-              <code className="font-mono text-ink-2">get_item</code>,{" "}
-              <code className="font-mono text-ink-2">get_popular</code>,{" "}
-              <code className="font-mono text-ink-2">get_publisher</code>.
-              Ask the agent <em>&ldquo;what&apos;s on bkstr about
-              agents?&rdquo;</em> and it runs a real catalog query against
-              prod.
-            </>
-          }
+      {/* 4. The seven tools — plain overview */}
+      <div className="mt-16">
+        <SectionRule
+          label="§ SEVEN TOOLS"
+          rightLabel="4 ANON · 3 KEYED"
+          className="my-0"
         />
-        <Capability
-          eyebrow="OWNED LIBRARY"
-          title="Read what you own, in place."
-          body={
-            <>
-              With a <code className="font-mono text-ink-2">bks_</code> key,{" "}
-              <code className="font-mono text-ink-2">my_library</code> lists
-              every book and skill on your account, and{" "}
-              <code className="font-mono text-ink-2">load_item</code> streams
-              the contents inline — chapters for a book, files for a skill.
-              The agent reads what it loaded, where it loaded it.
-            </>
-          }
-        />
-        <Capability
-          eyebrow="GROUNDED Q&A"
-          title="Ask a book a question."
-          body={
-            <>
-              <code className="font-mono text-ink-2">ask_book</code> proxies
-              to the bkstr Q&amp;A endpoint: streamed answers grounded only
-              in the book&apos;s content. Books only, owned-only, costed —
-              the operator kill-switch lets bkstr disable it without
-              redeploy if Bedrock spend spikes.
-            </>
-          }
-        />
-        <Capability
-          eyebrow="ATTRIBUTION"
-          title="Same keys, same identity."
-          body={
-            <>
-              The MCP server reuses the existing{" "}
-              <code className="font-mono text-ink-2">bks_</code> API key —
-              same key as the curl install, same key as the CLI, validated
-              against the same{" "}
-              <code className="font-mono text-ink-2">subscriber_api_keys</code>{" "}
-              table.{" "}
-              <code className="font-mono text-ink-2">ask_book</code> writes
-              its{" "}
-              <code className="font-mono text-ink-2">fetch_logs</code> row
-              attributed to that key, exactly like a direct call to the
-              Q&amp;A endpoint. One identity, one budget, one ledger.
-            </>
-          }
-        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10 mt-10">
+          <ToolGroup
+            title="Anonymous"
+            blurb="No key, no header. Work for any visitor."
+            tools={[
+              { name: "search_catalog", line: "Free-text search of the marketplace catalog." },
+              { name: "get_item", line: "Full public detail for one item by slug." },
+              { name: "get_popular", line: "Most-purchased items, popularity bucketed." },
+              { name: "get_publisher", line: "A publisher's profile and their full active catalog." },
+            ]}
+          />
+          <ToolGroup
+            title="Authenticated"
+            blurb={
+              <>
+                Need an{" "}
+                <code className="font-mono text-ink-2">
+                  Authorization: Bearer bks_…
+                </code>{" "}
+                header on every call.
+              </>
+            }
+            tools={[
+              { name: "my_library", line: "Every book and skill the authenticated subscriber owns." },
+              { name: "load_item", line: "Inline chapters (book) or inline files (skill) the subscriber owns." },
+              { name: "ask_book", line: "Streamed, source-grounded Q&A against one owned book." },
+            ]}
+          />
+        </div>
+        <p className="text-ink-3 text-[13px] leading-[1.65] mt-10 max-w-[68ch]">
+          Per-tool input and output schemas — and what each field means —
+          live on the{" "}
+          <Link
+            href="/dashboard/docs/mcp"
+            className="text-ink underline decoration-rule hover:decoration-ink"
+          >
+            MCP server reference
+          </Link>
+          .
+        </p>
       </div>
 
+      {/* 5. Your first call — short onboarding walkthrough */}
+      <div className="mt-16">
+        <SectionRule
+          label="§ YOUR FIRST CALL"
+          rightLabel="5 STEPS"
+          className="my-0"
+        />
+        <ol className="mt-10 max-w-[68ch] list-none p-0 m-0 space-y-0">
+          <WalkStep
+            n="01"
+            title="Add the server anonymously"
+            body={
+              <>
+                Run the anonymous{" "}
+                <code className="font-mono text-ink-2">claude mcp add</code>{" "}
+                line from above (or its Cursor / Codex equivalent). Type{" "}
+                <code className="font-mono text-ink-2">/mcp</code> in Claude
+                Code — the{" "}
+                <code className="font-mono text-ink-2">bkstr</code> server
+                appears with seven tools listed. The authenticated tools
+                will show errors until you add a key in step 4.
+              </>
+            }
+          />
+          <WalkStep
+            n="02"
+            title="Search the catalog"
+            body={
+              <>
+                Ask the agent <em>&ldquo;what books are on bkstr about
+                agents?&rdquo;</em>. It picks{" "}
+                <code className="font-mono text-ink-2">search_catalog</code>{" "}
+                and returns real catalog rows with slugs, titles, prices,
+                and a{" "}
+                <code className="font-mono text-ink-2">storefront_url</code>{" "}
+                you can use to buy.
+              </>
+            }
+          />
+          <WalkStep
+            n="03"
+            title="Get an API key"
+            body={
+              <>
+                Visit{" "}
+                <Link
+                  href="/dashboard/api-keys"
+                  className="text-ink underline decoration-rule hover:decoration-ink"
+                >
+                  /dashboard/api-keys
+                </Link>
+                , click{" "}
+                <strong className="font-semibold text-ink">
+                  Create new key
+                </strong>
+                , give it a label, copy the{" "}
+                <code className="font-mono text-ink-2">bks_</code> value.
+                Keys are shown once — copy it now.
+              </>
+            }
+          />
+          <WalkStep
+            n="04"
+            title="Reconnect, authenticated"
+            body={
+              <>
+                Re-run{" "}
+                <code className="font-mono text-ink-2">claude mcp add</code>{" "}
+                with the{" "}
+                <code className="font-mono text-ink-2">--header</code> flag
+                carrying your key. Claude Code stores it and attaches it on
+                every request from now on. The{" "}
+                <code className="font-mono text-ink-2">bkstr</code> entry
+                in <code className="font-mono text-ink-2">/mcp</code>{" "}
+                doesn&apos;t change visually — the difference shows up when
+                you call a keyed tool.
+              </>
+            }
+          />
+          <WalkStep
+            n="05"
+            title="List and load"
+            body={
+              <>
+                Ask <em>&ldquo;what&apos;s in my library?&rdquo;</em> — the
+                agent picks{" "}
+                <code className="font-mono text-ink-2">my_library</code>.
+                Pick something and ask <em>&ldquo;load it&rdquo;</em> —
+                the agent picks{" "}
+                <code className="font-mono text-ink-2">load_item</code> and
+                the content arrives inline (chapters for a book, files for
+                a skill). The agent reads what it loaded, where it loaded
+                it.
+              </>
+            }
+          />
+        </ol>
+        <p className="text-ink-3 text-[13px] leading-[1.65] mt-10 max-w-[68ch]">
+          If a step fails, the reference page has a troubleshooting
+          walk-through covering each realistic failure mode and what to
+          do about it.
+        </p>
+      </div>
+
+      {/* 6. Link out to the full reference */}
       <div className="mt-16 border border-rule bg-paper-2 p-8">
         <Eyebrow className="block mb-4">§ FULL REFERENCE</Eyebrow>
         <p className="text-ink-2 text-[15px] leading-[1.65] mt-0 mb-5 max-w-[64ch]">
-          Every client config — Claude Code, Cursor, Codex CLI, anything
-          else — plus the full tool inventory, the authentication model,
-          rate limits, the kill-switch behaviour, every error code, and a
-          troubleshooting walk-through, all in one page:
+          Per-tool input and output schemas, the complete error-code table,
+          rate-limit specifics, the{" "}
+          <code className="font-mono">ask_book</code> kill-switch contract,
+          and the full troubleshooting walk-through all live on one page —
+          the schema-level reference this tab deliberately stops short of.
         </p>
         <Link
           href="/dashboard/docs/mcp"
@@ -636,24 +877,117 @@ claude mcp add bkstr --transport http https://mcp.bkstr.tmrwgroup.ai/mcp \\
   );
 }
 
-function Capability({
-  eyebrow,
+// ─── helpers for the MCP tab ──────────────────────────────────────────
+
+function ModeCard({
+  mode,
+  pillLabel,
+  pillVariant,
   title,
   body,
 }: {
-  eyebrow: string;
+  mode: string;
+  pillLabel: string;
+  pillVariant: "neutral" | "status-ok";
   title: string;
   body: React.ReactNode;
 }) {
   return (
     <div className="border-t-2 border-ink pt-5">
-      <Eyebrow>{eyebrow}</Eyebrow>
-      <h4 className="font-serif font-normal text-[22px] leading-[1.2] mt-3 mb-3 tracking-tight text-ink">
+      <div className="flex items-baseline gap-3 mb-3">
+        <Eyebrow>{mode}</Eyebrow>
+        <Pill variant={pillVariant}>{pillLabel}</Pill>
+      </div>
+      <h4 className="font-serif font-normal text-[22px] leading-[1.2] mt-1 mb-3 tracking-tight text-ink">
         {title}
       </h4>
       <p className="text-ink-2 text-[14.5px] leading-[1.6] m-0">
         {body}
       </p>
     </div>
+  );
+}
+
+function ClientSetup({
+  name,
+  pillLabel,
+  summary,
+  snippet,
+}: {
+  name: string;
+  pillLabel: string;
+  summary: React.ReactNode;
+  snippet: string;
+}) {
+  return (
+    <div className="mt-10 pt-8 border-t border-rule first-of-type:border-t-2 first-of-type:border-ink">
+      <div className="flex items-baseline gap-3 mb-3">
+        <Eyebrow>{name}</Eyebrow>
+        <Pill variant="neutral">{pillLabel}</Pill>
+      </div>
+      <p className="text-ink-2 text-[15px] leading-[1.65] mb-5 max-w-[64ch]">
+        {summary}
+      </p>
+      <pre className="font-mono text-[12.5px] bg-ink text-paper p-6 overflow-x-auto leading-[1.6] m-0">
+        {snippet}
+      </pre>
+    </div>
+  );
+}
+
+function ToolGroup({
+  title,
+  blurb,
+  tools,
+}: {
+  title: string;
+  blurb: React.ReactNode;
+  tools: ReadonlyArray<{ name: string; line: string }>;
+}) {
+  return (
+    <div className="border-t-2 border-ink pt-5">
+      <Eyebrow>{title.toUpperCase()}</Eyebrow>
+      <p className="text-ink-3 text-[13px] leading-[1.55] mt-2 mb-4">
+        {blurb}
+      </p>
+      <ul className="list-none p-0 m-0 space-y-3">
+        {tools.map((t) => (
+          <li key={t.name}>
+            <code className="font-mono text-[13px] text-ink">{t.name}</code>
+            <span className="text-ink-2 text-[14px] leading-[1.6] ml-2">
+              — {t.line}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function WalkStep({
+  n,
+  title,
+  body,
+}: {
+  n: string;
+  title: string;
+  body: React.ReactNode;
+}) {
+  return (
+    <li className="py-5 border-b border-rule last:border-b-0">
+      <div className="grid grid-cols-[56px_1fr] gap-4 items-baseline">
+        <div className="font-mono text-xs tracking-[2px] text-saffron-dk">
+          {n}
+        </div>
+        <div>
+          <h4 className="font-serif font-normal text-[20px] leading-[1.2] tracking-tight text-ink mt-0 mb-2">
+            {title}
+          </h4>
+          <p className="text-ink-2 text-[15px] leading-[1.65] m-0">
+            {body}
+          </p>
+        </div>
+      </div>
+    </li>
   );
 }
